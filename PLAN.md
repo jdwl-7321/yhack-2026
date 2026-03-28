@@ -31,7 +31,7 @@ Out-of-scope for first release:
    - Run user code on sample tests first
    - If sample passes, run on hidden generated test set
    - Return verdict and partial-credit feedback
-5. User can request hints (two levels: directional hint, then full program description reveal).
+5. User can request hints (two levels: directional hint, then full program description reveal including sampled variable values).
 6. Match/session ends when solved, timeout reached, player forfeits/quits, or party ends.
 7. For ranked mode, compute and apply ELO updates.
 
@@ -56,6 +56,7 @@ Out-of-scope for first release:
 - All participants must be logged in
 - If any participant is guest, fallback to casual mode
 - Default time limit is 1 hour; players can forfeit or quit early
+- Quit/forfeit is treated as unsolved for ranking/rating (same as not solving within the hour)
 - No custom settings (theme/difficulty/time are system-assigned)
 - Theme is randomly selected from the hardcoded theme list
 - Difficulty is system-assigned from average party ELO
@@ -82,6 +83,7 @@ Out-of-scope for first release:
 - API domains:
   - Auth/session management
   - Puzzle generation and retrieval
+  - Generator contract for variable schema + novelty controls
   - Matchmaking-lite (party creation/join via link)
   - Submission and judging pipeline
   - Hint generation
@@ -106,32 +108,64 @@ Out-of-scope for first release:
 - `sessions`: login sessions / tokens (guest sessions are session-only)
 - `parties`: lobby metadata, leader, mode, settings
 - `party_members`: membership and readiness state
-- `puzzles`: prompt, seed, theme, difficulty, canonical solution metadata
+- `puzzles`: prompt, seed, theme, difficulty, canonical solution metadata, parameter schema, novelty fingerprint
+- `puzzle_instances`: per-match resolved parameter values and frozen generated assets used for judging
 - `test_cases`: sample and hidden tests derived from seed/script
 - `matches`: start/end timestamps, mode, settings snapshot, forfeit/quit outcomes
 - `submissions`: code, verdict, runtime stats, partial-credit score
 - `hints`: hint level requested (1 or 2), text returned, and timing
 - `rating_events`: before/after ELO and calculation breakdown
+- `novelty_pool`: rolling window of recent puzzle fingerprints/signatures with recency rank
 
 ## 6) Puzzle generation pipeline
 
 1. Input:
    - Zen/Casual: selected theme + selected difficulty + optional seed
    - Ranked: random theme + ELO-assigned difficulty + optional seed
+   - Optional variable constraints for parameterized puzzle logic (name/type/range)
 2. Use LLM call to produce:
    - Transformation spec
    - Input generator script
    - Reference solver
    - Human-readable description
+   - Parameter schema used by the puzzle template
 3. Validate generated assets:
    - Script executes safely
    - Sample/hidden tests generated correctly
    - Reference solver passes all generated tests
-4. Persist puzzle package for audit/replay of the exact match.
-5. Serve puzzle package to active match.
+   - Parameter schema is valid (types, ranges, names)
+4. Run novelty check against rolling pool (exact and near-duplicate fingerprint checks); regenerate on collision up to retry budget.
+5. Sample concrete parameter values for the match from validated ranges using seedable RNG.
+6. Generate sample + hidden tests using this fixed parameter assignment for the full match.
+7. Persist puzzle template + per-match puzzle instance for audit/replay.
+8. Serve puzzle instance to active match.
 
 Generation policy:
 - Puzzles are generated on-demand per match (no required pre-generated pool).
+- Novelty is enforced against a rolling pool size (`NOVELTY_POOL_SIZE`) of 50 to reduce repeats.
+
+Parameterized puzzle variable contract:
+- Generator request may include `variables`, an optional list of constraints:
+  - `name`: identifier used by transformation logic (e.g., `n`)
+  - `type`: `int | float | bool | str | choice`
+  - `sampling`: backend RNG policy returned by generator for this variable (`uniform`, `weighted`, or `fixed_list`)
+  - `range`:
+    - numeric: `{ "min": <number>, "max": <number>, "inclusive": true|false }`
+    - string: `{ "min_length": <int>, "max_length": <int>, "charset": "..." }`
+    - choice: `{ "options": [ ... ] }`
+- Example request shape:
+  - `{ "variables": [{ "name": "n", "type": "int", "range": { "min": 2, "max": 20, "inclusive": true } }] }`
+- At match creation, values are sampled once per variable and frozen for that match.
+- Concrete variable values are sampled by backend code RNG (not by the LLM).
+- Sampled variable values are hidden during normal play.
+- Final hint (level 2) includes the full human description with the sampled variable values.
+- All sample and hidden outputs for that match must be computed with the same sampled variable values.
+
+Novelty strategy:
+- Build a normalized fingerprint from transformation spec + parameter schema + theme + difficulty.
+- Reject exact fingerprint matches in the last `NOVELTY_POOL_SIZE` accepted puzzles.
+- Reject near-duplicates using an initial similarity threshold over normalized signatures (0.88, tunable).
+- On rejection, regenerate with stronger novelty hints until retry limit; if exhausted, return controlled failure.
 
 Hardcoded theme catalog (initial):
 - String manipulation (unix-like text processing)
@@ -148,6 +182,7 @@ Hardcoded theme catalog (initial):
 Quality gates:
 - Reject ambiguous or inconsistent puzzle packs.
 - Tag puzzle difficulty by empirical solve metrics over time.
+- Reject templates with unconstrained or unsafe variable ranges.
 
 ## 7) Submission and judging flow
 
@@ -181,8 +216,18 @@ Inputs currently planned (from README):
 - Hint usage (including level used)
 
 Proposed approach:
+- Initial player rating starts at 1000.
 - Use free-for-all ELO updates per ranked room (not head-to-head only)
 - Base expected-score model from standard ELO against field average
+- Ranked placement order:
+  - Solved players first, ordered by earliest accepted full-solve timestamp
+  - Unsolved players next, ordered by hidden-test count, then earliest time reaching best score
+  - Quit/forfeit players are scored as unsolved using their best score at quit time
+- Initial difficulty assignment plan from average party ELO (tunable):
+  - `< 900`: Easy
+  - `900-1099`: Medium
+  - `1100-1299`: Hard
+  - `>= 1300`: Expert
 - Apply bounded modifiers for:
   - Placement rank
   - Completion time percentile
@@ -196,6 +241,7 @@ Proposed approach:
 
 - Sandbox isolation and strict runtime quotas
 - Rate limits on submissions, hints, and room creation
+- Initial common-sense defaults: short submit cooldown, per-match/hour submit caps, one request per hint level, and capped room creation/join attempts
 - Auth checks for ranked eligibility
 - Signed/expiring invite links
 - Audit logs for judging and rating events
@@ -216,15 +262,24 @@ Proposed approach:
 
 - Unit tests:
   - ELO calculations
+  - ranked placement tie-break ordering and quit-as-unsolved behavior
   - mode eligibility and fallback logic
   - ranked difficulty assignment from average party ELO
   - hint level penalties on rating gain
   - `solution(input_str) -> str` validator and error handling
+  - variable schema validator and per-type range parsing
+  - variable sampling modes (`uniform`, `weighted`, `fixed_list`)
+  - deterministic parameter sampling from seed
+  - novelty fingerprint generation and duplicate detection
+  - novelty pool eviction behavior at size 50
   - puzzle package validators
 - Integration tests:
   - submission pipeline (sample -> hidden)
   - party lifecycle (create/join/leave/start)
   - forfeit/quit flows and result handling
+  - parameterized puzzle generation with frozen match variables
+  - novelty retry path and graceful failure when retry budget is exhausted
+  - submission/hint/room rate-limit enforcement paths
   - ranked vs casual rules
 - End-to-end tests:
   - full solve flow from lobby to results
@@ -259,14 +314,18 @@ Phase 3 (quality and scale)
 ## 13) Immediate next implementation tasks
 
 1. Define API contract (OpenAPI or equivalent) for auth, parties, matches, submissions, and ratings.
-2. Implement database schema + migrations for core entities.
-3. Build judge service abstraction around sandbox execution.
-4. Implement function-contract execution (`solution(input_str) -> str`) and validator errors.
-5. Implement party flow (create/join via share link) and room state updates, including forfeit/quit.
-6. Ship first playable loop (single puzzle from start to verdict) with hidden-test count feedback only.
-7. Add ranked gating, random ranked theme selection, and ELO-based difficulty assignment.
-8. Implement two-level hints and ranked rating-gain multiplier penalties.
-9. Add initial free-for-all ELO formula behind feature flag.
+2. Define generator payload/response schema including variable constraints (`name`, `type`, `range`, `sampling`) and novelty controls.
+3. Implement database schema + migrations for core entities, puzzle instances, and novelty pool tracking.
+4. Build judge service abstraction around sandbox execution.
+5. Implement function-contract execution (`solution(input_str) -> str`) and validator errors.
+6. Implement parameter sampling and freeze-per-match puzzle instances.
+7. Implement novelty fingerprint checks with rolling pool + retry budget.
+8. Implement party flow (create/join via share link) and room state updates, including forfeit/quit.
+9. Ship first playable loop (single puzzle from start to verdict) with hidden-test count feedback only.
+10. Add ranked gating, random ranked theme selection, and ELO-based difficulty assignment buckets.
+11. Implement two-level hints and ranked rating-gain multiplier penalties.
+12. Add initial free-for-all ELO formula, tie-break ordering, and quit-as-unsolved handling behind feature flag.
+13. Implement common-sense submission/hint/room rate limits and related monitoring.
 
 ## 14) Locked product decisions
 
@@ -280,11 +339,19 @@ Phase 3 (quality and scale)
 8. Theme source is a hardcoded list; Zen/Casual allow selection, Ranked uses random selection.
 9. Ranked theme/difficulty are system-assigned, with difficulty based on average party ELO.
 10. Player submissions must expose `solution(input_str) -> str`; judge invokes this function per test.
+11. Puzzle templates may declare typed variables with bounded ranges; match instances sample and freeze values.
+12. Generator enforces novelty using a bounded rolling pool to reduce duplicate puzzles.
+13. Sampled variable values stay hidden during normal play and are revealed in the final hint description.
+14. Ranked tie-break order uses earliest full-solve time, then hidden-test progress for unsolved players.
+15. Quit/forfeit is equivalent to not solving within the ranked one-hour window.
+16. Initial player ELO starts at 1000.
+17. Initial ranked difficulty buckets are based on average party ELO and are tuning-friendly.
+18. Submission/hint/room protections use common-sense rate limits from launch.
+19. `NOVELTY_POOL_SIZE` is set to 50 for initial rollout.
+20. Variable sampling policy comes from the generator schema, but concrete RNG is executed in backend code.
 
 ## 15) Optional clarifications to lock later
 
-1. Ranked tie-break priority (solve order, then time, then hidden-test count?)
-2. Exact hint multiplier values for level 1 and level 2 in ranked
-3. Forfeit/quit rating treatment (fixed floor loss vs performance-based)
-4. Difficulty buckets and ELO cutoffs used for ranked assignment
-5. Submission cooldown/rate limits to prevent brute-force spam
+1. Exact hint multiplier values for level 1 and level 2 in ranked
+2. Tuning targets for near-duplicate similarity threshold after telemetry
+3. Tuning targets for ranked difficulty bucket cutoffs after telemetry
