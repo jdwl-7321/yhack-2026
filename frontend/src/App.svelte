@@ -5,6 +5,7 @@
   type AuthMode = "register" | "login";
   type Mode = "zen" | "casual" | "ranked";
   type Difficulty = "easy" | "medium" | "hard" | "expert";
+  type ConsoleType = "info" | "system" | "success" | "error";
 
   type SessionUser = {
     id: string;
@@ -66,11 +67,15 @@
     standings: Standing[];
   };
 
+  type ConsoleEntry = {
+    id: number;
+    text: string;
+    type: ConsoleType;
+  };
+
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
-  const PYTHON_TOKEN_PATTERN =
-    /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(\d+(?:\.\d+)?)\b|\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b/gm;
 
   const modeOptions: Mode[] = ["zen", "casual", "ranked"];
   const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
@@ -100,56 +105,116 @@
   let hints: string[] = [];
   let testResult: JudgePayload | null = null;
   let submitResult: JudgePayload | null = null;
-  let highlightedCode = " ";
-  let lineCount = 1;
-  let lineNumbers: HTMLDivElement | null = null;
-  let highlightLayer: HTMLPreElement | null = null;
 
   let busy = false;
   let error = "";
   let notice = "";
 
-  function escapeHtml(value: string): string {
-    return value
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+  let timerText = "00:00";
+  let timeRemaining = 0;
+  let timerInterval: ReturnType<typeof setInterval> | null = null;
+
+  let promptHeading = "Puzzle Prompt";
+  let signatureLine = "def solution(input_str: str) -> str";
+  let topSample: { input: string; output: string } | null = null;
+  let secondSample: { input: string; output: string } | null = null;
+
+  let consoleEntries: ConsoleEntry[] = [];
+  let consoleNextId = 1;
+  let consoleEl: HTMLDivElement | null = null;
+
+  function raceModeIcon(value: Mode): string {
+    if (value === "ranked") {
+      return "fa-trophy";
+    }
+    if (value === "casual") {
+      return "fa-user-friends";
+    }
+    return "fa-mountain";
   }
 
-  function highlightPython(source: string): string {
-    let html = "";
-    let lastIndex = 0;
-
-    for (const match of source.matchAll(PYTHON_TOKEN_PATTERN)) {
-      const index = match.index ?? 0;
-      const token = match[0];
-      html += escapeHtml(source.slice(lastIndex, index));
-
-      const className = match[1]
-        ? "editor-token-comment"
-        : match[2]
-          ? "editor-token-string"
-          : match[3]
-            ? "editor-token-number"
-            : "editor-token-keyword";
-
-      html += `<span class="${className}">${escapeHtml(token)}</span>`;
-      lastIndex = index + token.length;
+  function derivePromptHeading(prompt: string): string {
+    const firstLine = prompt
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    if (!firstLine) {
+      return "Puzzle Prompt";
     }
-
-    html += escapeHtml(source.slice(lastIndex));
-    return html || " ";
+    if (firstLine.length > 56) {
+      return "Puzzle Prompt";
+    }
+    return firstLine.replace(/[.:]$/, "");
   }
 
-  function syncEditorScroll(event: Event): void {
-    const target = event.currentTarget as HTMLTextAreaElement;
-    if (highlightLayer) {
-      highlightLayer.scrollTop = target.scrollTop;
-      highlightLayer.scrollLeft = target.scrollLeft;
+  function formatDuration(totalSeconds: number): string {
+    const safe = Math.max(0, totalSeconds);
+    const hours = Math.floor(safe / 3600);
+    const minutes = Math.floor((safe % 3600) / 60);
+    const seconds = safe % 60;
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds
+        .toString()
+        .padStart(2, "0")}`;
     }
-    if (lineNumbers) {
-      lineNumbers.scrollTop = target.scrollTop;
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  }
+
+  function clearTimer(): void {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
     }
+  }
+
+  function startTimer(seconds: number): void {
+    clearTimer();
+    timeRemaining = Math.max(0, seconds);
+    timerText = formatDuration(timeRemaining);
+    timerInterval = setInterval(() => {
+      timeRemaining = Math.max(0, timeRemaining - 1);
+      timerText = formatDuration(timeRemaining);
+      if (timeRemaining <= 0) {
+        clearTimer();
+      }
+    }, 1000);
+  }
+
+  function resetConsole(): void {
+    consoleEntries = [];
+    consoleNextId = 1;
+    appendConsole("Sandbox environment initialized. Python 3.10.", "system");
+    appendConsole("Waiting for submission...", "info");
+  }
+
+  function appendConsole(text: string, type: ConsoleType = "info"): void {
+    consoleEntries = [
+      ...consoleEntries,
+      {
+        id: consoleNextId,
+        text,
+        type,
+      },
+    ];
+    consoleNextId += 1;
+
+    void tick().then(() => {
+      if (consoleEl) {
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+    });
+  }
+
+  function syncMatchPresentation(payload: MatchPayload): void {
+    promptHeading = derivePromptHeading(payload.prompt);
+    signatureLine = (payload.scaffold.split("\n")[0] ?? signatureLine).trim();
+    topSample = payload.sample_tests[0] ?? null;
+    secondSample = payload.sample_tests[1] ?? null;
+  }
+
+  function updateSampleBlocks(): void {
+    topSample = match?.sample_tests[0] ?? null;
+    secondSample = match?.sample_tests[1] ?? null;
   }
 
   function handleEditorKeydown(event: KeyboardEvent): void {
@@ -174,10 +239,17 @@
     const selection = code.slice(selectionStart, selectionEnd);
     const indented = `${INDENT}${selection.replace(/\n/g, `\n${INDENT}`)}`;
     code = `${code.slice(0, selectionStart)}${indented}${code.slice(selectionEnd)}`;
+
     void tick().then(() => {
       target.selectionStart = selectionStart;
       target.selectionEnd = selectionStart + indented.length;
     });
+  }
+
+  function showHome(): void {
+    inArena = false;
+    error = "";
+    notice = "";
   }
 
   function resolveTheme(pref: UiTheme): "light" | "dark" {
@@ -233,7 +305,6 @@
     if (!sessionUser) {
       return;
     }
-
     const self = currentStandings.find(
       (row) => row.user_id === sessionUser?.id,
     );
@@ -288,7 +359,10 @@
       submitResult = null;
       hints = [];
       code = "";
+      clearTimer();
+      timerText = "00:00";
       notice = "Signed out.";
+      resetConsole();
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -309,6 +383,8 @@
     testResult = null;
     submitResult = null;
     hints = [];
+    const requestedMode = mode;
+
     try {
       const party = await api<{ code: string }>("/api/parties", {
         method: "POST",
@@ -330,20 +406,41 @@
       );
 
       match = payload;
+      mode = payload.mode;
+      difficulty = payload.difficulty;
+      selectedTheme = payload.theme;
+      timeLimitSeconds = payload.time_limit_seconds;
       standings = payload.standings;
       syncSessionElo(payload.standings);
       code = payload.scaffold;
       inArena = true;
-      if (payload.mode !== mode) {
+
+      syncMatchPresentation(payload);
+      startTimer(payload.time_limit_seconds);
+      resetConsole();
+      appendConsole(`Match loaded: ${payload.theme}`, "system");
+      if (payload.mode !== requestedMode) {
         notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`;
       }
     } catch (err) {
       error = toErrorMessage(err);
       match = null;
       standings = [];
+      appendConsole(`System error: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
+  }
+
+  async function launchConfiguredMatch(): Promise<void> {
+    inArena = true;
+    await startMatch();
+  }
+
+  async function startRace(nextMode: Mode): Promise<void> {
+    mode = nextMode;
+    inArena = true;
+    await startMatch();
   }
 
   async function submit(): Promise<void> {
@@ -354,6 +451,9 @@
     busy = true;
     error = "";
     notice = "";
+
+    appendConsole("> Executing submission in sandbox...", "system");
+
     try {
       const payload = await api<JudgePayload>(
         `/api/matches/${currentMatchId}/submit`,
@@ -362,14 +462,37 @@
           body: JSON.stringify({ code }),
         },
       );
+
       submitResult = payload;
       if (match?.match_id === currentMatchId) {
         match = { ...match, sample_tests: payload.sample_tests };
       }
+      updateSampleBlocks();
       standings = payload.standings;
       syncSessionElo(payload.standings);
+
+      appendConsole(
+        `Submit: sample ${payload.sample_passed}/${payload.sample_total}, hidden ${payload.hidden_passed}/${payload.hidden_total}, ${payload.runtime_ms}ms`,
+        payload.verdict === "accepted" ? "success" : "error",
+      );
+      if (payload.message) {
+        appendConsole(
+          payload.message,
+          payload.verdict === "accepted" ? "success" : "error",
+        );
+      }
+      if (payload.first_failed_hidden_test) {
+        appendConsole(
+          "First failed hidden test available for promotion.",
+          "system",
+        );
+      }
+      if (payload.verdict === "accepted") {
+        appendConsole("Match complete. Great run.", "success");
+      }
     } catch (err) {
       error = toErrorMessage(err);
+      appendConsole(`Submission failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -383,6 +506,9 @@
     busy = true;
     error = "";
     notice = "";
+
+    appendConsole("> Running sample tests...", "system");
+
     try {
       const payload = await api<JudgePayload>(
         `/api/matches/${currentMatchId}/test`,
@@ -391,14 +517,28 @@
           body: JSON.stringify({ code }),
         },
       );
+
       testResult = payload;
       if (match?.match_id === currentMatchId) {
         match = { ...match, sample_tests: payload.sample_tests };
       }
+      updateSampleBlocks();
       standings = payload.standings;
       syncSessionElo(payload.standings);
+
+      appendConsole(
+        `Samples: ${payload.sample_passed}/${payload.sample_total} passed (${payload.runtime_ms}ms)`,
+        payload.verdict === "accepted" ? "success" : "error",
+      );
+      if (payload.message) {
+        appendConsole(
+          payload.message,
+          payload.verdict === "accepted" ? "success" : "error",
+        );
+      }
     } catch (err) {
       error = toErrorMessage(err);
+      appendConsole(`Sample test failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -424,10 +564,13 @@
       if (match?.match_id === currentMatchId) {
         match = { ...match, sample_tests: payload.sample_tests };
       }
+      updateSampleBlocks();
       submitResult = { ...currentSubmit, first_failed_hidden_test: null };
       notice = "Promoted failed hidden test to visible samples.";
+      appendConsole("Promoted failed hidden test to samples.", "system");
     } catch (err) {
       error = toErrorMessage(err);
+      appendConsole(`Promotion failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -450,8 +593,10 @@
       const nextHints = [...hints];
       nextHints[payload.level - 1] = payload.hint;
       hints = nextHints;
+      appendConsole(`Hint level ${payload.level}: ${payload.hint}`, "system");
     } catch (err) {
       error = toErrorMessage(err);
+      appendConsole(`Hint request failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -473,8 +618,10 @@
       );
       standings = payload.standings;
       syncSessionElo(payload.standings);
+      appendConsole("You forfeited the match.", "error");
     } catch (err) {
       error = toErrorMessage(err);
+      appendConsole(`Forfeit failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -495,8 +642,10 @@
       );
       standings = payload.standings;
       syncSessionElo(payload.standings);
+      appendConsole("Match marked as finished.", "system");
     } catch (err) {
       error = toErrorMessage(err);
+      appendConsole(`Finish failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -505,9 +654,6 @@
   $: if (mode === "ranked") {
     timeLimitSeconds = 3600;
   }
-
-  $: lineCount = Math.max(1, code.split("\n").length);
-  $: highlightedCode = highlightPython(code);
 
   onMount(() => {
     const saved = localStorage.getItem("yhack.theme");
@@ -525,6 +671,8 @@
     };
     systemMatcher.addEventListener("change", mediaListener);
 
+    resetConsole();
+
     void loadThemes().catch((err) => {
       error = toErrorMessage(err);
     });
@@ -534,6 +682,7 @@
     });
 
     return () => {
+      clearTimer();
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener("change", mediaListener);
       }
@@ -541,377 +690,544 @@
   });
 </script>
 
-<div class="shell">
-  <header class="masthead">
-    <h1>Enigma</h1>
-    <p class="subtext">Infer the problem. Ship the solution.</p>
+<div id="app-shell">
+  <header>
+    <button type="button" class="logo" on:click={showHome}>
+      <i class="fas fa-code icon" aria-hidden="true"></i>
+      <span class="text">enigma</span>
+    </button>
+
+    <nav aria-label="Primary">
+      <button
+        type="button"
+        class="nav-icon"
+        class:active={!inArena}
+        on:click={showHome}
+        title="Home"
+      >
+        <i class="fas fa-keyboard" aria-hidden="true"></i>
+      </button>
+      <button
+        type="button"
+        class="nav-icon"
+        class:active={inArena}
+        on:click={() => {
+          if (sessionUser) {
+            inArena = true;
+          }
+        }}
+        title="Arena"
+      >
+        <i class="fas fa-crown" aria-hidden="true"></i>
+      </button>
+      <button type="button" class="nav-icon" title="Info">
+        <i class="fas fa-info" aria-hidden="true"></i>
+      </button>
+      <button type="button" class="nav-icon" title="Theme">
+        <i class="fas fa-palette" aria-hidden="true"></i>
+      </button>
+      <button type="button" class="nav-icon" title="Account">
+        <i class="fas fa-user" aria-hidden="true"></i>
+      </button>
+    </nav>
   </header>
 
-  <main class="layout">
-    <section class="panel controls">
-      {#if !sessionUser}
-        <h2>Account</h2>
-
-        <div class="switch-row auth-switch">
-          <button
-            type="button"
-            class:active={authMode === "register"}
-            on:click={() => {
-              authMode = "register";
-              error = "";
-              notice = "";
-            }}
-          >
-            Create account
-          </button>
-          <button
-            type="button"
-            class:active={authMode === "login"}
-            on:click={() => {
-              authMode = "login";
-              error = "";
-              notice = "";
-            }}
-          >
-            Sign in
-          </button>
-        </div>
-
-        <label>
-          <span>Display name</span>
-          <input bind:value={authName} maxlength="24" autocomplete="username" />
-        </label>
-
-        <label>
-          <span>Password</span>
-          <input
-            type="password"
-            bind:value={authPassword}
-            minlength="6"
-            autocomplete={authMode === "login"
-              ? "current-password"
-              : "new-password"}
-          />
-        </label>
-
-        <button
-          class="primary"
-          on:click={() => authenticate(authMode)}
-          disabled={busy}
-        >
-          {authMode === "register" ? "Create Account" : "Sign In"}
-        </button>
-        <p class="subtle note">
-          No guest toggle needed. Session auth is now cookie-backed.
-        </p>
-      {:else if !inArena}
-        <h2>Home</h2>
-        <p class="session-chip">Signed in as {sessionUser.name}</p>
-        <p class="mono">Current ELO · {sessionUser.elo}</p>
-
-        <button
-          class="primary"
-          on:click={() => {
-            inArena = true;
-            error = "";
-            notice = "";
-          }}
-          disabled={busy}
-        >
-          Enter Arena
-        </button>
-        <button class="ghost wide" on:click={logout} disabled={busy}
-          >Sign Out</button
-        >
-      {:else}
-        <h2>Match Setup</h2>
-        <p class="session-chip">{sessionUser.name} · ELO {sessionUser.elo}</p>
-
-        <label>
-          <span>Mode</span>
-          <select bind:value={mode}>
-            {#each modeOptions as option}
-              <option value={option}>{option.toUpperCase()}</option>
-            {/each}
-          </select>
-        </label>
-
-        <label>
-          <span>Puzzle theme</span>
-          <select bind:value={selectedTheme} disabled={mode === "ranked"}>
-            {#each themes as theme}
-              <option value={theme}>{theme}</option>
-            {/each}
-          </select>
-        </label>
-
-        <label>
-          <span>Difficulty</span>
-          <select bind:value={difficulty} disabled={mode === "ranked"}>
-            {#each difficultyOptions as option}
-              <option value={option}>{option.toUpperCase()}</option>
-            {/each}
-          </select>
-        </label>
-
-        <label>
-          <span>Time limit (seconds)</span>
-          <input
-            type="number"
-            bind:value={timeLimitSeconds}
-            min="60"
-            max="7200"
-            disabled={mode === "ranked"}
-          />
-        </label>
-
-        <label>
-          <span>Seed</span>
-          <input type="number" bind:value={seed} />
-        </label>
-
-        <button class="primary" on:click={startMatch} disabled={busy}>
-          {match ? "Restart Match" : "Start Match"}
-        </button>
-        <button
-          class="ghost wide"
-          on:click={() => {
-            inArena = false;
-            error = "";
-            notice = "";
-          }}
-          disabled={busy}
-        >
-          Back to Home
-        </button>
-        <button class="ghost wide" on:click={logout} disabled={busy}
-          >Sign Out</button
-        >
-      {/if}
-
-      <div class="theme-switcher">
-        <span>UI Theme</span>
-        <div class="switch-row">
-          {#each themeOptions as option}
-            <button
-              type="button"
-              class:active={themePref === option}
-              on:click={() => setTheme(option)}
-            >
-              {option}
-            </button>
-          {/each}
-        </div>
+  {#if !inArena}
+    <main id="home-view">
+      <div class="hero-text">
+        Infer the hidden rule. Write the Python snippet.<br />
+        <span>Defeat your opponents.</span>
       </div>
 
+      <div class="mode-selector" role="group" aria-label="Play mode">
+        <button
+          type="button"
+          class="mode-card"
+          on:click={() => startRace("zen")}
+          disabled={!sessionUser || busy}
+        >
+          <i class="fas fa-mountain" aria-hidden="true"></i>
+          <h3>Zen Mode</h3>
+          <p>Solo play. No rating. Infinite time.</p>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card"
+          on:click={() => startRace("casual")}
+          disabled={!sessionUser || busy}
+        >
+          <i class="fas fa-user-friends" aria-hidden="true"></i>
+          <h3>Casual Party</h3>
+          <p>Play with friends via link. Custom rules.</p>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card"
+          on:click={() => startRace("ranked")}
+          disabled={!sessionUser || busy}
+        >
+          <i class="fas fa-trophy" aria-hidden="true"></i>
+          <h3>Ranked</h3>
+          <p>Random theme. 1 hour limit. ELO rating.</p>
+        </button>
+      </div>
+
+      <section class="home-panels">
+        {#if !sessionUser}
+          <article class="home-card auth-card">
+            <h2>Account</h2>
+
+            <div class="segmented auth-switch">
+              <button
+                type="button"
+                class:active={authMode === "register"}
+                on:click={() => {
+                  authMode = "register";
+                  error = "";
+                  notice = "";
+                }}
+              >
+                Create account
+              </button>
+              <button
+                type="button"
+                class:active={authMode === "login"}
+                on:click={() => {
+                  authMode = "login";
+                  error = "";
+                  notice = "";
+                }}
+              >
+                Sign in
+              </button>
+            </div>
+
+            <label>
+              <span>Display name</span>
+              <input
+                bind:value={authName}
+                maxlength="24"
+                autocomplete="username"
+              />
+            </label>
+
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                bind:value={authPassword}
+                minlength="6"
+                autocomplete={authMode === "login"
+                  ? "current-password"
+                  : "new-password"}
+              />
+            </label>
+
+            <button
+              type="button"
+              class="btn primary wide"
+              on:click={() => authenticate(authMode)}
+              disabled={busy ||
+                authName.trim().length === 0 ||
+                authPassword.length < 6}
+            >
+              {authMode === "register" ? "Create Account" : "Sign In"}
+            </button>
+          </article>
+        {:else}
+          <article class="home-card setup-card">
+            <div class="setup-head">
+              <h2>Match Setup</h2>
+              <p>{sessionUser.name} | ELO {sessionUser.elo}</p>
+            </div>
+
+            <div class="field-grid">
+              <label>
+                <span>Mode</span>
+                <select bind:value={mode}>
+                  {#each modeOptions as option}
+                    <option value={option}>{option.toUpperCase()}</option>
+                  {/each}
+                </select>
+              </label>
+
+              <label>
+                <span>Puzzle theme</span>
+                <select bind:value={selectedTheme} disabled={mode === "ranked"}>
+                  {#each themes as theme}
+                    <option value={theme}>{theme}</option>
+                  {/each}
+                </select>
+              </label>
+
+              <label>
+                <span>Difficulty</span>
+                <select bind:value={difficulty} disabled={mode === "ranked"}>
+                  {#each difficultyOptions as option}
+                    <option value={option}>{option.toUpperCase()}</option>
+                  {/each}
+                </select>
+              </label>
+
+              <label>
+                <span>Time (seconds)</span>
+                <input
+                  type="number"
+                  bind:value={timeLimitSeconds}
+                  min="60"
+                  max="7200"
+                  disabled={mode === "ranked"}
+                />
+              </label>
+
+              <label>
+                <span>Seed</span>
+                <input type="number" bind:value={seed} />
+              </label>
+            </div>
+
+            <div class="theme-row">
+              <span>UI theme</span>
+              <div class="segmented">
+                {#each themeOptions as option}
+                  <button
+                    type="button"
+                    class:active={themePref === option}
+                    on:click={() => setTheme(option)}
+                  >
+                    {option}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="home-actions">
+              <button
+                type="button"
+                class="btn primary"
+                on:click={launchConfiguredMatch}
+                disabled={busy}
+              >
+                {match ? "Restart Match" : "Start Match"}
+              </button>
+
+              <button
+                type="button"
+                class="btn"
+                on:click={() => {
+                  if (match) {
+                    inArena = true;
+                  }
+                }}
+                disabled={!match || busy}
+              >
+                Resume Race
+              </button>
+
+              <button
+                type="button"
+                class="btn"
+                on:click={logout}
+                disabled={busy}
+              >
+                Sign Out
+              </button>
+            </div>
+          </article>
+        {/if}
+      </section>
+
       {#if notice}
-        <p class="notice">{notice}</p>
+        <p class="flash notice">{notice}</p>
       {/if}
       {#if error}
-        <p class="error">{error}</p>
+        <p class="flash error">{error}</p>
       {/if}
-    </section>
-
-    <section class="panel arena">
+    </main>
+  {:else}
+    <main id="race-view">
       {#if !sessionUser}
-        <div class="home-state">
-          <h2>Landing</h2>
-          <p>
-            Create an account or sign in to unlock session-backed play. Your
-            identity persists, ranked checks use your real account, and you can
-            launch matches from a clean home page.
-          </p>
-          <ul>
-            <li>Cookie-backed session auth</li>
-            <li>Account create + sign in flow</li>
-            <li>No guest checkbox dead-end</li>
-          </ul>
-        </div>
-      {:else if !inArena}
-        <div class="home-state">
-          <h2>Welcome, {sessionUser.name}</h2>
-          <p>
-            You are signed in and ready. Enter the arena from the left panel
-            when you want to generate a puzzle match.
-          </p>
-          <ul>
-            <li>Current ELO: {sessionUser.elo}</li>
-            <li>Ranked eligibility uses logged-in session</li>
-            <li>Theme and mode controls are in Match Setup</li>
-          </ul>
-        </div>
+        <section class="race-empty">
+          <p>Sign in to start a match.</p>
+          <button type="button" class="btn primary" on:click={showHome}
+            >Back Home</button
+          >
+        </section>
       {:else if !match}
-        <p class="empty">
-          Start a match to load prompt, samples, and editor scaffold.
-        </p>
-      {:else}
-        <header class="arena-head">
-          <h2>{match.theme}</h2>
-          <p class="mono">
-            {match.mode.toUpperCase()} · {match.difficulty.toUpperCase()} · {match.time_limit_seconds}s
+        <section class="race-empty">
+          <p>
+            Start a match from Home to load prompt, samples, and editor
+            scaffold.
           </p>
-        </header>
-
-        <div class="sample-grid">
-          {#each match.sample_tests as sample, index}
-            <article class="sample-card">
-              <h3>Sample {index + 1}</h3>
-              <p><strong>Input</strong></p>
-              <pre>{sample.input}</pre>
-              <p><strong>Output</strong></p>
-              <pre>{sample.output}</pre>
-            </article>
-          {/each}
+          <button type="button" class="btn" on:click={showHome}
+            >Back Home</button
+          >
+          <button
+            type="button"
+            class="btn primary"
+            on:click={launchConfiguredMatch}
+            disabled={busy}
+          >
+            Start Match
+          </button>
+        </section>
+      {:else}
+        <div class="test-config">
+          <div class="group">
+            <span id="header-mode"
+              ><i class={`fas ${raceModeIcon(match.mode)}`} aria-hidden="true"
+              ></i>
+              {match.mode}</span
+            >
+          </div>
+          <div class="divider"></div>
+          <div class="group">
+            <span
+              ><i class="fas fa-brain" aria-hidden="true"></i>
+              {match.theme}</span
+            >
+          </div>
+          <div class="divider"></div>
+          <div class="group">
+            <span
+              ><i class="fas fa-layer-group" aria-hidden="true"></i>
+              {match.difficulty}</span
+            >
+          </div>
+          <div class="divider"></div>
+          <div class="group">
+            <span class="active-text"
+              ><i class="fas fa-clock" aria-hidden="true"></i> {timerText}</span
+            >
+          </div>
         </div>
 
-        <label class="editor-label">
-          <span>Python submission</span>
-          <div class="editor-shell">
-            <div
-              class="editor-lines"
-              bind:this={lineNumbers}
-              aria-hidden="true"
-            >
-              {#each Array(lineCount) as _, index (index)}
-                <span>{index + 1}</span>
-              {/each}
-            </div>
-            <div class="editor-stack">
-              <pre
-                class="editor-highlight"
-                bind:this={highlightLayer}
-                aria-hidden="true">{@html highlightedCode}</pre>
+        <div class="game-layout">
+          <section class="prompt-panel">
+            <article class="prompt-card">
+              <h2>{promptHeading}</h2>
+              <p class="prompt-text">{match.prompt}</p>
+
+              {#if topSample}
+                <div class="io-block">
+                  <span class="io-label">Sample Input</span>
+                  <span class="io-value">{topSample.input}</span>
+                </div>
+                <div class="io-block">
+                  <span class="io-label">Sample Output</span>
+                  <span class="io-value">{topSample.output}</span>
+                </div>
+              {/if}
+
+              {#if secondSample}
+                <div class="io-block">
+                  <span class="io-label">Extra Sample</span>
+                  <span class="io-value"
+                    >{secondSample.input} => {secondSample.output}</span
+                  >
+                </div>
+              {/if}
+
+              <div class="io-block">
+                <span class="io-label">Constraint</span>
+                <span class="signature">{signatureLine}</span>
+              </div>
+
+              {#if hints.length > 0}
+                <div class="hint-stack">
+                  {#each hints as hintText, index}
+                    <p class="hint-item">Hint {index + 1}: {hintText}</p>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if submitResult?.first_failed_hidden_test}
+                <div class="failed-case">
+                  <h3>First failed hidden test</h3>
+                  <p>Input</p>
+                  <pre>{submitResult.first_failed_hidden_test.input_str}</pre>
+                  <p>Expected output</p>
+                  <pre>{submitResult.first_failed_hidden_test
+                      .expected_output}</pre>
+                  <p>Your output</p>
+                  <pre>{submitResult.first_failed_hidden_test
+                      .actual_output}</pre>
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={promoteFailedTest}
+                    disabled={busy}
+                  >
+                    Use as sample test
+                  </button>
+                </div>
+              {/if}
+            </article>
+          </section>
+
+          <section class="editor-panel">
+            <div class="editor-container">
               <textarea
-                class="editor-input"
+                id="code-editor"
                 bind:value={code}
                 spellcheck="false"
                 autocomplete="off"
                 wrap="off"
                 on:keydown={handleEditorKeydown}
-                on:scroll={syncEditorScroll}
               ></textarea>
-            </div>
-          </div>
-        </label>
 
-        <div class="action-row">
-          <button class="ghost" on:click={testSamples} disabled={busy}
-            >Test Samples</button
-          >
-          <button class="primary" on:click={submit} disabled={busy}
-            >Submit</button
-          >
-          <button
-            class="ghost"
-            on:click={requestHint}
-            disabled={busy || hints.length >= 3}
-          >
-            Get next hint
-          </button>
-          <button class="ghost" on:click={forfeit} disabled={busy}
-            >Forfeit</button
-          >
-          <button class="ghost" on:click={finishMatch} disabled={busy}
-            >Finish</button
-          >
+              <div class="editor-actions">
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={requestHint}
+                  disabled={busy || hints.length >= 3}
+                >
+                  <i class="fas fa-lightbulb" aria-hidden="true"></i> Hint
+                </button>
+
+                <div class="action-group">
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={forfeit}
+                    disabled={busy}
+                  >
+                    <i class="fas fa-flag" aria-hidden="true"></i> Forfeit
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={testSamples}
+                    disabled={busy}
+                  >
+                    <i class="fas fa-vial" aria-hidden="true"></i> Run Samples
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={finishMatch}
+                    disabled={busy}
+                  >
+                    <i class="fas fa-check" aria-hidden="true"></i> Finish
+                  </button>
+                  <button
+                    type="button"
+                    class="btn primary"
+                    on:click={submit}
+                    disabled={busy}
+                  >
+                    {#if busy}
+                      <i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Running...
+                    {:else}
+                      <i class="fas fa-play" aria-hidden="true"></i> Submit
+                    {/if}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="console" id="console" bind:this={consoleEl}>
+              {#each consoleEntries as entry (entry.id)}
+                <div class={`console-line ${entry.type}`}>{entry.text}</div>
+              {/each}
+            </div>
+
+            {#if testResult}
+              <p
+                class="result-pill"
+                class:success={testResult.verdict === "accepted"}
+                class:error={testResult.verdict !== "accepted"}
+              >
+                TEST: {testResult.verdict} | sample {testResult.sample_passed}/{testResult.sample_total}
+                | {testResult.runtime_ms}ms
+              </p>
+            {/if}
+
+            {#if submitResult}
+              <p
+                class="result-pill"
+                class:success={submitResult.verdict === "accepted"}
+                class:error={submitResult.verdict !== "accepted"}
+              >
+                SUBMIT: {submitResult.verdict} | sample {submitResult.sample_passed}/{submitResult.sample_total}
+                | hidden {submitResult.hidden_passed}/{submitResult.hidden_total}
+                | {submitResult.runtime_ms}ms
+              </p>
+            {/if}
+          </section>
         </div>
 
-        {#if testResult}
-          <section class="judge-result">
-            <p
-              class="chip"
-              class:ok={testResult.verdict === "accepted"}
-              class:bad={testResult.verdict !== "accepted"}
+        <section class="standings-card">
+          <div class="standings-head">
+            <h3>Standings</h3>
+            <button type="button" class="btn" on:click={showHome}
+              >Back Home</button
             >
-              TEST · {testResult.verdict.toUpperCase()} · SAMPLE {testResult.sample_passed}/{testResult.sample_total}
-              · {testResult.runtime_ms}ms
-            </p>
-            {#if testResult.message}
-              <p class="mono subtle">{testResult.message}</p>
-            {/if}
-            {#if testResult.stdout}
-              <p class="mono subtle">Stdout</p>
-              <pre class="stdout-block">{testResult.stdout}</pre>
-            {/if}
-          </section>
-        {/if}
+          </div>
 
-        {#if submitResult}
-          <section class="judge-result">
-            <p
-              class="chip"
-              class:ok={submitResult.verdict === "accepted"}
-              class:bad={submitResult.verdict !== "accepted"}
-            >
-              SUBMIT · {submitResult.verdict.toUpperCase()} · SAMPLE {submitResult.sample_passed}/{submitResult.sample_total}
-              · HIDDEN {submitResult.hidden_passed}/{submitResult.hidden_total} ·
-              {submitResult.runtime_ms}ms
-            </p>
-            {#if submitResult.message}
-              <p class="mono subtle">{submitResult.message}</p>
-            {/if}
-            {#if submitResult.stdout}
-              <p class="mono subtle">Stdout</p>
-              <pre class="stdout-block">{submitResult.stdout}</pre>
-            {/if}
-            {#if submitResult.first_failed_hidden_test}
-              <article class="failed-case">
-                <h3>First failed hidden test</h3>
-                <p><strong>Input</strong></p>
-                <pre>{submitResult.first_failed_hidden_test.input_str}</pre>
-                <p><strong>Expected output</strong></p>
-                <pre>{submitResult.first_failed_hidden_test
-                    .expected_output}</pre>
-                <p><strong>Your output</strong></p>
-                <pre>{submitResult.first_failed_hidden_test.actual_output}</pre>
-                <button
-                  class="ghost"
-                  on:click={promoteFailedTest}
-                  disabled={busy}
-                >
-                  Use this as sample test
-                </button>
-              </article>
-            {/if}
-          </section>
-        {/if}
-
-        {#if match.sample_tests.length >= 4}
-          <p class="mono subtle">
-            Visible sample limit reached (4). Promoting a new case replaces the
-            oldest sample.
-          </p>
-        {/if}
-
-        {#each hints as hintText, index}
-          <p class="hint"><strong>Hint {index + 1}:</strong> {hintText}</p>
-        {/each}
-
-        <section class="standings">
-          <h3>Standings</h3>
-          <ul>
-            {#each standings as row}
-              <li>
-                <span class="mono">#{row.placement}</span>
-                <span>{row.name}</span>
-                <span class="mono">hidden {row.hidden_passed}</span>
-                <span class="mono">hint {row.hint_level}</span>
-                <span class="mono">ELO {row.elo}</span>
-                <span class="mono delta"
-                  >{row.rating_delta >= 0 ? "+" : ""}{row.rating_delta}</span
-                >
-                <span
-                  class="state"
-                  class:ok={row.solved}
-                  class:bad={!row.solved}
-                >
-                  {row.forfeited ? "FORFEIT" : row.solved ? "SOLVED" : "OPEN"}
-                </span>
-              </li>
-            {/each}
-          </ul>
+          {#if standings.length === 0}
+            <p class="standings-empty">No standings yet.</p>
+          {:else}
+            <div class="standings-list">
+              {#each standings as row}
+                <article class="standing-row">
+                  <span class="mono">#{row.placement}</span>
+                  <span class="name">{row.name}</span>
+                  <span class="mono">hidden {row.hidden_passed}</span>
+                  <span class="mono">hint {row.hint_level}</span>
+                  <span class="mono">ELO {row.elo}</span>
+                  <span class="mono delta"
+                    >{row.rating_delta >= 0 ? "+" : ""}{row.rating_delta}</span
+                  >
+                  <span
+                    class="state"
+                    class:ok={row.solved}
+                    class:bad={!row.solved}
+                  >
+                    {row.forfeited ? "FORFEIT" : row.solved ? "SOLVED" : "OPEN"}
+                  </span>
+                </article>
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
-    </section>
-  </main>
+
+      {#if notice}
+        <p class="flash notice">{notice}</p>
+      {/if}
+      {#if error}
+        <p class="flash error">{error}</p>
+      {/if}
+    </main>
+  {/if}
+
+  <footer>
+    <div class="footer-left">
+      <a href="/contact"
+        ><i class="fas fa-envelope" aria-hidden="true"></i> contact</a
+      >
+      <a href="/donate"
+        ><i class="fas fa-heart" aria-hidden="true"></i> donate</a
+      >
+      <a href="/github"
+        ><i class="fas fa-code-branch" aria-hidden="true"></i> github</a
+      >
+      <a href="/discord"
+        ><i class="fab fa-discord" aria-hidden="true"></i> discord</a
+      >
+      <a href="/terms"
+        ><i class="fas fa-file-alt" aria-hidden="true"></i> terms</a
+      >
+    </div>
+    <div class="footer-right">
+      <span><i class="fas fa-palette" aria-hidden="true"></i> serika dark</span>
+      <span
+        ><i class="fas fa-code-branch" aria-hidden="true"></i> v0.1.0-alpha</span
+      >
+    </div>
+  </footer>
 </div>
