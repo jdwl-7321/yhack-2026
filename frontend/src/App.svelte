@@ -411,6 +411,19 @@
     return themeInfoById.get(themeId)?.displayName ?? themeId;
   }
 
+  function buildFaviconDataUrl(color: string): string {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="enigma favicon"><text x="8" y="44" fill="${color}" font-family="'Roboto Mono','Fira Code',monospace" font-size="32" font-weight="700" letter-spacing="-1.5">&lt;/&gt;</text></svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  }
+
+  function updateFavicon(color: string): void {
+    const favicon = document.getElementById("app-favicon");
+    if (!(favicon instanceof HTMLLinkElement)) {
+      return;
+    }
+    favicon.href = buildFaviconDataUrl(color);
+  }
+
   function scopeMatches(rawScope: string | string[], target: string): boolean {
     const scopeList = Array.isArray(rawScope)
       ? rawScope
@@ -582,6 +595,7 @@
     root.style.setProperty("--editor-comment", palette.comment);
     root.style.setProperty("--editor-number", palette.number);
     root.style.setProperty("--editor-function", palette.functionName);
+    updateFavicon(palette.accent);
 
     activeEditorTheme = themeId;
     activeEditorThemeName = themeName(themeId);
