@@ -578,6 +578,12 @@ select:focus {
 .code-highlight code {
   display: block;
   min-height: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  white-space: inherit;
+  tab-size: inherit;
 }
 
 .code-highlight .hljs {
@@ -611,6 +617,17 @@ select:focus {
   position: relative;
   z-index: 1;
   tab-size: 4;
+}
+
+#code-editor::selection {
+  background: color-mix(in srgb, var(--main-color) 38%, transparent);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+#code-editor::-moz-selection {
+  background: color-mix(in srgb, var(--main-color) 38%, transparent);
+  color: transparent;
 }
 
 .code-highlight .hljs-keyword,
