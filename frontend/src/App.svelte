@@ -360,12 +360,8 @@
 
 <div class="shell">
   <header class="masthead">
-    <p class="eyebrow">YHACK-2026 / INITIAL PROTOTYPE</p>
-    <h1>Infer the rule. Ship the solver.</h1>
-    <p class="subtext">
-      Fast end-to-end loop with puzzle generation, hidden judging, hints, party modes, and ranked
-      fallback logic.
-    </p>
+    <h1>Enigma</h1>
+    <p class="subtext">Infer the problem. Ship the solution.</p>
   </header>
 
   <main class="layout">
@@ -419,11 +415,6 @@
         <input type="number" bind:value={timeLimitSeconds} min="60" max="7200" disabled={mode === 'ranked'} />
       </label>
 
-      <label>
-        <span>Seed</span>
-        <input type="number" bind:value={seed} />
-      </label>
-
       <div class="theme-switcher">
         <span>UI Theme</span>
         <div class="switch-row">
@@ -451,7 +442,7 @@
 
     <section class="panel arena">
       {#if !match}
-        <p class="empty">Start a match to load prompt, samples, and editor scaffold.</p>
+        <p class="empty">Start a match to load samples and editor scaffold.</p>
       {:else}
         <header class="arena-head">
           <h2>{match.theme}</h2>
@@ -459,8 +450,6 @@
             {match.mode.toUpperCase()} · {match.difficulty.toUpperCase()} · {match.time_limit_seconds}s
           </p>
         </header>
-
-        <p class="prompt">{match.prompt}</p>
 
         <div class="sample-grid">
           {#each match.sample_tests as sample, index}
