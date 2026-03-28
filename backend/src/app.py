@@ -160,11 +160,9 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     @app.route("/api/matches/<match_id>/hint", methods=["POST"])
     def hint(match_id: str) -> Any:
         payload = request.get_json(silent=True) or {}
-        level = int(payload.get("level", 1))
-        text = data.request_hint(
+        level, text = data.request_hint(
             match_id=match_id,
             user_id=payload_user_id(payload),
-            level=level,
         )
         return jsonify({"level": level, "hint": text})
 

@@ -42,6 +42,7 @@ class PuzzleInstance:
     hidden_tests: list[TestCase]
     hint_level_1: str
     hint_level_2: str
+    hint_level_3: str
     variables: dict[str, JsonScalar]
     fingerprint: str
     signature: str
@@ -54,6 +55,7 @@ class _Template:
     prompt: str
     hint_level_1: str
     hint_level_2: str
+    hint_level_3: str
     solver: Callable[[str, dict[str, JsonScalar]], str]
     input_factory: Callable[[random.Random, Difficulty], str]
 
@@ -263,7 +265,8 @@ def generate_puzzle(
             sample_tests=sample_tests,
             hidden_tests=hidden_tests,
             hint_level_1=template.hint_level_1,
-            hint_level_2=template.hint_level_2.format(**params),
+            hint_level_2=template.hint_level_2,
+            hint_level_3=template.hint_level_3.format(**params),
             variables=params,
             fingerprint=fingerprint,
             signature=signature,
@@ -458,10 +461,13 @@ _TEMPLATES: dict[str, _Template] = {
             "Read whitespace-separated integers. Apply a hidden linear transform to each value, "
             "then output the transformed values in ascending order separated by spaces."
         ),
-        hint_level_1="There is a multiply-plus-offset rule before sorting.",
-        hint_level_2=(
-            "Use multiplier={multiplier} and offset={offset}; transform each value and sort ascending."
+        hint_level_1=(
+            "The output is derived from every input number and then reordered from smallest to largest."
         ),
+        hint_level_2=(
+            "Every number goes through the same linear value-mapping step before the final ascending sort."
+        ),
+        hint_level_3="This round applies x -> (x * {multiplier}) + {offset}, then sorts ascending.",
         solver=_linear_solver,
         input_factory=_linear_input,
     ),
@@ -485,10 +491,15 @@ _TEMPLATES: dict[str, _Template] = {
             "Read lowercase words separated by spaces. Shift letters by a hidden Caesar offset. "
             "A hidden toggle may reverse each shifted token. Output transformed tokens space-separated."
         ),
-        hint_level_1="Focus on per-token character shifts; there may also be token reversal.",
+        hint_level_1=(
+            "Each output token comes from transforming the matching input token in place."
+        ),
         hint_level_2=(
-            "Use shift={shift}. reverse_tokens={reverse_tokens}. "
-            "Shift each letter and reverse each token only when the toggle is true."
+            "Letters are shifted by a consistent Caesar-style rule, and token order stays unchanged."
+        ),
+        hint_level_3=(
+            "This round shifts letters by {shift}; reverse each transformed token only when "
+            "reverse_tokens={reverse_tokens}."
         ),
         solver=_cipher_solver,
         input_factory=_cipher_input,
@@ -508,8 +519,9 @@ _TEMPLATES: dict[str, _Template] = {
             "Rotate the matrix by 90 degrees using the hidden direction flag. "
             "Return rows in the same comma-separated format."
         ),
-        hint_level_1="This is a 90-degree matrix rotation puzzle.",
-        hint_level_2="Rotate 90 degrees with clockwise={clockwise}.",
+        hint_level_1="The output keeps the same square shape as the input matrix.",
+        hint_level_2="The transformation is a quarter-turn rotation of the full matrix.",
+        hint_level_3="This round rotates 90 degrees with clockwise={clockwise}.",
         solver=_grid_solver,
         input_factory=_grid_input,
     ),

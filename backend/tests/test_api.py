@@ -95,7 +95,7 @@ def test_ranked_party_falls_back_to_casual_with_guest() -> None:
     assert match["mode"] == "casual"
 
 
-def test_hint_levels_and_submit_flow() -> None:
+def test_hint_unlock_sequence_and_submit_flow() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
 
@@ -122,20 +122,35 @@ def test_hint_levels_and_submit_flow() -> None:
 
     hint1 = client.post(
         f"/api/matches/{match['match_id']}/hint",
-        json={"user_id": user["id"], "level": 1},
+        json={"user_id": user["id"]},
     )
     hint2 = client.post(
         f"/api/matches/{match['match_id']}/hint",
-        json={"user_id": user["id"], "level": 2},
+        json={"user_id": user["id"]},
     )
-    dup_hint = client.post(
+    hint3 = client.post(
         f"/api/matches/{match['match_id']}/hint",
-        json={"user_id": user["id"], "level": 2},
+        json={"user_id": user["id"]},
+    )
+    no_more_hints = client.post(
+        f"/api/matches/{match['match_id']}/hint",
+        json={"user_id": user["id"]},
     )
 
     assert hint1.status_code == 200
     assert hint2.status_code == 200
-    assert dup_hint.status_code == 400
+    assert hint3.status_code == 200
+    assert no_more_hints.status_code == 400
+
+    hint1_payload = hint1.get_json()
+    hint2_payload = hint2.get_json()
+    hint3_payload = hint3.get_json()
+    assert hint1_payload is not None
+    assert hint2_payload is not None
+    assert hint3_payload is not None
+    assert hint1_payload["level"] == 1
+    assert hint2_payload["level"] == 2
+    assert hint3_payload["level"] == 3
 
     result = client.post(
         f"/api/matches/{match['match_id']}/submit",

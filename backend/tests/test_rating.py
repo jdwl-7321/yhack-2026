@@ -55,7 +55,7 @@ def test_rank_order_tie_breaking() -> None:
     ]
 
 
-def test_hint_level_reduces_positive_elo_gain() -> None:
+def test_first_hint_has_no_positive_elo_penalty() -> None:
     baseline = elo_deltas(
         [
             RankedResult(
@@ -77,6 +77,55 @@ def test_hint_level_reduces_positive_elo_gain() -> None:
         ],
         difficulty="medium",
     )
+    first_hint = elo_deltas(
+        [
+            RankedResult(
+                "winner",
+                1000,
+                solved_at=5.0,
+                hidden_passed=6,
+                best_score_at=5.0,
+                hint_level=1,
+            ),
+            RankedResult(
+                "loser",
+                1000,
+                solved_at=None,
+                hidden_passed=0,
+                best_score_at=50.0,
+                hint_level=0,
+            ),
+        ],
+        difficulty="medium",
+    )
+
+    assert first_hint["winner"] == baseline["winner"]
+    assert first_hint["loser"] == baseline["loser"]
+
+
+def test_later_hints_reduce_positive_elo_gain() -> None:
+    baseline = elo_deltas(
+        [
+            RankedResult(
+                "winner",
+                1000,
+                solved_at=5.0,
+                hidden_passed=6,
+                best_score_at=5.0,
+                hint_level=0,
+            ),
+            RankedResult(
+                "loser",
+                1000,
+                solved_at=None,
+                hidden_passed=0,
+                best_score_at=50.0,
+                hint_level=0,
+            ),
+        ],
+        difficulty="medium",
+    )
+
     penalized = elo_deltas(
         [
             RankedResult(

@@ -88,8 +88,7 @@
   let match: MatchPayload | null = null
   let standings: Standing[] = []
   let code = ''
-  let hintOne = ''
-  let hintTwo = ''
+  let hints: string[] = []
   let submitResult: SubmitPayload | null = null
   let highlightedCode = ' '
   let lineCount = 1
@@ -266,8 +265,7 @@
       match = null
       standings = []
       submitResult = null
-      hintOne = ''
-      hintTwo = ''
+      hints = []
       code = ''
       notice = 'Signed out.'
     } catch (err) {
@@ -288,8 +286,7 @@
     error = ''
     notice = ''
     submitResult = null
-    hintOne = ''
-    hintTwo = ''
+    hints = []
     try {
       const party = await api<{ code: string }>('/api/parties', {
         method: 'POST',
@@ -345,22 +342,23 @@
     }
   }
 
-  async function requestHint(level: 1 | 2): Promise<void> {
+  async function requestHint(): Promise<void> {
     if (!match || !sessionUser) {
       return
     }
     busy = true
     error = ''
     try {
-      const payload = await api<{ hint: string }>(`/api/matches/${match.match_id}/hint`, {
-        method: 'POST',
-        body: JSON.stringify({ level }),
-      })
-      if (level === 1) {
-        hintOne = payload.hint
-      } else {
-        hintTwo = payload.hint
-      }
+      const payload = await api<{ level: 1 | 2 | 3; hint: string }>(
+        `/api/matches/${match.match_id}/hint`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      )
+      const nextHints = [...hints]
+      nextHints[payload.level - 1] = payload.hint
+      hints = nextHints
     } catch (err) {
       error = toErrorMessage(err)
     } finally {
@@ -682,8 +680,9 @@
 
         <div class="action-row">
           <button class="primary" on:click={submit} disabled={busy}>Submit</button>
-          <button class="ghost" on:click={() => requestHint(1)} disabled={busy}>Hint 1</button>
-          <button class="ghost" on:click={() => requestHint(2)} disabled={busy}>Hint 2</button>
+          <button class="ghost" on:click={requestHint} disabled={busy || hints.length >= 3}>
+            Get next hint
+          </button>
           <button class="ghost" on:click={forfeit} disabled={busy}>Forfeit</button>
           <button class="ghost" on:click={finishMatch} disabled={busy}>Finish</button>
         </div>
@@ -697,12 +696,9 @@
           {/if}
         {/if}
 
-        {#if hintOne}
-          <p class="hint"><strong>Hint 1:</strong> {hintOne}</p>
-        {/if}
-        {#if hintTwo}
-          <p class="hint"><strong>Hint 2:</strong> {hintTwo}</p>
-        {/if}
+        {#each hints as hintText, index}
+          <p class="hint"><strong>Hint {index + 1}:</strong> {hintText}</p>
+        {/each}
 
         <section class="standings">
           <h3>Standings</h3>

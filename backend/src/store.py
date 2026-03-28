@@ -240,18 +240,22 @@ class MemoryStore:
         match.submissions.append(result)
         return result
 
-    def request_hint(self, *, match_id: str, user_id: str, level: int) -> str:
-        if level not in {1, 2}:
-            raise ValueError("Hint level must be 1 or 2")
-
+    def request_hint(self, *, match_id: str, user_id: str) -> tuple[int, str]:
         match = self._require_match(match_id)
         player = self._require_player(match, user_id)
-        if level in player.hints_used:
-            raise ValueError("Hint level already used")
+        if player.hint_level >= 3:
+            raise ValueError("All hints already used")
+
+        level = player.hint_level + 1
+        hints_by_level = {
+            1: match.puzzle.hint_level_1,
+            2: match.puzzle.hint_level_2,
+            3: match.puzzle.hint_level_3,
+        }
 
         player.hints_used.add(level)
-        player.hint_level = max(player.hint_level, level)
-        return match.puzzle.hint_level_1 if level == 1 else match.puzzle.hint_level_2
+        player.hint_level = level
+        return level, hints_by_level[level]
 
     def forfeit(self, *, match_id: str, user_id: str) -> None:
         match = self._require_match(match_id)

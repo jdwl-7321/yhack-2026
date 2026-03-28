@@ -13,8 +13,9 @@ _DIFFICULTY_MULTIPLIER = {
 
 _HINT_GAIN_MULTIPLIER = {
     0: 1.0,
-    1: 0.85,
-    2: 0.7,
+    1: 1.0,
+    2: 0.85,
+    3: 0.7,
 }
 
 
@@ -75,7 +76,7 @@ def elo_deltas(results: list[RankedResult], difficulty: Difficulty) -> dict[str,
         raw_delta = round(base_k * (actual - expected))
 
         if raw_delta > 0:
-            hint_level = 2 if player.hint_level >= 2 else player.hint_level
+            hint_level = min(3, max(0, player.hint_level))
             raw_delta = round(raw_delta * _HINT_GAIN_MULTIPLIER[hint_level])
 
         deltas[player.user_id] = max(-64, min(64, raw_delta))
