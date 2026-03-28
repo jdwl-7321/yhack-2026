@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
   import { onMount, tick } from 'svelte'
 
   type UiTheme = 'light' | 'dark' | 'system'
@@ -448,11 +448,30 @@
     }
   })
 </script>
+<div class="shell" id="top">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">EN</span>
+      <div>
+        <p>Enigma Arena</p>
+        <span>Infer. Code. Conquer.</span>
+      </div>
+    </div>
 
-<div class="shell">
-  <header class="masthead">
-    <h1>Enigma</h1>
-    <p class="subtext">Infer the problem. Ship the solution.</p>
+    <nav class="main-nav" aria-label="Primary">
+      <a href="#home">Home</a>
+      <a href="#how">How it works</a>
+      <a href="#modes">Modes</a>
+      <a href="#rankings">Rankings</a>
+    </nav>
+
+    <div class="theme-switcher top-theme">
+      {#each themeOptions as option}
+        <button type="button" class:active={themePref === option} on:click={() => setTheme(option)}>
+          {option}
+        </button>
+      {/each}
+    </div>
   </header>
 
   <main class="layout">
@@ -501,12 +520,12 @@
         </label>
 
         <button class="primary" on:click={() => authenticate(authMode)} disabled={busy}>
-          {authMode === 'register' ? 'Create Account' : 'Sign In'}
+          {authMode === 'register' ? 'Create account' : 'Sign in'}
         </button>
-        <p class="subtle note">No guest toggle needed. Session auth is now cookie-backed.</p>
+        <p class="subtle note">Session-backed auth for profile, dashboard, and rankings.</p>
       {:else if !inArena}
-        <h2>Home</h2>
-        <p class="session-chip">Signed in as {sessionUser.name}</p>
+        <h2>Welcome</h2>
+        <p class="session-chip">{sessionUser.name}</p>
         <p class="mono">Current ELO · {sessionUser.elo}</p>
 
         <button
@@ -518,9 +537,9 @@
           }}
           disabled={busy}
         >
-          Enter Arena
+          Enter arena
         </button>
-        <button class="ghost wide" on:click={logout} disabled={busy}>Sign Out</button>
+        <button class="ghost wide" on:click={logout} disabled={busy}>Sign out</button>
       {:else}
         <h2>Match Setup</h2>
         <p class="session-chip">{sessionUser.name} · ELO {sessionUser.elo}</p>
@@ -569,7 +588,7 @@
         </label>
 
         <button class="primary" on:click={startMatch} disabled={busy}>
-          {match ? 'Restart Match' : 'Start Match'}
+          {match ? 'Restart match' : 'Start match'}
         </button>
         <button
           class="ghost wide"
@@ -580,25 +599,10 @@
           }}
           disabled={busy}
         >
-          Back to Home
+          Back to home
         </button>
-        <button class="ghost wide" on:click={logout} disabled={busy}>Sign Out</button>
+        <button class="ghost wide" on:click={logout} disabled={busy}>Sign out</button>
       {/if}
-
-      <div class="theme-switcher">
-        <span>UI Theme</span>
-        <div class="switch-row">
-          {#each themeOptions as option}
-            <button
-              type="button"
-              class:active={themePref === option}
-              on:click={() => setTheme(option)}
-            >
-              {option}
-            </button>
-          {/each}
-        </div>
-      </div>
 
       {#if notice}
         <p class="notice">{notice}</p>
@@ -609,32 +613,89 @@
     </section>
 
     <section class="panel arena">
-      {#if !sessionUser}
-        <div class="home-state">
-          <h2>Landing</h2>
-          <p>
-            Create an account or sign in to unlock session-backed play. Your identity persists, ranked
-            checks use your real account, and you can launch matches from a clean home page.
+      {#if !inArena}
+        <section class="landing-hero" id="home">
+          <p class="eyebrow">Season 4 live</p>
+          <h1>Infer the rule. Ship the solver.</h1>
+          <p class="subtext">
+            A cleaner home page inspired by your reference design, tuned to feel calmer and easier on
+            the eyes.
           </p>
+
+          <div class="hero-actions">
+            {#if sessionUser}
+              <button
+                class="primary inline"
+                on:click={() => {
+                  inArena = true
+                  error = ''
+                  notice = ''
+                }}
+                disabled={busy}
+              >
+                Continue to arena
+              </button>
+            {:else}
+              <button
+                class="primary inline"
+                on:click={() => {
+                  authMode = 'register'
+                  error = ''
+                  notice = ''
+                }}
+                disabled={busy}
+              >
+                Create account
+              </button>
+            {/if}
+            <a class="ghost inline-link" href="#how">View game flow</a>
+          </div>
+        </section>
+
+        <section class="landing-grid" id="how">
+          <article>
+            <p class="mono label">STEP 01</p>
+            <h2>Observe</h2>
+            <p>Study examples and reverse engineer the hidden transformation rule.</p>
+          </article>
+          <article>
+            <p class="mono label">STEP 02</p>
+            <h2>Code</h2>
+            <p>Implement a solution in the built-in editor with quick feedback loops.</p>
+          </article>
+          <article>
+            <p class="mono label">STEP 03</p>
+            <h2>Submit</h2>
+            <p>Clear hidden tests, gain rating, and move up the board.</p>
+          </article>
+        </section>
+
+        <section class="mode-grid" id="modes">
+          <article class="mode-card">
+            <p class="mode-tag">Solo</p>
+            <h2>Zen</h2>
+            <p>No timer pressure. Pure practice and deep problem solving.</p>
+          </article>
+          <article class="mode-card">
+            <p class="mode-tag">Queue</p>
+            <h2>Casual</h2>
+            <p>Quick rounds for warmups, team practice, and daily reps.</p>
+          </article>
+          <article class="mode-card featured">
+            <p class="mode-tag">Competitive</p>
+            <h2>Ranked</h2>
+            <p>High-signal ladder matches with ELO impact and tighter constraints.</p>
+          </article>
+        </section>
+
+        <section class="rankings-preview" id="rankings">
+          <h2>Top rankers this week</h2>
           <ul>
-            <li>Cookie-backed session auth</li>
-            <li>Account create + sign in flow</li>
-            <li>No guest checkbox dead-end</li>
+            <li><span>#01</span> NullPointer_Ex <strong>2892</strong></li>
+            <li><span>#02</span> ByteWizard <strong>2845</strong></li>
+            <li><span>#03</span> LogicLoom <strong>2710</strong></li>
           </ul>
-        </div>
-      {:else if !inArena}
-        <div class="home-state">
-          <h2>Welcome, {sessionUser.name}</h2>
-          <p>
-            You are signed in and ready. Enter the arena from the left panel when you want to generate
-            a puzzle match.
-          </p>
-          <ul>
-            <li>Current ELO: {sessionUser.elo}</li>
-            <li>Ranked eligibility uses logged-in session</li>
-            <li>Theme and mode controls are in Match Setup</li>
-          </ul>
-        </div>
+        </section>
       {:else if !match}
         <p class="empty">Start a match to load prompt, samples, and editor scaffold.</p>
       {:else}
@@ -681,7 +742,7 @@
         </label>
 
         <div class="action-row">
-          <button class="primary" on:click={submit} disabled={busy}>Submit</button>
+          <button class="primary inline" on:click={submit} disabled={busy}>Submit</button>
           <button class="ghost" on:click={() => requestHint(1)} disabled={busy}>Hint 1</button>
           <button class="ghost" on:click={() => requestHint(2)} disabled={busy}>Hint 2</button>
           <button class="ghost" on:click={forfeit} disabled={busy}>Forfeit</button>
@@ -726,3 +787,4 @@
     </section>
   </main>
 </div>
+
