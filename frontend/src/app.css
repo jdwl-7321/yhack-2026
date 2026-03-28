@@ -452,6 +452,83 @@ select:focus {
   gap: 0.5rem;
 }
 
+.party-lobby {
+  display: grid;
+  gap: 0.65rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.6rem;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--bg-color) 62%, var(--sub-alt-color) 38%);
+}
+
+.party-lobby-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.party-lobby-head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.party-code-row,
+.party-limit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.party-code-row strong {
+  color: var(--main-color);
+  font-size: 1rem;
+}
+
+.party-limit-row span,
+.party-note {
+  margin: 0;
+  color: var(--sub-color);
+  font-size: 0.82rem;
+}
+
+.party-leader-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.party-members {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.party-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  background: var(--bg-color);
+}
+
+.party-member-row em {
+  color: var(--sub-color);
+  font-style: normal;
+  margin-left: 0.35rem;
+}
+
+.party-join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
 .flash {
   width: 100%;
   margin: 0;
@@ -1180,6 +1257,10 @@ footer a:hover {
   .test-config {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .party-join-row {
+    grid-template-columns: 1fr;
   }
 
   .leaderboard-table,

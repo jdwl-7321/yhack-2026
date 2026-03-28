@@ -51,6 +51,7 @@ class Party:
     mode: Mode
     leader_id: str
     settings: PartySettings
+    member_limit: int
     members: list[str] = field(default_factory=list)
 
 
@@ -146,6 +147,7 @@ class MemoryStore:
         theme: str,
         difficulty: Difficulty,
         time_limit_seconds: int,
+        member_limit: int | None = None,
         seed: int | None = None,
     ) -> Party:
         if leader_id not in self.users:
@@ -156,6 +158,11 @@ class MemoryStore:
             raise ValueError("Invalid difficulty")
         if time_limit_seconds <= 0:
             raise ValueError("time_limit_seconds must be positive")
+
+        resolved_member_limit = self._resolve_party_limit(
+            mode=mode,
+            member_limit=member_limit,
+        )
 
         code = self._new_party_code()
         party = Party(
@@ -168,21 +175,99 @@ class MemoryStore:
                 time_limit_seconds=time_limit_seconds,
                 seed=seed,
             ),
+            member_limit=resolved_member_limit,
             members=[leader_id],
         )
         self.parties[party.code] = party
         return party
+
+    def get_party(self, *, code: str) -> Party:
+        return self._require_party(code)
 
     def join_party(self, *, code: str, user_id: str) -> Party:
         party = self._require_party(code)
         if user_id not in self.users:
             raise ValueError("User does not exist")
         if user_id not in party.members:
+            if len(party.members) >= party.member_limit:
+                raise ValueError("Party is full")
             party.members.append(user_id)
         return party
 
-    def start_match(self, *, code: str, seed: int | None = None) -> Match:
+    def set_party_limit(
+        self,
+        *,
+        code: str,
+        leader_id: str,
+        member_limit: int,
+    ) -> Party:
         party = self._require_party(code)
+        self._require_party_leader(party, leader_id)
+
+        resolved_member_limit = self._resolve_party_limit(
+            mode=party.mode,
+            member_limit=member_limit,
+        )
+        if resolved_member_limit < len(party.members):
+            raise ValueError("Party limit cannot be below current member count")
+
+        party.member_limit = resolved_member_limit
+        return party
+
+    def set_party_settings(
+        self,
+        *,
+        code: str,
+        leader_id: str,
+        theme: str,
+        difficulty: Difficulty,
+        time_limit_seconds: int,
+        seed: int | None = None,
+    ) -> Party:
+        party = self._require_party(code)
+        self._require_party_leader(party, leader_id)
+
+        if theme not in THEMES:
+            raise ValueError("Theme must be from the hardcoded catalog")
+        if difficulty not in {"easy", "medium", "hard", "expert"}:
+            raise ValueError("Invalid difficulty")
+        if time_limit_seconds <= 0:
+            raise ValueError("time_limit_seconds must be positive")
+
+        party.settings.theme = theme
+        party.settings.difficulty = difficulty
+        party.settings.time_limit_seconds = time_limit_seconds
+        party.settings.seed = seed
+        return party
+
+    def kick_party_member(
+        self,
+        *,
+        code: str,
+        leader_id: str,
+        member_id: str,
+    ) -> Party:
+        party = self._require_party(code)
+        self._require_party_leader(party, leader_id)
+
+        if member_id == party.leader_id:
+            raise ValueError("Leader cannot be kicked")
+        if member_id not in party.members:
+            raise ValueError("Member is not in this party")
+
+        party.members = [user_id for user_id in party.members if user_id != member_id]
+        return party
+
+    def start_match(
+        self,
+        *,
+        code: str,
+        requester_id: str | None = None,
+        seed: int | None = None,
+    ) -> Match:
+        party = self._require_party(code)
+        if requester_id is not None and requester_id != party.leader_id:
+            raise ValueError("Only the party leader can start the match")
         members = [self._require_user(user_id) for user_id in party.members]
 
         effective_mode = resolve_mode(
@@ -437,6 +522,25 @@ class MemoryStore:
             code = "".join(random.choice(alphabet) for _ in range(6))
             if code not in self.parties:
                 return code
+
+    @staticmethod
+    def _resolve_party_limit(*, mode: Mode, member_limit: int | None) -> int:
+        if mode == "zen":
+            return 1
+
+        if member_limit is None:
+            return 4
+
+        if member_limit < 2:
+            raise ValueError("Party limit must be at least 2")
+        if member_limit > 16:
+            raise ValueError("Party limit cannot exceed 16")
+        return member_limit
+
+    @staticmethod
+    def _require_party_leader(party: Party, leader_id: str) -> None:
+        if party.leader_id != leader_id:
+            raise ValueError("Only the party leader can do that")
 
     def _auto_finish_ranked_match(self, match: Match) -> None:
         if match.finished or match.mode != "ranked":

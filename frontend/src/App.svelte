@@ -60,6 +60,7 @@
 
   type MatchPayload = {
     match_id: string;
+    party_code: string;
     mode: Mode;
     theme: string;
     difficulty: Difficulty;
@@ -68,6 +69,26 @@
     scaffold: string;
     sample_tests: Array<{ input: string; output: string }>;
     standings: Standing[];
+  };
+
+  type PartySettingsPayload = {
+    theme: string;
+    difficulty: Difficulty;
+    time_limit_seconds: number;
+    seed: number | null;
+  };
+
+  type PartyPayload = {
+    code: string;
+    join_code: string;
+    join_path: string;
+    mode: Mode;
+    leader_id: string;
+    member_limit: number;
+    is_full: boolean;
+    settings: PartySettingsPayload;
+    members: SessionUser[];
+    invite_link: string;
   };
 
   type FailedHiddenTest = {
@@ -130,6 +151,9 @@
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
   const LEADERBOARD_LIMIT = 10;
+  const PARTY_LIMIT_MIN = 2;
+  const PARTY_LIMIT_MAX = 16;
+  const DEFAULT_PARTY_LIMIT = 4;
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
@@ -158,6 +182,9 @@
   let difficulty: Difficulty = "easy";
   let selectedTheme = FALLBACK_THEME;
   let timeLimitSeconds = 900;
+  let partyLimit = DEFAULT_PARTY_LIMIT;
+  let joinCodeInput = "";
+  let party: PartyPayload | null = null;
 
   let themePref: UiTheme = "dark";
   let appearanceMode: AppearanceMode = "system";
@@ -203,6 +230,10 @@
   let lineNumbersEl: HTMLPreElement | null = null;
   let lineNumbers = "1";
   let editorScrollLeft = 0;
+
+  let isPartyMode = false;
+  let isPartyLeader = false;
+  let canEditPartySetup = true;
 
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
@@ -642,6 +673,30 @@
     return "Unexpected error";
   }
 
+  function normalizePartyCode(raw: string): string {
+    return raw
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
+  }
+
+  function applyParty(partyPayload: PartyPayload): void {
+    party = partyPayload;
+    mode = partyPayload.mode;
+    selectedTheme = partyPayload.settings.theme;
+    difficulty = partyPayload.settings.difficulty;
+    timeLimitSeconds = partyPayload.settings.time_limit_seconds;
+    partyLimit = partyPayload.member_limit;
+  }
+
+  function partyJoinUrl(partyPayload: PartyPayload): string {
+    if (typeof window === "undefined") {
+      return partyPayload.join_path;
+    }
+    return `${window.location.origin}${partyPayload.join_path}`;
+  }
+
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
@@ -713,6 +768,7 @@
     if (!payload.authenticated || !payload.user) {
       sessionUser = null;
       activeView = "home";
+      party = null;
       return;
     }
     sessionUser = payload.user;
@@ -753,6 +809,8 @@
       sessionUser = null;
       activeView = "home";
       match = null;
+      party = null;
+      joinCodeInput = "";
       standings = [];
       testResult = null;
       submitResult = null;
@@ -772,7 +830,194 @@
     }
   }
 
-  async function startMatch(): Promise<void> {
+  async function createPartyLobby(): Promise<void> {
+    if (!sessionUser) {
+      error = "Sign in to create a party.";
+      activeView = "home";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>("/api/parties", {
+        method: "POST",
+        body: JSON.stringify({
+          leader_id: sessionUser.id,
+          mode,
+          theme: selectedTheme,
+          difficulty,
+          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
+          member_limit: mode === "zen"
+            ? 1
+            : Math.min(
+                PARTY_LIMIT_MAX,
+                Math.max(PARTY_LIMIT_MIN, partyLimit),
+              ),
+        }),
+      });
+
+      applyParty(payload);
+      notice = `Party created. Share code ${payload.join_code}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function refreshPartyLobby(): Promise<void> {
+    if (!party) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}`);
+      applyParty(payload);
+      notice = "Party refreshed.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function joinPartyLobby(): Promise<void> {
+    if (!sessionUser) {
+      error = "Sign in to join a party.";
+      activeView = "home";
+      return;
+    }
+
+    const normalized = normalizePartyCode(joinCodeInput);
+    if (!normalized) {
+      error = "Enter a valid party code.";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${normalized}/join`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id }),
+      });
+      applyParty(payload);
+      joinCodeInput = payload.join_code;
+      notice = `Joined party ${payload.join_code}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function copyPartyInvite(): Promise<void> {
+    if (!party) {
+      return;
+    }
+
+    const shareText = `${party.join_code} (${partyJoinUrl(party)})`;
+    try {
+      await navigator.clipboard.writeText(shareText);
+      notice = "Join code copied to clipboard.";
+    } catch {
+      notice = `Join code: ${shareText}`;
+    }
+  }
+
+  async function updatePartyLimit(): Promise<void> {
+    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}/limit`, {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: sessionUser.id,
+          member_limit: Math.min(
+            PARTY_LIMIT_MAX,
+            Math.max(PARTY_LIMIT_MIN, partyLimit),
+          ),
+        }),
+      });
+      applyParty(payload);
+      notice = `Party limit set to ${payload.member_limit}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function updatePartySetup(): Promise<void> {
+    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(
+        `/api/parties/${party.code}/settings`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: sessionUser.id,
+            theme: selectedTheme,
+            difficulty,
+            time_limit_seconds: timeLimitSeconds,
+          }),
+        },
+      );
+      applyParty(payload);
+      notice = "Party setup updated.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function kickPartyMember(memberId: string): Promise<void> {
+    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}/kick`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id, member_id: memberId }),
+      });
+      applyParty(payload);
+      notice = "Member removed from party.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function clearPartyLobby(): void {
+    party = null;
+    joinCodeInput = "";
+    notice = "Lobby closed.";
+  }
+
+  async function startMatch(partyCode?: string): Promise<void> {
     if (!sessionUser) {
       error = "Sign in to start a match.";
       activeView = "home";
@@ -788,21 +1033,30 @@
     const requestedMode = mode;
 
     try {
-      const party = await api<{ code: string }>("/api/parties", {
-        method: "POST",
-        body: JSON.stringify({
-          mode,
-          theme: selectedTheme,
-          difficulty,
-          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
-        }),
-      });
+      let codeToStart = partyCode;
+      if (!codeToStart) {
+        const createdParty = await api<PartyPayload>("/api/parties", {
+          method: "POST",
+          body: JSON.stringify({
+            leader_id: sessionUser.id,
+            mode,
+            theme: selectedTheme,
+            difficulty,
+            time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
+            member_limit: mode === "zen" ? 1 : partyLimit,
+          }),
+        });
+        codeToStart = createdParty.code;
+        if (mode !== "zen") {
+          applyParty(createdParty);
+        }
+      }
 
       const payload = await api<MatchPayload>(
-        `/api/parties/${party.code}/start`,
+        `/api/parties/${codeToStart}/start`,
         {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ user_id: sessionUser.id }),
         },
       );
 
@@ -815,6 +1069,10 @@
       syncSessionElo(payload.standings);
       code = payload.scaffold;
       activeView = "arena";
+
+      if (payload.mode === "zen") {
+        party = null;
+      }
 
       startTimer(payload.time_limit_seconds);
       resetConsole();
@@ -833,12 +1091,35 @@
   }
 
   async function launchConfiguredMatch(): Promise<void> {
-    await startMatch();
+    if (mode === "zen") {
+      party = null;
+      await startMatch();
+      return;
+    }
+
+    if (!party) {
+      await createPartyLobby();
+      return;
+    }
+
+    if (party.leader_id !== sessionUser?.id) {
+      error = "Only the party leader can start the match.";
+      return;
+    }
+
+    await startMatch(party.code);
   }
 
   async function startRace(nextMode: Mode): Promise<void> {
+    if (party && party.mode !== nextMode) {
+      party = null;
+    }
     mode = nextMode;
-    await startMatch();
+    if (nextMode === "casual" || nextMode === "ranked") {
+      notice = "Create a party or enter a join code to continue.";
+    } else {
+      notice = "";
+    }
   }
 
   async function submit(): Promise<void> {
@@ -1011,8 +1292,18 @@
     }
   }
 
+  $: isPartyMode = mode === "casual" || mode === "ranked";
+  $: isPartyLeader = !!party && !!sessionUser && party.leader_id === sessionUser.id;
+  $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
+
   $: if (mode === "ranked") {
     timeLimitSeconds = 3600;
+  }
+
+  $: if (isPartyMode) {
+    partyLimit = Math.min(PARTY_LIMIT_MAX, Math.max(PARTY_LIMIT_MIN, partyLimit));
+  } else {
+    partyLimit = 1;
   }
 
   $: themeStatusText =
@@ -1075,6 +1366,19 @@
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
+
+    const queryCode = normalizePartyCode(
+      new URL(window.location.href).searchParams.get("join") ?? "",
+    );
+    const pathCode = normalizePartyCode(
+      window.location.pathname.match(/^\/join\/([A-Za-z0-9]+)/)?.[1] ?? "",
+    );
+    const initialJoinCode = queryCode || pathCode;
+    if (initialJoinCode) {
+      joinCodeInput = initialJoinCode;
+      mode = "casual";
+      notice = `Ready to join party ${initialJoinCode}. Sign in and click Join Party.`;
+    }
 
     resetConsole();
 
@@ -1307,7 +1611,7 @@
             <div class="field-grid">
               <label>
                 <span>Mode</span>
-                <select bind:value={mode}>
+                <select bind:value={mode} disabled={!!party || busy}>
                   {#each modeOptions as option}
                     <option value={option}>{option.toUpperCase()}</option>
                   {/each}
@@ -1316,7 +1620,10 @@
 
               <label>
                 <span>Puzzle theme</span>
-                <select bind:value={selectedTheme} disabled={mode === "ranked"}>
+                <select
+                  bind:value={selectedTheme}
+                  disabled={mode === "ranked" || !canEditPartySetup || busy}
+                >
                   {#each themes as theme}
                     <option value={theme}>{theme}</option>
                   {/each}
@@ -1325,7 +1632,10 @@
 
               <label>
                 <span>Difficulty</span>
-                <select bind:value={difficulty} disabled={mode === "ranked"}>
+                <select
+                  bind:value={difficulty}
+                  disabled={mode === "ranked" || !canEditPartySetup || busy}
+                >
                   {#each difficultyOptions as option}
                     <option value={option}>{option.toUpperCase()}</option>
                   {/each}
@@ -1339,20 +1649,151 @@
                   bind:value={timeLimitSeconds}
                   min="60"
                   max="7200"
-                  disabled={mode === "ranked"}
+                  disabled={mode === "ranked" || !canEditPartySetup || busy}
+                />
+              </label>
+
+              <label>
+                <span>Party limit</span>
+                <input
+                  type="number"
+                  bind:value={partyLimit}
+                  min={isPartyMode ? PARTY_LIMIT_MIN : 1}
+                  max={isPartyMode ? PARTY_LIMIT_MAX : 1}
+                  disabled={!isPartyMode || (!isPartyLeader && !!party) || busy}
                 />
               </label>
 
             </div>
+
+            {#if isPartyMode}
+              <div class="party-lobby">
+                <div class="party-lobby-head">
+                  <h3>Party Lobby</h3>
+                  {#if party}
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={refreshPartyLobby}
+                      disabled={busy}
+                    >
+                      <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
+                    </button>
+                  {/if}
+                </div>
+
+                {#if party}
+                  <div class="party-code-row mono">
+                    <span class="eyebrow">Join code</span>
+                    <strong>{party.join_code}</strong>
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={copyPartyInvite}
+                      disabled={busy}
+                    >
+                      <i class="fas fa-copy" aria-hidden="true"></i> Copy code
+                    </button>
+                  </div>
+
+                  {#if isPartyLeader}
+                    <div class="party-limit-row">
+                      <span>
+                        {party.members.length}/{party.member_limit} members
+                      </span>
+                      <div class="party-leader-actions">
+                        {#if party.mode === "casual"}
+                          <button
+                            type="button"
+                            class="btn"
+                            on:click={updatePartySetup}
+                            disabled={busy}
+                          >
+                            Update setup
+                          </button>
+                        {/if}
+                        <button
+                          type="button"
+                          class="btn"
+                          on:click={updatePartyLimit}
+                          disabled={busy}
+                        >
+                          Update limit
+                        </button>
+                      </div>
+                    </div>
+                  {:else}
+                    <p class="party-note">
+                      Waiting for the leader to update settings and start the match.
+                    </p>
+                  {/if}
+
+                  <div class="party-members">
+                    {#each party.members as member}
+                      <article class="party-member-row">
+                        <span class="mono">
+                          {member.name}
+                          {#if member.id === party.leader_id}
+                            <em>(leader)</em>
+                          {/if}
+                        </span>
+                        {#if isPartyLeader && member.id !== party.leader_id}
+                          <button
+                            type="button"
+                            class="btn"
+                            on:click={() => void kickPartyMember(member.id)}
+                            disabled={busy}
+                          >
+                            Kick
+                          </button>
+                        {/if}
+                      </article>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="party-join-row">
+                    <label>
+                      <span>Join code</span>
+                      <input
+                        value={joinCodeInput}
+                        maxlength="6"
+                        placeholder="ABC123"
+                        on:input={(event) => {
+                          joinCodeInput = normalizePartyCode(
+                            (event.currentTarget as HTMLInputElement).value,
+                          );
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={joinPartyLobby}
+                      disabled={busy || normalizePartyCode(joinCodeInput).length !== 6}
+                    >
+                      Join Party
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
 
             <div class="home-actions">
               <button
                 type="button"
                 class="btn primary"
                 on:click={launchConfiguredMatch}
-                disabled={busy}
+                disabled={busy || (isPartyMode && !!party && !isPartyLeader)}
               >
-                {match ? "Restart Match" : "Start Match"}
+                {#if mode === "zen"}
+                  {match ? "Restart Match" : "Start Match"}
+                {:else if !party}
+                  Create Party
+                {:else if !isPartyLeader}
+                  Waiting for Leader
+                {:else}
+                  Start Party Match
+                {/if}
               </button>
 
               <button
@@ -1367,6 +1808,17 @@
               >
                 Resume Race
               </button>
+
+              {#if party}
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={clearPartyLobby}
+                  disabled={busy}
+                >
+                  Close Lobby
+                </button>
+              {/if}
 
               <button
                 type="button"
