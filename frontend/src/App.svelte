@@ -11,6 +11,8 @@
   type UiTheme = "light" | "dark";
   type AppearanceMode = UiTheme | "system";
   type View = "home" | "arena" | "leaderboard" | "settings";
+  type KeybindMode = "normal" | "vim" | "custom";
+  type QuickActionKey = "off" | "tab" | "esc" | "enter";
   type AuthMode = "register" | "login";
   type Mode = "zen" | "casual" | "ranked";
   type Difficulty = "easy" | "medium" | "hard" | "expert";
@@ -184,6 +186,8 @@
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
+  const KEYBIND_MODE_STORAGE_KEY = "yhack.keybind-mode";
+  const QUICK_ACTION_KEY_STORAGE_KEY = "yhack.quick-action-key";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
@@ -224,6 +228,8 @@
   let lightEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
   let darkEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
   let activeEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
+  let keybindMode: KeybindMode = "normal";
+  let quickActionKey: QuickActionKey = "off";
   let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
     DEFAULT_DARK_EDITOR_THEME;
   let availableEditorThemes = bundledThemesInfo.filter(
@@ -436,15 +442,12 @@
   let lineNumbers = "1";
   let editorScrollLeft = 0;
 
-<<<<<<< HEAD
   function userInitial(name: string | undefined): string {
     return name?.trim().charAt(0).toUpperCase() || "?";
   }
-=======
   let isPartyMode = false;
   let isPartyLeader = false;
   let canEditPartySetup = true;
->>>>>>> b1741488dfbe8e08381e012f9dc7e10d99e87d01
 
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
@@ -927,6 +930,16 @@
     }
 
     syncThemeState();
+  }
+
+  function setKeybindMode(mode: KeybindMode): void {
+    keybindMode = mode;
+    localStorage.setItem(KEYBIND_MODE_STORAGE_KEY, mode);
+  }
+
+  function setQuickActionKey(key: QuickActionKey): void {
+    quickActionKey = key;
+    localStorage.setItem(QUICK_ACTION_KEY_STORAGE_KEY, key);
   }
 
   function toErrorMessage(value: unknown): string {
@@ -1654,6 +1667,25 @@
       darkEditorTheme = savedDarkTheme as BundledTheme;
     }
 
+    const savedKeybindMode = localStorage.getItem(KEYBIND_MODE_STORAGE_KEY);
+    if (
+      savedKeybindMode === "normal" ||
+      savedKeybindMode === "vim" ||
+      savedKeybindMode === "custom"
+    ) {
+      keybindMode = savedKeybindMode;
+    }
+
+    const savedQuickActionKey = localStorage.getItem(QUICK_ACTION_KEY_STORAGE_KEY);
+    if (
+      savedQuickActionKey === "off" ||
+      savedQuickActionKey === "tab" ||
+      savedQuickActionKey === "esc" ||
+      savedQuickActionKey === "enter"
+    ) {
+      quickActionKey = savedQuickActionKey;
+    }
+
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
     syncThemeState();
 
@@ -1809,8 +1841,6 @@
           </div>
         {/if}
       </div>
-<<<<<<< HEAD
-=======
       <div class="account-menu-shell" bind:this={accountMenuEl}>
         <button
           type="button"
@@ -1972,7 +2002,6 @@
           </div>
         {/if}
       </div>
->>>>>>> b1741488dfbe8e08381e012f9dc7e10d99e87d01
     </nav>
   </header>
 
@@ -2446,17 +2475,13 @@
               <i class="fas fa-id-badge" aria-hidden="true"></i>
               <span>Profile</span>
             </a>
-            <a href="#settings-arena" class="settings-section-link">
-              <i class="fas fa-sliders" aria-hidden="true"></i>
-              <span>Arena Defaults</span>
+            <a href="#settings-behavior" class="settings-section-link">
+              <i class="fas fa-keyboard" aria-hidden="true"></i>
+              <span>Behavior</span>
             </a>
             <a href="#settings-editor" class="settings-section-link">
               <i class="fas fa-palette" aria-hidden="true"></i>
               <span>Editor Theme</span>
-            </a>
-            <a href="#settings-system" class="settings-section-link">
-              <i class="fas fa-server" aria-hidden="true"></i>
-              <span>System</span>
             </a>
           </nav>
 
@@ -2507,10 +2532,6 @@
 
             <div class="settings-stat-grid">
               <div class="settings-stat-card">
-                <span>Account state</span>
-                <strong>{sessionUser ? "Authenticated" : "Guest"}</strong>
-              </div>
-              <div class="settings-stat-card">
                 <span>Leaderboard rank</span>
                 <strong>
                   {leaderboardCurrentUser
@@ -2521,10 +2542,6 @@
               <div class="settings-stat-card">
                 <span>Active match</span>
                 <strong>{match ? match.mode.toUpperCase() : "None"}</strong>
-              </div>
-              <div class="settings-stat-card">
-                <span>Visible themes</span>
-                <strong>{themes.length}</strong>
               </div>
             </div>
           </div>
@@ -2548,73 +2565,75 @@
           </div>
         </section>
 
-        <section id="settings-arena" class="settings-panel">
+        <section id="settings-behavior" class="settings-panel">
           <div class="settings-panel-heading">
             <div>
-              <p class="eyebrow">Arena</p>
-              <h3>Match Defaults</h3>
+              <p class="eyebrow">Behavior</p>
+              <h3>Keybind Preferences</h3>
             </div>
-            <span class="settings-panel-note">Used the next time you queue</span>
+            <span class="settings-panel-note">Editor movement and shortcuts</span>
           </div>
 
-          <div class="settings-mode-grid" role="group" aria-label="Default mode">
-            {#each modeOptions as option}
-              <button
-                type="button"
-                class="settings-mode-card"
-                class:active={mode === option}
-                on:click={() => {
-                  mode = option;
-                }}
+          <div class="settings-behavior-list">
+            <article class="settings-behavior-row">
+              <div class="settings-behavior-copy">
+                <div class="settings-behavior-label">
+                  <i class="fas fa-star" aria-hidden="true"></i>
+                  <span>Keybind profile</span>
+                </div>
+                <p>
+                  Normal keeps the default editor controls. Vim enables modal
+                  movement. Custom is a flexible profile for team-specific
+                  shortcuts.
+                </p>
+              </div>
+              <div
+                class="settings-toggle-group"
+                role="group"
+                aria-label="Keybind profile"
               >
-                <i class={`fas ${raceModeIcon(option)}`} aria-hidden="true"></i>
-                <strong>{option.toUpperCase()}</strong>
-                <span>
-                  {option === "zen"
-                    ? "Solo practice with no pressure."
-                    : option === "casual"
-                      ? "Share a link and customize the room."
-                      : "Backend-governed queue with rating changes."}
-                </span>
-              </button>
-            {/each}
-          </div>
-
-          <div class="field-grid">
-            <label>
-              <span>Difficulty</span>
-              <select bind:value={difficulty}>
-                {#each difficultyOptions as option}
-                  <option value={option}>{option.toUpperCase()}</option>
+                {#each ["normal", "vim", "custom"] as option}
+                  <button
+                    type="button"
+                    class="settings-toggle-pill"
+                    class:active={keybindMode === option}
+                    on:click={() => setKeybindMode(option as KeybindMode)}
+                  >
+                    {option}
+                  </button>
                 {/each}
-              </select>
-            </label>
+              </div>
+            </article>
 
-            <label>
-              <span>Puzzle Theme</span>
-              <select bind:value={selectedTheme} disabled={mode === "ranked"}>
-                {#each themes as theme}
-                  <option value={theme}>{theme}</option>
+            <article class="settings-behavior-row">
+              <div class="settings-behavior-copy">
+                <div class="settings-behavior-label">
+                  <i class="fas fa-rotate-right" aria-hidden="true"></i>
+                  <span>Quick command key</span>
+                </div>
+                <p>
+                  Choose a fast shortcut for opening your quick action flow
+                  without crowding the rest of the interface.
+                </p>
+              </div>
+              <div
+                class="settings-toggle-group"
+                role="group"
+                aria-label="Quick command shortcut"
+              >
+                {#each ["off", "tab", "esc", "enter"] as option}
+                  <button
+                    type="button"
+                    class="settings-toggle-pill"
+                    class:active={quickActionKey === option}
+                    on:click={() => setQuickActionKey(option as QuickActionKey)}
+                  >
+                    {option}
+                  </button>
                 {/each}
-              </select>
-            </label>
-
-            <label>
-              <span>Timer (seconds)</span>
-              <input
-                type="number"
-                bind:value={timeLimitSeconds}
-                min="60"
-                max="7200"
-                disabled={mode === "ranked"}
-              />
-            </label>
+              </div>
+            </article>
           </div>
-
-          <p class="settings-helper-copy">
-            Ranked still locks time to 3600 seconds and lets the backend choose
-            the valid puzzle configuration.
-          </p>
         </section>
 
         <section id="settings-editor" class="settings-panel">
@@ -2688,65 +2707,6 @@
     <span class="preview-keyword">return</span> <span class="preview-string">line</span>.strip()[::<span class="preview-number">-1</span>]  <span class="preview-comment"># hidden-rule ready</span></pre>
               </div>
             </article>
-          </div>
-        </section>
-
-        <section id="settings-system" class="settings-panel">
-          <div class="settings-panel-heading">
-            <div>
-              <p class="eyebrow">System</p>
-              <h3>Frontend & Backend Snapshot</h3>
-            </div>
-            <span class="settings-panel-note">Quick health checks</span>
-          </div>
-
-          <div class="settings-system-grid">
-            <div class="settings-stat-card">
-              <span>API target</span>
-              <strong>{API_BASE || "Same origin"}</strong>
-            </div>
-            <div class="settings-stat-card">
-              <span>Leaderboard rows</span>
-              <strong>{leaderboard.length}</strong>
-            </div>
-            <div class="settings-stat-card">
-              <span>Current screen</span>
-              <strong>{activeView}</strong>
-            </div>
-            <div class="settings-stat-card">
-              <span>Busy state</span>
-              <strong>{busy ? "Working" : "Idle"}</strong>
-            </div>
-          </div>
-
-          <div class="settings-action-row">
-            <button
-              type="button"
-              class="btn"
-              on:click={() => void loadThemes()}
-              disabled={busy}
-            >
-              <i class="fas fa-brush" aria-hidden="true"></i>
-              Reload Themes
-            </button>
-            <button
-              type="button"
-              class="btn"
-              on:click={() => void loadLeaderboard()}
-              disabled={busy}
-            >
-              <i class="fas fa-ranking-star" aria-hidden="true"></i>
-              Refresh Leaderboard
-            </button>
-            <button
-              type="button"
-              class="btn primary"
-              on:click={launchConfiguredMatch}
-              disabled={!sessionUser || busy}
-            >
-              <i class="fas fa-bolt" aria-hidden="true"></i>
-              Launch With Defaults
-            </button>
           </div>
         </section>
       </section>

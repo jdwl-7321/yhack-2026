@@ -1478,7 +1478,7 @@ select:focus {
 .settings-panel,
 .settings-profile-grid,
 .settings-stat-grid,
-.settings-mode-grid,
+.settings-behavior-list,
 .settings-editor-grid,
 .settings-system-grid {
   display: grid;
@@ -1502,6 +1502,7 @@ select:focus {
 .settings-preview-labels span {
   color: var(--sub-color);
   font-size: 0.78rem;
+  min-width: 0;
 }
 
 .settings-summary-item strong,
@@ -1510,6 +1511,14 @@ select:focus {
   color: var(--text-color);
   font-size: 0.88rem;
   text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  flex: 1 1 50%;
+}
+
+.settings-summary-item span,
+.settings-stat-card span {
+  flex: 1 1 50%;
 }
 
 .settings-section-link {
@@ -1617,47 +1626,66 @@ select:focus {
   gap: 0.55rem;
 }
 
-.settings-mode-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.settings-mode-card {
+.settings-behavior-row {
   display: grid;
-  gap: 0.55rem;
-  padding: 1rem;
-  border-radius: 0.9rem;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--bg-color) 70%, var(--sub-alt-color) 30%);
-  color: var(--sub-color);
-  font-family: var(--font-family);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.2s ease, transform 0.2s ease, color 0.2s ease;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
+  gap: 1rem;
+  align-items: center;
 }
 
-.settings-mode-card i {
-  color: var(--main-color);
-  font-size: 1.15rem;
+.settings-behavior-copy {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
 }
 
-.settings-mode-card strong {
+.settings-behavior-copy p {
+  margin: 0;
   color: var(--text-color);
+  line-height: 1.5;
   font-size: 0.9rem;
 }
 
-.settings-mode-card span {
-  line-height: 1.55;
-  font-size: 0.8rem;
+.settings-behavior-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--sub-color);
+  font-size: 0.78rem;
+  text-transform: lowercase;
 }
 
-.settings-mode-card:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--main-color) 35%, transparent);
+.settings-behavior-label i {
+  color: color-mix(in srgb, var(--text-color) 35%, var(--sub-color) 65%);
 }
 
-.settings-mode-card.active {
-  border-color: color-mix(in srgb, var(--main-color) 50%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--main-color) 22%, transparent);
+.settings-toggle-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.settings-toggle-pill {
+  border: 0;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--bg-color) 78%, var(--sub-alt-color) 22%);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 0.92rem;
+  cursor: pointer;
+  padding: 0.9rem 0.85rem;
+  text-transform: lowercase;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.settings-toggle-pill:hover {
+  transform: translateY(-1px);
+}
+
+.settings-toggle-pill.active {
+  background: var(--main-color);
+  color: var(--bg-color);
 }
 
 .settings-control-card,
@@ -1767,7 +1795,7 @@ footer a:hover {
   #settings-view,
   .settings-profile-grid,
   .settings-editor-grid,
-  .settings-mode-grid {
+  .settings-behavior-row {
     grid-template-columns: 1fr;
   }
 
@@ -1860,6 +1888,10 @@ footer a:hover {
   .settings-stat-grid,
   .settings-system-grid {
     grid-template-columns: 1fr;
+  }
+
+  .settings-toggle-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .settings-summary-item,
