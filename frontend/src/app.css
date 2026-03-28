@@ -135,7 +135,8 @@ nav {
   color: var(--text-color);
 }
 
-.theme-menu-shell {
+.theme-menu-shell,
+.account-menu-shell {
   position: relative;
 }
 
@@ -187,6 +188,21 @@ nav {
   z-index: 30;
 }
 
+.account-menu {
+  position: absolute;
+  top: calc(100% + 0.65rem);
+  right: 0;
+  width: min(42rem, calc(100vw - 2rem));
+  display: grid;
+  gap: 1.15rem;
+  padding: 1.2rem;
+  border-radius: 1rem;
+  background: var(--sub-alt-color);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+  z-index: 30;
+}
+
 .theme-menu-section {
   display: grid;
   gap: 0.55rem;
@@ -227,6 +243,196 @@ nav {
 
 .theme-menu-summary strong {
   color: var(--text-color);
+}
+
+.account-summary-card,
+.account-card,
+.account-stat-card {
+  background: color-mix(in srgb, var(--bg-color) 76%, var(--sub-alt-color) 24%);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 85%, transparent);
+  border-radius: 0.95rem;
+}
+
+.account-summary-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+  padding: 1.15rem;
+}
+
+.account-avatar {
+  width: 3.9rem;
+  height: 3.9rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--main-color) 16%, transparent);
+  color: var(--main-color);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.account-summary-copy {
+  min-width: 0;
+}
+
+.account-summary-copy h2,
+.account-card h2,
+.account-card h3 {
+  margin: 0;
+}
+
+.account-summary-copy h2 {
+  font-size: 1.35rem;
+}
+
+.account-summary-meta,
+.account-card-head span,
+.account-empty,
+.account-run-row p,
+.account-run-meta,
+.account-stat-card small {
+  margin: 0;
+  color: var(--sub-color);
+}
+
+.account-summary-meta {
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.account-elo-pill {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: end;
+  text-align: right;
+}
+
+.account-elo-pill span {
+  color: var(--sub-color);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.account-elo-pill strong {
+  font-size: 1.8rem;
+  color: var(--text-color);
+}
+
+.account-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.account-stat-card {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 7.6rem;
+  align-content: start;
+  padding: 1rem;
+}
+
+.account-stat-card strong {
+  font-size: 1.2rem;
+  color: var(--text-color);
+}
+
+.account-stat-card small {
+  font-size: 0.74rem;
+}
+
+.account-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+  gap: 1rem;
+}
+
+.account-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1.05rem;
+}
+
+.account-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.account-card-head h3 {
+  font-size: 0.96rem;
+}
+
+.account-run-list,
+.account-overview-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.account-run-row,
+.account-overview-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+}
+
+.account-run-row:first-child,
+.account-overview-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.account-run-row strong,
+.account-overview-row strong {
+  color: var(--text-color);
+}
+
+.account-run-row p {
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+}
+
+.account-run-meta {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: end;
+  text-align: right;
+  font-size: 0.74rem;
+}
+
+.account-overview-row {
+  align-items: center;
+}
+
+.account-overview-row span {
+  color: var(--sub-color);
+  font-size: 0.8rem;
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: center;
+}
+
+.account-empty-card {
+  padding: 1rem;
+}
+
+.success-text {
+  color: var(--success-color);
+}
+
+.error-text {
+  color: var(--error-color);
 }
 
 .btn {
@@ -1152,6 +1358,15 @@ footer a:hover {
     row-gap: 0.3rem;
   }
 
+  .account-stat-grid,
+  .account-content-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-stat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .state {
     justify-self: start;
   }
@@ -1167,6 +1382,28 @@ footer a:hover {
     width: 100%;
     justify-content: flex-end;
     flex-wrap: wrap;
+  }
+
+  .account-menu {
+    width: min(100vw - 2rem, 42rem);
+  }
+
+  .account-summary-card,
+  .account-stat-grid,
+  .account-content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-elo-pill,
+  .account-run-meta {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .account-run-row,
+  .account-overview-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .mode-selector {

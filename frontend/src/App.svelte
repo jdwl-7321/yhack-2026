@@ -126,6 +126,33 @@
     functionName: string;
   };
 
+  type AccountOutcome = "solved" | "forfeit";
+
+  type AccountRecentRun = {
+    match_id: string;
+    mode: Mode;
+    theme: string;
+    difficulty: Difficulty;
+    outcome: AccountOutcome;
+    hidden_passed: number;
+    rating_delta: number;
+    at: string;
+  };
+
+  type AccountStats = {
+    matchesStarted: number;
+    matchesSolved: number;
+    rankedFinished: number;
+    rankedWins: number;
+    hintsUsed: number;
+    sampleRuns: number;
+    submissions: number;
+    forfeits: number;
+    bestHiddenPassed: number;
+    recentRuns: AccountRecentRun[];
+    recordedMatchIds: string[];
+  };
+
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
@@ -133,9 +160,12 @@
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
+  const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
   const APPEARANCE_MODE_ORDER: AppearanceMode[] = ["system", "light", "dark"];
+  const ACCOUNT_RECENT_RUN_LIMIT = 6;
+  const ACCOUNT_RECORDED_MATCH_LIMIT = 30;
   const themeInfoById = new Map(
     bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
   );
@@ -174,6 +204,8 @@
   );
   let themeMenuOpen = false;
   let themeMenuEl: HTMLDivElement | null = null;
+  let accountMenuOpen = false;
+  let accountMenuEl: HTMLDivElement | null = null;
 
   let themes = [FALLBACK_THEME];
   let match: MatchPayload | null = null;
@@ -200,6 +232,179 @@
   let consoleNextId = 1;
   let consoleEl: HTMLDivElement | null = null;
   let highlightEl: HTMLPreElement | null = null;
+  let accountStats: AccountStats = emptyAccountStats();
+  let accountLeaderboardEntry: LeaderboardEntry | null = null;
+  let accountSolveRate: number | null = null;
+  let accountRankLabel = "Unranked";
+  let accountPercentileLabel = "No ranked result yet";
+  let accountRankedWinLabel = "0/0";
+
+  function emptyAccountStats(): AccountStats {
+    return {
+      matchesStarted: 0,
+      matchesSolved: 0,
+      rankedFinished: 0,
+      rankedWins: 0,
+      hintsUsed: 0,
+      sampleRuns: 0,
+      submissions: 0,
+      forfeits: 0,
+      bestHiddenPassed: 0,
+      recentRuns: [],
+      recordedMatchIds: [],
+    };
+  }
+
+  function accountStatsStorageKey(userId: string): string {
+    return `${ACCOUNT_STATS_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function normalizeAccountStats(raw: unknown): AccountStats {
+    const fallback = emptyAccountStats();
+    if (!raw || typeof raw !== "object") {
+      return fallback;
+    }
+
+    const source = raw as Partial<AccountStats>;
+    const recentRuns = Array.isArray(source.recentRuns)
+      ? source.recentRuns
+          .filter(
+            (run): run is AccountRecentRun =>
+              !!run &&
+              typeof run === "object" &&
+              typeof run.match_id === "string" &&
+              typeof run.mode === "string" &&
+              typeof run.theme === "string" &&
+              typeof run.difficulty === "string" &&
+              (run.outcome === "solved" || run.outcome === "forfeit") &&
+              typeof run.hidden_passed === "number" &&
+              typeof run.rating_delta === "number" &&
+              typeof run.at === "string",
+          )
+          .slice(0, ACCOUNT_RECENT_RUN_LIMIT)
+      : [];
+
+    const recordedMatchIds = Array.isArray(source.recordedMatchIds)
+      ? source.recordedMatchIds
+          .filter((value): value is string => typeof value === "string")
+          .slice(0, ACCOUNT_RECORDED_MATCH_LIMIT)
+      : [];
+
+    return {
+      matchesStarted: typeof source.matchesStarted === "number"
+        ? source.matchesStarted
+        : fallback.matchesStarted,
+      matchesSolved: typeof source.matchesSolved === "number"
+        ? source.matchesSolved
+        : fallback.matchesSolved,
+      rankedFinished: typeof source.rankedFinished === "number"
+        ? source.rankedFinished
+        : fallback.rankedFinished,
+      rankedWins: typeof source.rankedWins === "number"
+        ? source.rankedWins
+        : fallback.rankedWins,
+      hintsUsed: typeof source.hintsUsed === "number"
+        ? source.hintsUsed
+        : fallback.hintsUsed,
+      sampleRuns: typeof source.sampleRuns === "number"
+        ? source.sampleRuns
+        : fallback.sampleRuns,
+      submissions: typeof source.submissions === "number"
+        ? source.submissions
+        : fallback.submissions,
+      forfeits: typeof source.forfeits === "number"
+        ? source.forfeits
+        : fallback.forfeits,
+      bestHiddenPassed: typeof source.bestHiddenPassed === "number"
+        ? source.bestHiddenPassed
+        : fallback.bestHiddenPassed,
+      recentRuns,
+      recordedMatchIds,
+    };
+  }
+
+  function loadAccountStats(user: SessionUser): void {
+    const saved = localStorage.getItem(accountStatsStorageKey(user.id));
+    if (!saved) {
+      accountStats = emptyAccountStats();
+      return;
+    }
+
+    try {
+      accountStats = normalizeAccountStats(JSON.parse(saved));
+    } catch {
+      accountStats = emptyAccountStats();
+    }
+  }
+
+  function persistAccountStats(): void {
+    if (!sessionUser) {
+      return;
+    }
+    localStorage.setItem(
+      accountStatsStorageKey(sessionUser.id),
+      JSON.stringify(accountStats),
+    );
+  }
+
+  function updateAccountStats(mutator: (current: AccountStats) => AccountStats): void {
+    if (!sessionUser) {
+      return;
+    }
+    accountStats = normalizeAccountStats(mutator(accountStats));
+    persistAccountStats();
+  }
+
+  function currentStanding(rows: Standing[]): Standing | null {
+    const user = sessionUser;
+    if (!user) {
+      return null;
+    }
+    return rows.find((row) => row.user_id === user.id) ?? null;
+  }
+
+  function recordCompletedMatch(outcome: AccountOutcome, rows: Standing[]): void {
+    const currentMatch = match;
+    if (!sessionUser || !currentMatch) {
+      return;
+    }
+
+    const self = currentStanding(rows);
+    if (!self || accountStats.recordedMatchIds.includes(currentMatch.match_id)) {
+      return;
+    }
+
+    updateAccountStats((current) => ({
+      ...current,
+      matchesSolved: current.matchesSolved + (outcome === "solved" ? 1 : 0),
+      rankedFinished:
+        current.rankedFinished + (currentMatch.mode === "ranked" ? 1 : 0),
+      rankedWins:
+        current.rankedWins +
+        (currentMatch.mode === "ranked" && outcome === "solved" ? 1 : 0),
+      forfeits: current.forfeits + (outcome === "forfeit" ? 1 : 0),
+      bestHiddenPassed: Math.max(current.bestHiddenPassed, self.hidden_passed),
+      recentRuns: [
+        {
+          match_id: currentMatch.match_id,
+          mode: currentMatch.mode,
+          theme: currentMatch.theme,
+          difficulty: currentMatch.difficulty,
+          outcome,
+          hidden_passed: self.hidden_passed,
+          rating_delta: self.rating_delta,
+          at: new Date().toISOString(),
+        },
+        ...current.recentRuns.filter(
+          (run) => run.match_id !== currentMatch.match_id,
+        ),
+      ].slice(0, ACCOUNT_RECENT_RUN_LIMIT),
+      recordedMatchIds: [currentMatch.match_id, ...current.recordedMatchIds].slice(
+        0,
+        ACCOUNT_RECORDED_MATCH_LIMIT,
+      ),
+    }));
+  }
   let lineNumbersEl: HTMLPreElement | null = null;
   let lineNumbers = "1";
   let editorScrollLeft = 0;
@@ -359,6 +564,7 @@
     activeView = "home";
     error = "";
     notice = "";
+    accountMenuOpen = false;
   }
 
   function showArena(): void {
@@ -369,6 +575,7 @@
     activeView = "arena";
     error = "";
     notice = "";
+    accountMenuOpen = false;
   }
 
   function toggleLeaderboardView(): void {
@@ -383,6 +590,21 @@
     activeView = "leaderboard";
     error = "";
     notice = "";
+    accountMenuOpen = false;
+  }
+
+  function toggleThemeMenu(): void {
+    themeMenuOpen = !themeMenuOpen;
+    if (themeMenuOpen) {
+      accountMenuOpen = false;
+    }
+  }
+
+  function toggleAccountMenu(): void {
+    accountMenuOpen = !accountMenuOpen;
+    if (accountMenuOpen) {
+      themeMenuOpen = false;
+    }
   }
 
   function resolveSystemTheme(): UiTheme {
@@ -409,6 +631,27 @@
 
   function themeName(themeId: BundledTheme): string {
     return themeInfoById.get(themeId)?.displayName ?? themeId;
+  }
+
+  function accountInitials(name: string): string {
+    return name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "EN";
+  }
+
+  function formatRatingDelta(value: number): string {
+    return `${value >= 0 ? "+" : ""}${value}`;
+  }
+
+  function formatActivityTime(timestamp: string): string {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
   }
 
   function buildFaviconDataUrl(color: string): string {
@@ -712,10 +955,13 @@
     const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
       sessionUser = null;
+      accountStats = emptyAccountStats();
+      accountMenuOpen = false;
       activeView = "home";
       return;
     }
     sessionUser = payload.user;
+    loadAccountStats(payload.user);
     await loadLeaderboard();
   }
 
@@ -729,6 +975,7 @@
         body: JSON.stringify({ name: authName, password: authPassword }),
       });
       sessionUser = payload.user;
+      loadAccountStats(payload.user);
       authPassword = "";
       notice =
         nextMode === "register"
@@ -751,6 +998,8 @@
     try {
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
       sessionUser = null;
+      accountStats = emptyAccountStats();
+      accountMenuOpen = false;
       activeView = "home";
       match = null;
       standings = [];
@@ -815,6 +1064,10 @@
       syncSessionElo(payload.standings);
       code = payload.scaffold;
       activeView = "arena";
+      updateAccountStats((current) => ({
+        ...current,
+        matchesStarted: current.matchesStarted + 1,
+      }));
 
       startTimer(payload.time_limit_seconds);
       resetConsole();
@@ -872,6 +1125,11 @@
         `Submit: sample ${payload.sample_passed}/${payload.sample_total}, hidden ${payload.hidden_passed}/${payload.hidden_total}, ${payload.runtime_ms}ms`,
         payload.verdict === "accepted" ? "success" : "error",
       );
+      updateAccountStats((current) => ({
+        ...current,
+        submissions: current.submissions + 1,
+        bestHiddenPassed: Math.max(current.bestHiddenPassed, payload.hidden_passed),
+      }));
       appendJudgeOutput(payload);
       if (payload.first_failed_hidden_test) {
         appendConsole(
@@ -880,6 +1138,7 @@
         );
       }
       if (payload.verdict === "accepted") {
+        recordCompletedMatch("solved", payload.standings);
         appendConsole("Match complete. Great run.", "success");
       }
     } catch (err) {
@@ -916,6 +1175,11 @@
       }
       standings = payload.standings;
       syncSessionElo(payload.standings);
+      updateAccountStats((current) => ({
+        ...current,
+        sampleRuns: current.sampleRuns + 1,
+        bestHiddenPassed: Math.max(current.bestHiddenPassed, payload.hidden_passed),
+      }));
 
       appendConsole(
         `Samples: ${payload.sample_passed}/${payload.sample_total} passed (${payload.runtime_ms}ms)`,
@@ -978,6 +1242,10 @@
       const nextHints = [...hints];
       nextHints[payload.level - 1] = payload.hint;
       hints = nextHints;
+      updateAccountStats((current) => ({
+        ...current,
+        hintsUsed: current.hintsUsed + 1,
+      }));
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Hint request failed: ${toErrorMessage(err)}`, "error");
@@ -1002,6 +1270,7 @@
       );
       standings = payload.standings;
       syncSessionElo(payload.standings);
+      recordCompletedMatch("forfeit", payload.standings);
       appendConsole("You forfeited the match.", "error");
     } catch (err) {
       error = toErrorMessage(err);
@@ -1019,6 +1288,25 @@
     appearanceMode === "system"
       ? `Following system (${themePref})`
       : `${appearanceMode} mode`;
+
+  $: accountLeaderboardEntry =
+    leaderboardCurrentUser ??
+    leaderboard.find((entry) => entry.user_id === sessionUser?.id) ??
+    null;
+  $: accountSolveRate =
+    accountStats.matchesStarted > 0
+      ? Math.round((accountStats.matchesSolved / accountStats.matchesStarted) * 100)
+      : null;
+  $: accountRankLabel = accountLeaderboardEntry
+    ? `#${accountLeaderboardEntry.placement}`
+    : "Unranked";
+  $: accountPercentileLabel = accountLeaderboardEntry
+    ? leaderboardPercentile(accountLeaderboardEntry.placement)
+    : "No ranked result yet";
+  $: accountRankedWinLabel =
+    accountStats.rankedFinished > 0
+      ? `${accountStats.rankedWins}/${accountStats.rankedFinished}`
+      : "0/0";
 
   $: highlightedCode = highlightPython(code);
   $: lineNumbers = Array.from(
@@ -1066,12 +1354,15 @@
     systemMatcher.addEventListener("change", mediaListener);
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!themeMenuOpen || !themeMenuEl) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
         return;
       }
-      const target = event.target;
-      if (target instanceof Node && !themeMenuEl.contains(target)) {
+      if (themeMenuOpen && themeMenuEl && !themeMenuEl.contains(target)) {
         themeMenuOpen = false;
+      }
+      if (accountMenuOpen && accountMenuEl && !accountMenuEl.contains(target)) {
+        accountMenuOpen = false;
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
@@ -1149,9 +1440,7 @@
         <button
           type="button"
           class="nav-theme-button"
-          on:click={() => {
-            themeMenuOpen = !themeMenuOpen;
-          }}
+          on:click={toggleThemeMenu}
           title={`${themeStatusText} · ${activeEditorThemeName}`}
           aria-haspopup="dialog"
           aria-expanded={themeMenuOpen}
@@ -1187,9 +1476,167 @@
           </div>
         {/if}
       </div>
-      <button type="button" class="nav-icon" title="Account">
-        <i class="fas fa-user" aria-hidden="true"></i>
-      </button>
+      <div class="account-menu-shell" bind:this={accountMenuEl}>
+        <button
+          type="button"
+          class="nav-icon"
+          class:active={accountMenuOpen}
+          title="Account"
+          aria-haspopup="dialog"
+          aria-expanded={accountMenuOpen}
+          on:click={toggleAccountMenu}
+        >
+          <i class="fas fa-user" aria-hidden="true"></i>
+        </button>
+
+        {#if accountMenuOpen}
+          <div class="account-menu" role="dialog" aria-label="Account summary">
+            {#if sessionUser}
+              <section class="account-summary-card">
+                <div class="account-avatar">{accountInitials(sessionUser.name)}</div>
+                <div class="account-summary-copy">
+                  <p class="eyebrow">Account</p>
+                  <h2>{sessionUser.name}</h2>
+                  <p class="account-summary-meta">
+                    {sessionUser.guest ? "Guest session" : "Registered account"} · {accountPercentileLabel}
+                  </p>
+                </div>
+                <div class="account-elo-pill">
+                  <span>ELO</span>
+                  <strong>{sessionUser.elo}</strong>
+                </div>
+              </section>
+
+              <section class="account-stat-grid">
+                <article class="account-stat-card">
+                  <span class="eyebrow">Global Rank</span>
+                  <strong>{accountRankLabel}</strong>
+                  <small>{leaderboardTotalPlayers} players tracked</small>
+                </article>
+                <article class="account-stat-card">
+                  <span class="eyebrow">Solve Rate</span>
+                  <strong>{accountSolveRate === null ? "--" : `${accountSolveRate}%`}</strong>
+                  <small>{accountStats.matchesSolved}/{accountStats.matchesStarted} cleared</small>
+                </article>
+                <article class="account-stat-card">
+                  <span class="eyebrow">Ranked Wins</span>
+                  <strong>{accountRankedWinLabel}</strong>
+                  <small>finished ranked runs</small>
+                </article>
+              </section>
+
+              <div class="account-content-grid">
+                <section class="account-card">
+                  <div class="account-card-head">
+                    <div>
+                      <p class="eyebrow">Recent Runs</p>
+                      <h3>Match activity</h3>
+                    </div>
+                    <span>{accountStats.recentRuns.length} tracked</span>
+                  </div>
+
+                  {#if accountStats.recentRuns.length === 0}
+                    <p class="account-empty">Finish a match to start building your recent history.</p>
+                  {:else}
+                    <div class="account-run-list">
+                      {#each accountStats.recentRuns as run}
+                        <article class="account-run-row">
+                          <div>
+                            <strong>{run.mode}</strong>
+                            <p>{run.theme} · {run.difficulty}</p>
+                          </div>
+                          <div class="account-run-meta">
+                            <span class:success-text={run.outcome === "solved"} class:error-text={run.outcome === "forfeit"}>
+                              {run.outcome === "solved" ? "Solved" : "Forfeit"}
+                            </span>
+                            <span>{run.hidden_passed} hidden</span>
+                            <span>{formatRatingDelta(run.rating_delta)} elo</span>
+                            <span>{formatActivityTime(run.at)}</span>
+                          </div>
+                        </article>
+                      {/each}
+                    </div>
+                  {/if}
+                </section>
+
+                <section class="account-card">
+                  <div class="account-card-head">
+                    <div>
+                      <p class="eyebrow">Overview</p>
+                      <h3>Current focus</h3>
+                    </div>
+                  </div>
+
+                  <div class="account-overview-list">
+                    <div class="account-overview-row">
+                      <span>Appearance</span>
+                      <strong>{appearanceMode === "system" ? `System · ${themePref}` : appearanceMode}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Theme</span>
+                      <strong>{activeEditorThemeName}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Sample runs</span>
+                      <strong>{accountStats.sampleRuns}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Hints used</span>
+                      <strong>{accountStats.hintsUsed}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Submissions</span>
+                      <strong>{accountStats.submissions}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Live race</span>
+                      <strong>{match ? `${match.mode} · ${timerText}` : "No active match"}</strong>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="account-actions">
+                <button type="button" class="btn" on:click={toggleLeaderboardView}>
+                  Leaderboard
+                </button>
+                <button type="button" class="btn" on:click={showHome}>
+                  Home
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={showArena}
+                  disabled={!match || busy}
+                >
+                  Resume Race
+                </button>
+                <button type="button" class="btn primary" on:click={logout} disabled={busy}>
+                  Sign Out
+                </button>
+              </div>
+
+            {:else}
+              <section class="account-card account-empty-card">
+                <p class="eyebrow">Account</p>
+                <h2>Sign in to track your profile</h2>
+                <p class="account-empty">
+                  Your rank, solved matches, and recent activity will show up here once you have an active session.
+                </p>
+                <button
+                  type="button"
+                  class="btn primary"
+                  on:click={() => {
+                    showHome();
+                  }}
+                >
+                  Go to account setup
+                </button>
+              </section>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </nav>
   </header>
 
