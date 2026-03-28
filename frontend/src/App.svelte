@@ -60,6 +60,7 @@
 
   type MatchPayload = {
     match_id: string;
+    party_code: string;
     mode: Mode;
     theme: string;
     difficulty: Difficulty;
@@ -68,6 +69,26 @@
     scaffold: string;
     sample_tests: Array<{ input: string; output: string }>;
     standings: Standing[];
+  };
+
+  type PartySettingsPayload = {
+    theme: string;
+    difficulty: Difficulty;
+    time_limit_seconds: number;
+    seed: number | null;
+  };
+
+  type PartyPayload = {
+    code: string;
+    join_code: string;
+    join_path: string;
+    mode: Mode;
+    leader_id: string;
+    member_limit: number;
+    is_full: boolean;
+    settings: PartySettingsPayload;
+    members: SessionUser[];
+    invite_link: string;
   };
 
   type FailedHiddenTest = {
@@ -126,16 +147,49 @@
     functionName: string;
   };
 
+  type AccountOutcome = "solved" | "forfeit";
+
+  type AccountRecentRun = {
+    match_id: string;
+    mode: Mode;
+    theme: string;
+    difficulty: Difficulty;
+    outcome: AccountOutcome;
+    hidden_passed: number;
+    rating_delta: number;
+    at: string;
+  };
+
+  type AccountStats = {
+    matchesStarted: number;
+    matchesSolved: number;
+    rankedFinished: number;
+    rankedWins: number;
+    hintsUsed: number;
+    sampleRuns: number;
+    submissions: number;
+    forfeits: number;
+    bestHiddenPassed: number;
+    recentRuns: AccountRecentRun[];
+    recordedMatchIds: string[];
+  };
+
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
   const LEADERBOARD_LIMIT = 10;
+  const PARTY_LIMIT_MIN = 2;
+  const PARTY_LIMIT_MAX = 16;
+  const DEFAULT_PARTY_LIMIT = 4;
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
+  const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
   const APPEARANCE_MODE_ORDER: AppearanceMode[] = ["system", "light", "dark"];
+  const ACCOUNT_RECENT_RUN_LIMIT = 6;
+  const ACCOUNT_RECORDED_MATCH_LIMIT = 30;
   const themeInfoById = new Map(
     bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
   );
@@ -158,6 +212,9 @@
   let difficulty: Difficulty = "easy";
   let selectedTheme = FALLBACK_THEME;
   let timeLimitSeconds = 900;
+  let partyLimit = DEFAULT_PARTY_LIMIT;
+  let joinCodeInput = "";
+  let party: PartyPayload | null = null;
 
   let themePref: UiTheme = "dark";
   let appearanceMode: AppearanceMode = "system";
@@ -174,6 +231,8 @@
   );
   let themeMenuOpen = false;
   let themeMenuEl: HTMLDivElement | null = null;
+  let accountMenuOpen = false;
+  let accountMenuEl: HTMLDivElement | null = null;
 
   let themes = [FALLBACK_THEME];
   let match: MatchPayload | null = null;
@@ -200,13 +259,192 @@
   let consoleNextId = 1;
   let consoleEl: HTMLDivElement | null = null;
   let highlightEl: HTMLPreElement | null = null;
+  let accountStats: AccountStats = emptyAccountStats();
+  let accountLeaderboardEntry: LeaderboardEntry | null = null;
+  let accountSolveRate: number | null = null;
+  let accountRankLabel = "Unranked";
+  let accountPercentileLabel = "No ranked result yet";
+  let accountRankedWinLabel = "0/0";
+
+  function emptyAccountStats(): AccountStats {
+    return {
+      matchesStarted: 0,
+      matchesSolved: 0,
+      rankedFinished: 0,
+      rankedWins: 0,
+      hintsUsed: 0,
+      sampleRuns: 0,
+      submissions: 0,
+      forfeits: 0,
+      bestHiddenPassed: 0,
+      recentRuns: [],
+      recordedMatchIds: [],
+    };
+  }
+
+  function accountStatsStorageKey(userId: string): string {
+    return `${ACCOUNT_STATS_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function normalizeAccountStats(raw: unknown): AccountStats {
+    const fallback = emptyAccountStats();
+    if (!raw || typeof raw !== "object") {
+      return fallback;
+    }
+
+    const source = raw as Partial<AccountStats>;
+    const recentRuns = Array.isArray(source.recentRuns)
+      ? source.recentRuns
+          .filter(
+            (run): run is AccountRecentRun =>
+              !!run &&
+              typeof run === "object" &&
+              typeof run.match_id === "string" &&
+              typeof run.mode === "string" &&
+              typeof run.theme === "string" &&
+              typeof run.difficulty === "string" &&
+              (run.outcome === "solved" || run.outcome === "forfeit") &&
+              typeof run.hidden_passed === "number" &&
+              typeof run.rating_delta === "number" &&
+              typeof run.at === "string",
+          )
+          .slice(0, ACCOUNT_RECENT_RUN_LIMIT)
+      : [];
+
+    const recordedMatchIds = Array.isArray(source.recordedMatchIds)
+      ? source.recordedMatchIds
+          .filter((value): value is string => typeof value === "string")
+          .slice(0, ACCOUNT_RECORDED_MATCH_LIMIT)
+      : [];
+
+    return {
+      matchesStarted: typeof source.matchesStarted === "number"
+        ? source.matchesStarted
+        : fallback.matchesStarted,
+      matchesSolved: typeof source.matchesSolved === "number"
+        ? source.matchesSolved
+        : fallback.matchesSolved,
+      rankedFinished: typeof source.rankedFinished === "number"
+        ? source.rankedFinished
+        : fallback.rankedFinished,
+      rankedWins: typeof source.rankedWins === "number"
+        ? source.rankedWins
+        : fallback.rankedWins,
+      hintsUsed: typeof source.hintsUsed === "number"
+        ? source.hintsUsed
+        : fallback.hintsUsed,
+      sampleRuns: typeof source.sampleRuns === "number"
+        ? source.sampleRuns
+        : fallback.sampleRuns,
+      submissions: typeof source.submissions === "number"
+        ? source.submissions
+        : fallback.submissions,
+      forfeits: typeof source.forfeits === "number"
+        ? source.forfeits
+        : fallback.forfeits,
+      bestHiddenPassed: typeof source.bestHiddenPassed === "number"
+        ? source.bestHiddenPassed
+        : fallback.bestHiddenPassed,
+      recentRuns,
+      recordedMatchIds,
+    };
+  }
+
+  function loadAccountStats(user: SessionUser): void {
+    const saved = localStorage.getItem(accountStatsStorageKey(user.id));
+    if (!saved) {
+      accountStats = emptyAccountStats();
+      return;
+    }
+
+    try {
+      accountStats = normalizeAccountStats(JSON.parse(saved));
+    } catch {
+      accountStats = emptyAccountStats();
+    }
+  }
+
+  function persistAccountStats(): void {
+    if (!sessionUser) {
+      return;
+    }
+    localStorage.setItem(
+      accountStatsStorageKey(sessionUser.id),
+      JSON.stringify(accountStats),
+    );
+  }
+
+  function updateAccountStats(mutator: (current: AccountStats) => AccountStats): void {
+    if (!sessionUser) {
+      return;
+    }
+    accountStats = normalizeAccountStats(mutator(accountStats));
+    persistAccountStats();
+  }
+
+  function currentStanding(rows: Standing[]): Standing | null {
+    const user = sessionUser;
+    if (!user) {
+      return null;
+    }
+    return rows.find((row) => row.user_id === user.id) ?? null;
+  }
+
+  function recordCompletedMatch(outcome: AccountOutcome, rows: Standing[]): void {
+    const currentMatch = match;
+    if (!sessionUser || !currentMatch) {
+      return;
+    }
+
+    const self = currentStanding(rows);
+    if (!self || accountStats.recordedMatchIds.includes(currentMatch.match_id)) {
+      return;
+    }
+
+    updateAccountStats((current) => ({
+      ...current,
+      matchesSolved: current.matchesSolved + (outcome === "solved" ? 1 : 0),
+      rankedFinished:
+        current.rankedFinished + (currentMatch.mode === "ranked" ? 1 : 0),
+      rankedWins:
+        current.rankedWins +
+        (currentMatch.mode === "ranked" && outcome === "solved" ? 1 : 0),
+      forfeits: current.forfeits + (outcome === "forfeit" ? 1 : 0),
+      bestHiddenPassed: Math.max(current.bestHiddenPassed, self.hidden_passed),
+      recentRuns: [
+        {
+          match_id: currentMatch.match_id,
+          mode: currentMatch.mode,
+          theme: currentMatch.theme,
+          difficulty: currentMatch.difficulty,
+          outcome,
+          hidden_passed: self.hidden_passed,
+          rating_delta: self.rating_delta,
+          at: new Date().toISOString(),
+        },
+        ...current.recentRuns.filter(
+          (run) => run.match_id !== currentMatch.match_id,
+        ),
+      ].slice(0, ACCOUNT_RECENT_RUN_LIMIT),
+      recordedMatchIds: [currentMatch.match_id, ...current.recordedMatchIds].slice(
+        0,
+        ACCOUNT_RECORDED_MATCH_LIMIT,
+      ),
+    }));
+  }
   let lineNumbersEl: HTMLPreElement | null = null;
   let lineNumbers = "1";
   let editorScrollLeft = 0;
 
+<<<<<<< HEAD
   function userInitial(name: string | undefined): string {
     return name?.trim().charAt(0).toUpperCase() || "?";
   }
+=======
+  let isPartyMode = false;
+  let isPartyLeader = false;
+  let canEditPartySetup = true;
+>>>>>>> b1741488dfbe8e08381e012f9dc7e10d99e87d01
 
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
@@ -363,6 +601,7 @@
     activeView = "home";
     error = "";
     notice = "";
+    accountMenuOpen = false;
   }
 
   function showArena(): void {
@@ -373,6 +612,7 @@
     activeView = "arena";
     error = "";
     notice = "";
+    accountMenuOpen = false;
   }
 
   function toggleLeaderboardView(): void {
@@ -387,6 +627,21 @@
     activeView = "leaderboard";
     error = "";
     notice = "";
+    accountMenuOpen = false;
+  }
+
+  function toggleThemeMenu(): void {
+    themeMenuOpen = !themeMenuOpen;
+    if (themeMenuOpen) {
+      accountMenuOpen = false;
+    }
+  }
+
+  function toggleAccountMenu(): void {
+    accountMenuOpen = !accountMenuOpen;
+    if (accountMenuOpen) {
+      themeMenuOpen = false;
+    }
   }
 
   function showSettings(): void {
@@ -427,6 +682,27 @@
 
   function themeName(themeId: BundledTheme): string {
     return themeInfoById.get(themeId)?.displayName ?? themeId;
+  }
+
+  function accountInitials(name: string): string {
+    return name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "EN";
+  }
+
+  function formatRatingDelta(value: number): string {
+    return `${value >= 0 ? "+" : ""}${value}`;
+  }
+
+  function formatActivityTime(timestamp: string): string {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
   }
 
   function buildFaviconDataUrl(color: string): string {
@@ -660,6 +936,30 @@
     return "Unexpected error";
   }
 
+  function normalizePartyCode(raw: string): string {
+    return raw
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
+  }
+
+  function applyParty(partyPayload: PartyPayload): void {
+    party = partyPayload;
+    mode = partyPayload.mode;
+    selectedTheme = partyPayload.settings.theme;
+    difficulty = partyPayload.settings.difficulty;
+    timeLimitSeconds = partyPayload.settings.time_limit_seconds;
+    partyLimit = partyPayload.member_limit;
+  }
+
+  function partyJoinUrl(partyPayload: PartyPayload): string {
+    if (typeof window === "undefined") {
+      return partyPayload.join_path;
+    }
+    return `${window.location.origin}${partyPayload.join_path}`;
+  }
+
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
@@ -730,10 +1030,14 @@
     const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
       sessionUser = null;
+      accountStats = emptyAccountStats();
+      accountMenuOpen = false;
       activeView = "home";
+      party = null;
       return;
     }
     sessionUser = payload.user;
+    loadAccountStats(payload.user);
     await loadLeaderboard();
   }
 
@@ -747,6 +1051,7 @@
         body: JSON.stringify({ name: authName, password: authPassword }),
       });
       sessionUser = payload.user;
+      loadAccountStats(payload.user);
       authPassword = "";
       notice =
         nextMode === "register"
@@ -769,8 +1074,12 @@
     try {
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
       sessionUser = null;
+      accountStats = emptyAccountStats();
+      accountMenuOpen = false;
       activeView = "home";
       match = null;
+      party = null;
+      joinCodeInput = "";
       standings = [];
       testResult = null;
       submitResult = null;
@@ -790,7 +1099,194 @@
     }
   }
 
-  async function startMatch(): Promise<void> {
+  async function createPartyLobby(): Promise<void> {
+    if (!sessionUser) {
+      error = "Sign in to create a party.";
+      activeView = "home";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>("/api/parties", {
+        method: "POST",
+        body: JSON.stringify({
+          leader_id: sessionUser.id,
+          mode,
+          theme: selectedTheme,
+          difficulty,
+          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
+          member_limit: mode === "zen"
+            ? 1
+            : Math.min(
+                PARTY_LIMIT_MAX,
+                Math.max(PARTY_LIMIT_MIN, partyLimit),
+              ),
+        }),
+      });
+
+      applyParty(payload);
+      notice = `Party created. Share code ${payload.join_code}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function refreshPartyLobby(): Promise<void> {
+    if (!party) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}`);
+      applyParty(payload);
+      notice = "Party refreshed.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function joinPartyLobby(): Promise<void> {
+    if (!sessionUser) {
+      error = "Sign in to join a party.";
+      activeView = "home";
+      return;
+    }
+
+    const normalized = normalizePartyCode(joinCodeInput);
+    if (!normalized) {
+      error = "Enter a valid party code.";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${normalized}/join`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id }),
+      });
+      applyParty(payload);
+      joinCodeInput = payload.join_code;
+      notice = `Joined party ${payload.join_code}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function copyPartyInvite(): Promise<void> {
+    if (!party) {
+      return;
+    }
+
+    const shareText = `${party.join_code} (${partyJoinUrl(party)})`;
+    try {
+      await navigator.clipboard.writeText(shareText);
+      notice = "Join code copied to clipboard.";
+    } catch {
+      notice = `Join code: ${shareText}`;
+    }
+  }
+
+  async function updatePartyLimit(): Promise<void> {
+    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}/limit`, {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: sessionUser.id,
+          member_limit: Math.min(
+            PARTY_LIMIT_MAX,
+            Math.max(PARTY_LIMIT_MIN, partyLimit),
+          ),
+        }),
+      });
+      applyParty(payload);
+      notice = `Party limit set to ${payload.member_limit}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function updatePartySetup(): Promise<void> {
+    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(
+        `/api/parties/${party.code}/settings`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: sessionUser.id,
+            theme: selectedTheme,
+            difficulty,
+            time_limit_seconds: timeLimitSeconds,
+          }),
+        },
+      );
+      applyParty(payload);
+      notice = "Party setup updated.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function kickPartyMember(memberId: string): Promise<void> {
+    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}/kick`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id, member_id: memberId }),
+      });
+      applyParty(payload);
+      notice = "Member removed from party.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function clearPartyLobby(): void {
+    party = null;
+    joinCodeInput = "";
+    notice = "Lobby closed.";
+  }
+
+  async function startMatch(partyCode?: string): Promise<void> {
     if (!sessionUser) {
       error = "Sign in to start a match.";
       activeView = "home";
@@ -806,21 +1302,30 @@
     const requestedMode = mode;
 
     try {
-      const party = await api<{ code: string }>("/api/parties", {
-        method: "POST",
-        body: JSON.stringify({
-          mode,
-          theme: selectedTheme,
-          difficulty,
-          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
-        }),
-      });
+      let codeToStart = partyCode;
+      if (!codeToStart) {
+        const createdParty = await api<PartyPayload>("/api/parties", {
+          method: "POST",
+          body: JSON.stringify({
+            leader_id: sessionUser.id,
+            mode,
+            theme: selectedTheme,
+            difficulty,
+            time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
+            member_limit: mode === "zen" ? 1 : partyLimit,
+          }),
+        });
+        codeToStart = createdParty.code;
+        if (mode !== "zen") {
+          applyParty(createdParty);
+        }
+      }
 
       const payload = await api<MatchPayload>(
-        `/api/parties/${party.code}/start`,
+        `/api/parties/${codeToStart}/start`,
         {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ user_id: sessionUser.id }),
         },
       );
 
@@ -833,6 +1338,14 @@
       syncSessionElo(payload.standings);
       code = payload.scaffold;
       activeView = "arena";
+      updateAccountStats((current) => ({
+        ...current,
+        matchesStarted: current.matchesStarted + 1,
+      }));
+
+      if (payload.mode === "zen") {
+        party = null;
+      }
 
       startTimer(payload.time_limit_seconds);
       resetConsole();
@@ -851,12 +1364,35 @@
   }
 
   async function launchConfiguredMatch(): Promise<void> {
-    await startMatch();
+    if (mode === "zen") {
+      party = null;
+      await startMatch();
+      return;
+    }
+
+    if (!party) {
+      await createPartyLobby();
+      return;
+    }
+
+    if (party.leader_id !== sessionUser?.id) {
+      error = "Only the party leader can start the match.";
+      return;
+    }
+
+    await startMatch(party.code);
   }
 
   async function startRace(nextMode: Mode): Promise<void> {
+    if (party && party.mode !== nextMode) {
+      party = null;
+    }
     mode = nextMode;
-    await startMatch();
+    if (nextMode === "casual" || nextMode === "ranked") {
+      notice = "Create a party or enter a join code to continue.";
+    } else {
+      notice = "";
+    }
   }
 
   async function submit(): Promise<void> {
@@ -890,6 +1426,11 @@
         `Submit: sample ${payload.sample_passed}/${payload.sample_total}, hidden ${payload.hidden_passed}/${payload.hidden_total}, ${payload.runtime_ms}ms`,
         payload.verdict === "accepted" ? "success" : "error",
       );
+      updateAccountStats((current) => ({
+        ...current,
+        submissions: current.submissions + 1,
+        bestHiddenPassed: Math.max(current.bestHiddenPassed, payload.hidden_passed),
+      }));
       appendJudgeOutput(payload);
       if (payload.first_failed_hidden_test) {
         appendConsole(
@@ -898,6 +1439,7 @@
         );
       }
       if (payload.verdict === "accepted") {
+        recordCompletedMatch("solved", payload.standings);
         appendConsole("Match complete. Great run.", "success");
       }
     } catch (err) {
@@ -934,6 +1476,11 @@
       }
       standings = payload.standings;
       syncSessionElo(payload.standings);
+      updateAccountStats((current) => ({
+        ...current,
+        sampleRuns: current.sampleRuns + 1,
+        bestHiddenPassed: Math.max(current.bestHiddenPassed, payload.hidden_passed),
+      }));
 
       appendConsole(
         `Samples: ${payload.sample_passed}/${payload.sample_total} passed (${payload.runtime_ms}ms)`,
@@ -996,6 +1543,10 @@
       const nextHints = [...hints];
       nextHints[payload.level - 1] = payload.hint;
       hints = nextHints;
+      updateAccountStats((current) => ({
+        ...current,
+        hintsUsed: current.hintsUsed + 1,
+      }));
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Hint request failed: ${toErrorMessage(err)}`, "error");
@@ -1020,6 +1571,7 @@
       );
       standings = payload.standings;
       syncSessionElo(payload.standings);
+      recordCompletedMatch("forfeit", payload.standings);
       appendConsole("You forfeited the match.", "error");
     } catch (err) {
       error = toErrorMessage(err);
@@ -1029,14 +1581,43 @@
     }
   }
 
+  $: isPartyMode = mode === "casual" || mode === "ranked";
+  $: isPartyLeader = !!party && !!sessionUser && party.leader_id === sessionUser.id;
+  $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
+
   $: if (mode === "ranked") {
     timeLimitSeconds = 3600;
+  }
+
+  $: if (isPartyMode) {
+    partyLimit = Math.min(PARTY_LIMIT_MAX, Math.max(PARTY_LIMIT_MIN, partyLimit));
+  } else {
+    partyLimit = 1;
   }
 
   $: themeStatusText =
     appearanceMode === "system"
       ? `Following system (${themePref})`
       : `${appearanceMode} mode`;
+
+  $: accountLeaderboardEntry =
+    leaderboardCurrentUser ??
+    leaderboard.find((entry) => entry.user_id === sessionUser?.id) ??
+    null;
+  $: accountSolveRate =
+    accountStats.matchesStarted > 0
+      ? Math.round((accountStats.matchesSolved / accountStats.matchesStarted) * 100)
+      : null;
+  $: accountRankLabel = accountLeaderboardEntry
+    ? `#${accountLeaderboardEntry.placement}`
+    : "Unranked";
+  $: accountPercentileLabel = accountLeaderboardEntry
+    ? leaderboardPercentile(accountLeaderboardEntry.placement)
+    : "No ranked result yet";
+  $: accountRankedWinLabel =
+    accountStats.rankedFinished > 0
+      ? `${accountStats.rankedWins}/${accountStats.rankedFinished}`
+      : "0/0";
 
   $: highlightedCode = highlightPython(code);
   $: lineNumbers = Array.from(
@@ -1084,15 +1665,31 @@
     systemMatcher.addEventListener("change", mediaListener);
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!themeMenuOpen || !themeMenuEl) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
         return;
       }
-      const target = event.target;
-      if (target instanceof Node && !themeMenuEl.contains(target)) {
+      if (themeMenuOpen && themeMenuEl && !themeMenuEl.contains(target)) {
         themeMenuOpen = false;
+      }
+      if (accountMenuOpen && accountMenuEl && !accountMenuEl.contains(target)) {
+        accountMenuOpen = false;
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
+
+    const queryCode = normalizePartyCode(
+      new URL(window.location.href).searchParams.get("join") ?? "",
+    );
+    const pathCode = normalizePartyCode(
+      window.location.pathname.match(/^\/join\/([A-Za-z0-9]+)/)?.[1] ?? "",
+    );
+    const initialJoinCode = queryCode || pathCode;
+    if (initialJoinCode) {
+      joinCodeInput = initialJoinCode;
+      mode = "casual";
+      notice = `Ready to join party ${initialJoinCode}. Sign in and click Join Party.`;
+    }
 
     resetConsole();
 
@@ -1176,9 +1773,7 @@
         <button
           type="button"
           class="nav-theme-button"
-          on:click={() => {
-            themeMenuOpen = !themeMenuOpen;
-          }}
+          on:click={toggleThemeMenu}
           title={`${themeStatusText} · ${activeEditorThemeName}`}
           aria-haspopup="dialog"
           aria-expanded={themeMenuOpen}
@@ -1214,6 +1809,170 @@
           </div>
         {/if}
       </div>
+<<<<<<< HEAD
+=======
+      <div class="account-menu-shell" bind:this={accountMenuEl}>
+        <button
+          type="button"
+          class="nav-icon"
+          class:active={accountMenuOpen}
+          title="Account"
+          aria-haspopup="dialog"
+          aria-expanded={accountMenuOpen}
+          on:click={toggleAccountMenu}
+        >
+          <i class="fas fa-user" aria-hidden="true"></i>
+        </button>
+
+        {#if accountMenuOpen}
+          <div class="account-menu" role="dialog" aria-label="Account summary">
+            {#if sessionUser}
+              <section class="account-summary-card">
+                <div class="account-avatar">{accountInitials(sessionUser.name)}</div>
+                <div class="account-summary-copy">
+                  <p class="eyebrow">Account</p>
+                  <h2>{sessionUser.name}</h2>
+                  <p class="account-summary-meta">
+                    {sessionUser.guest ? "Guest session" : "Registered account"} · {accountPercentileLabel}
+                  </p>
+                </div>
+                <div class="account-elo-pill">
+                  <span>ELO</span>
+                  <strong>{sessionUser.elo}</strong>
+                </div>
+              </section>
+
+              <section class="account-stat-grid">
+                <article class="account-stat-card">
+                  <span class="eyebrow">Global Rank</span>
+                  <strong>{accountRankLabel}</strong>
+                  <small>{leaderboardTotalPlayers} players tracked</small>
+                </article>
+                <article class="account-stat-card">
+                  <span class="eyebrow">Solve Rate</span>
+                  <strong>{accountSolveRate === null ? "--" : `${accountSolveRate}%`}</strong>
+                  <small>{accountStats.matchesSolved}/{accountStats.matchesStarted} cleared</small>
+                </article>
+                <article class="account-stat-card">
+                  <span class="eyebrow">Ranked Wins</span>
+                  <strong>{accountRankedWinLabel}</strong>
+                  <small>finished ranked runs</small>
+                </article>
+              </section>
+
+              <div class="account-content-grid">
+                <section class="account-card">
+                  <div class="account-card-head">
+                    <div>
+                      <p class="eyebrow">Recent Runs</p>
+                      <h3>Match activity</h3>
+                    </div>
+                    <span>{accountStats.recentRuns.length} tracked</span>
+                  </div>
+
+                  {#if accountStats.recentRuns.length === 0}
+                    <p class="account-empty">Finish a match to start building your recent history.</p>
+                  {:else}
+                    <div class="account-run-list">
+                      {#each accountStats.recentRuns as run}
+                        <article class="account-run-row">
+                          <div>
+                            <strong>{run.mode}</strong>
+                            <p>{run.theme} · {run.difficulty}</p>
+                          </div>
+                          <div class="account-run-meta">
+                            <span class:success-text={run.outcome === "solved"} class:error-text={run.outcome === "forfeit"}>
+                              {run.outcome === "solved" ? "Solved" : "Forfeit"}
+                            </span>
+                            <span>{run.hidden_passed} hidden</span>
+                            <span>{formatRatingDelta(run.rating_delta)} elo</span>
+                            <span>{formatActivityTime(run.at)}</span>
+                          </div>
+                        </article>
+                      {/each}
+                    </div>
+                  {/if}
+                </section>
+
+                <section class="account-card">
+                  <div class="account-card-head">
+                    <div>
+                      <p class="eyebrow">Overview</p>
+                      <h3>Current focus</h3>
+                    </div>
+                  </div>
+
+                  <div class="account-overview-list">
+                    <div class="account-overview-row">
+                      <span>Appearance</span>
+                      <strong>{appearanceMode === "system" ? `System · ${themePref}` : appearanceMode}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Theme</span>
+                      <strong>{activeEditorThemeName}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Sample runs</span>
+                      <strong>{accountStats.sampleRuns}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Hints used</span>
+                      <strong>{accountStats.hintsUsed}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Submissions</span>
+                      <strong>{accountStats.submissions}</strong>
+                    </div>
+                    <div class="account-overview-row">
+                      <span>Live race</span>
+                      <strong>{match ? `${match.mode} · ${timerText}` : "No active match"}</strong>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="account-actions">
+                <button type="button" class="btn" on:click={toggleLeaderboardView}>
+                  Leaderboard
+                </button>
+                <button type="button" class="btn" on:click={showHome}>
+                  Home
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={showArena}
+                  disabled={!match || busy}
+                >
+                  Resume Race
+                </button>
+                <button type="button" class="btn primary" on:click={logout} disabled={busy}>
+                  Sign Out
+                </button>
+              </div>
+
+            {:else}
+              <section class="account-card account-empty-card">
+                <p class="eyebrow">Account</p>
+                <h2>Sign in to track your profile</h2>
+                <p class="account-empty">
+                  Your rank, solved matches, and recent activity will show up here once you have an active session.
+                </p>
+                <button
+                  type="button"
+                  class="btn primary"
+                  on:click={() => {
+                    showHome();
+                  }}
+                >
+                  Go to account setup
+                </button>
+              </section>
+            {/if}
+          </div>
+        {/if}
+      </div>
+>>>>>>> b1741488dfbe8e08381e012f9dc7e10d99e87d01
     </nav>
   </header>
 
@@ -1331,7 +2090,7 @@
             <div class="field-grid">
               <label>
                 <span>Mode</span>
-                <select bind:value={mode}>
+                <select bind:value={mode} disabled={!!party || busy}>
                   {#each modeOptions as option}
                     <option value={option}>{option.toUpperCase()}</option>
                   {/each}
@@ -1340,7 +2099,10 @@
 
               <label>
                 <span>Puzzle theme</span>
-                <select bind:value={selectedTheme} disabled={mode === "ranked"}>
+                <select
+                  bind:value={selectedTheme}
+                  disabled={mode === "ranked" || !canEditPartySetup || busy}
+                >
                   {#each themes as theme}
                     <option value={theme}>{theme}</option>
                   {/each}
@@ -1349,7 +2111,10 @@
 
               <label>
                 <span>Difficulty</span>
-                <select bind:value={difficulty} disabled={mode === "ranked"}>
+                <select
+                  bind:value={difficulty}
+                  disabled={mode === "ranked" || !canEditPartySetup || busy}
+                >
                   {#each difficultyOptions as option}
                     <option value={option}>{option.toUpperCase()}</option>
                   {/each}
@@ -1363,20 +2128,151 @@
                   bind:value={timeLimitSeconds}
                   min="60"
                   max="7200"
-                  disabled={mode === "ranked"}
+                  disabled={mode === "ranked" || !canEditPartySetup || busy}
+                />
+              </label>
+
+              <label>
+                <span>Party limit</span>
+                <input
+                  type="number"
+                  bind:value={partyLimit}
+                  min={isPartyMode ? PARTY_LIMIT_MIN : 1}
+                  max={isPartyMode ? PARTY_LIMIT_MAX : 1}
+                  disabled={!isPartyMode || (!isPartyLeader && !!party) || busy}
                 />
               </label>
 
             </div>
+
+            {#if isPartyMode}
+              <div class="party-lobby">
+                <div class="party-lobby-head">
+                  <h3>Party Lobby</h3>
+                  {#if party}
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={refreshPartyLobby}
+                      disabled={busy}
+                    >
+                      <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
+                    </button>
+                  {/if}
+                </div>
+
+                {#if party}
+                  <div class="party-code-row mono">
+                    <span class="eyebrow">Join code</span>
+                    <strong>{party.join_code}</strong>
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={copyPartyInvite}
+                      disabled={busy}
+                    >
+                      <i class="fas fa-copy" aria-hidden="true"></i> Copy code
+                    </button>
+                  </div>
+
+                  {#if isPartyLeader}
+                    <div class="party-limit-row">
+                      <span>
+                        {party.members.length}/{party.member_limit} members
+                      </span>
+                      <div class="party-leader-actions">
+                        {#if party.mode === "casual"}
+                          <button
+                            type="button"
+                            class="btn"
+                            on:click={updatePartySetup}
+                            disabled={busy}
+                          >
+                            Update setup
+                          </button>
+                        {/if}
+                        <button
+                          type="button"
+                          class="btn"
+                          on:click={updatePartyLimit}
+                          disabled={busy}
+                        >
+                          Update limit
+                        </button>
+                      </div>
+                    </div>
+                  {:else}
+                    <p class="party-note">
+                      Waiting for the leader to update settings and start the match.
+                    </p>
+                  {/if}
+
+                  <div class="party-members">
+                    {#each party.members as member}
+                      <article class="party-member-row">
+                        <span class="mono">
+                          {member.name}
+                          {#if member.id === party.leader_id}
+                            <em>(leader)</em>
+                          {/if}
+                        </span>
+                        {#if isPartyLeader && member.id !== party.leader_id}
+                          <button
+                            type="button"
+                            class="btn"
+                            on:click={() => void kickPartyMember(member.id)}
+                            disabled={busy}
+                          >
+                            Kick
+                          </button>
+                        {/if}
+                      </article>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="party-join-row">
+                    <label>
+                      <span>Join code</span>
+                      <input
+                        value={joinCodeInput}
+                        maxlength="6"
+                        placeholder="ABC123"
+                        on:input={(event) => {
+                          joinCodeInput = normalizePartyCode(
+                            (event.currentTarget as HTMLInputElement).value,
+                          );
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={joinPartyLobby}
+                      disabled={busy || normalizePartyCode(joinCodeInput).length !== 6}
+                    >
+                      Join Party
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
 
             <div class="home-actions">
               <button
                 type="button"
                 class="btn primary"
                 on:click={launchConfiguredMatch}
-                disabled={busy}
+                disabled={busy || (isPartyMode && !!party && !isPartyLeader)}
               >
-                {match ? "Restart Match" : "Start Match"}
+                {#if mode === "zen"}
+                  {match ? "Restart Match" : "Start Match"}
+                {:else if !party}
+                  Create Party
+                {:else if !isPartyLeader}
+                  Waiting for Leader
+                {:else}
+                  Start Party Match
+                {/if}
               </button>
 
               <button
@@ -1391,6 +2287,17 @@
               >
                 Resume Race
               </button>
+
+              {#if party}
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={clearPartyLobby}
+                  disabled={busy}
+                >
+                  Close Lobby
+                </button>
+              {/if}
 
               <button
                 type="button"

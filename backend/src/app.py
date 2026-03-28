@@ -128,14 +128,25 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         mode = _parse_mode(payload.get("mode"))
         difficulty = _parse_difficulty(payload.get("difficulty"))
+        member_limit_raw = payload.get("member_limit", payload.get("party_limit"))
         party = data.create_party(
             leader_id=str(payload.get("leader_id", "")) or session_user_id(),
             mode=mode,
             theme=str(payload.get("theme", THEMES[0])),
             difficulty=difficulty,
             time_limit_seconds=int(payload.get("time_limit_seconds", 900)),
+            member_limit=(
+                _optional_int(member_limit_raw)
+                if member_limit_raw is not None
+                else None
+            ),
             seed=_optional_int(payload.get("seed")),
         )
+        return jsonify(_party_payload(data, party))
+
+    @app.route("/api/parties/<code>", methods=["GET"])
+    def get_party(code: str) -> Any:
+        party = data.get_party(code=code)
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/join", methods=["POST"])
@@ -144,10 +155,63 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         party = data.join_party(code=code, user_id=payload_user_id(payload))
         return jsonify(_party_payload(data, party))
 
+    @app.route("/api/parties/<code>/limit", methods=["POST"])
+    def set_party_limit(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        member_limit_raw = payload.get("member_limit", payload.get("party_limit"))
+        if member_limit_raw is None:
+            raise ValueError("member_limit is required")
+
+        party = data.set_party_limit(
+            code=code,
+            leader_id=payload_user_id(payload),
+            member_limit=int(member_limit_raw),
+        )
+        return jsonify(_party_payload(data, party))
+
+    @app.route("/api/parties/<code>/settings", methods=["POST"])
+    def set_party_settings(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+
+        if "theme" not in payload:
+            raise ValueError("theme is required")
+        if "difficulty" not in payload:
+            raise ValueError("difficulty is required")
+        if "time_limit_seconds" not in payload:
+            raise ValueError("time_limit_seconds is required")
+
+        party = data.set_party_settings(
+            code=code,
+            leader_id=payload_user_id(payload),
+            theme=str(payload.get("theme", THEMES[0])),
+            difficulty=_parse_difficulty(payload.get("difficulty")),
+            time_limit_seconds=int(payload.get("time_limit_seconds", 900)),
+            seed=_optional_int(payload.get("seed")),
+        )
+        return jsonify(_party_payload(data, party))
+
+    @app.route("/api/parties/<code>/kick", methods=["POST"])
+    def kick_party_member(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        member_id = str(payload.get("member_id", "")).strip()
+        if not member_id:
+            raise ValueError("member_id is required")
+
+        party = data.kick_party_member(
+            code=code,
+            leader_id=payload_user_id(payload),
+            member_id=member_id,
+        )
+        return jsonify(_party_payload(data, party))
+
     @app.route("/api/parties/<code>/start", methods=["POST"])
     def start_match(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
-        match = data.start_match(code=code, seed=_optional_int(payload.get("seed")))
+        match = data.start_match(
+            code=code,
+            requester_id=payload_user_id(payload),
+            seed=_optional_int(payload.get("seed")),
+        )
         return jsonify(_match_payload(data, match))
 
     @app.route("/api/matches/<match_id>", methods=["GET"])
@@ -261,18 +325,23 @@ def _user_payload(user: User) -> dict[str, Any]:
 
 
 def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
+    members = [_user_payload(store.users[user_id]) for user_id in party.members]
     return {
         "code": party.code,
+        "join_code": party.code,
+        "join_path": f"/?join={party.code}",
         "mode": party.mode,
         "leader_id": party.leader_id,
+        "member_limit": party.member_limit,
+        "is_full": len(members) >= party.member_limit,
         "settings": {
             "theme": party.settings.theme,
             "difficulty": party.settings.difficulty,
             "time_limit_seconds": party.settings.time_limit_seconds,
             "seed": party.settings.seed,
         },
-        "members": [_user_payload(store.users[user_id]) for user_id in party.members],
-        "invite_link": f"/join/{party.code}",
+        "members": members,
+        "invite_link": f"/?join={party.code}",
     }
 
 
