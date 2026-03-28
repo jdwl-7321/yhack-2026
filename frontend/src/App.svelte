@@ -2,9 +2,14 @@
   import { onMount, tick } from "svelte";
   import hljs from "highlight.js/lib/core";
   import python from "highlight.js/lib/languages/python";
+  import {
+    bundledThemes,
+    bundledThemesInfo,
+    type BundledTheme,
+  } from "shiki/bundle/web";
 
   type UiTheme = "light" | "dark";
-  type ThemeSource = "system" | "manual";
+  type AppearanceMode = UiTheme | "system";
   type View = "home" | "arena" | "leaderboard";
   type AuthMode = "register" | "login";
   type Mode = "zen" | "casual" | "ranked";
@@ -91,10 +96,40 @@
     type: ConsoleType;
   };
 
+  type ShikiThemeDefinition = {
+    colors?: Record<string, string>;
+    tokenColors?: Array<{
+      scope?: string | string[];
+      settings?: {
+        foreground?: string;
+      };
+    }>;
+  };
+
+  type EditorThemePalette = {
+    accent: string;
+    editorBg: string;
+    editorText: string;
+    selection: string;
+    keyword: string;
+    string: string;
+    comment: string;
+    number: string;
+    functionName: string;
+  };
+
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
   const LEADERBOARD_LIMIT = 10;
+  const APPEARANCE_STORAGE_KEY = "yhack.appearance";
+  const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
+  const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
+  const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
+  const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
+  const themeInfoById = new Map(
+    bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
+  );
 
   if (!hljs.getLanguage("python")) {
     hljs.registerLanguage("python", python);
@@ -116,10 +151,20 @@
   let timeLimitSeconds = 900;
 
   let themePref: UiTheme = "dark";
-  let themeSource: ThemeSource = "system";
+  let appearanceMode: AppearanceMode = "system";
   let systemMatcher: MediaQueryList | null = null;
   let mediaListener: (() => void) | null = null;
   let themeStatusText = "";
+  let lightEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
+  let darkEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
+  let activeEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
+  let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
+    DEFAULT_DARK_EDITOR_THEME;
+  let availableEditorThemes = bundledThemesInfo.filter(
+    (theme) => theme.type === "dark",
+  );
+  let themeMenuOpen = false;
+  let themeMenuEl: HTMLDivElement | null = null;
 
   let themes = [FALLBACK_THEME];
   let match: MatchPayload | null = null;
@@ -127,7 +172,6 @@
   let leaderboard: LeaderboardEntry[] = [];
   let leaderboardCurrentUser: LeaderboardEntry | null = null;
   let leaderboardTotalPlayers = 0;
-  let leaderboardVisibleRows: LeaderboardEntry[] = [];
   let code = "";
   let hints: string[] = [];
   let testResult: JudgePayload | null = null;
@@ -136,7 +180,6 @@
   let busy = false;
   let error = "";
   let notice = "";
-  let leaderboardFocus: "top" | "around" = "top";
 
   let timerText = "00:00";
   let timeRemaining = 0;
@@ -312,29 +355,171 @@
     return systemMatcher?.matches ? "dark" : "light";
   }
 
+  function resolveAppearanceMode(mode: AppearanceMode = appearanceMode): UiTheme {
+    if (mode === "system") {
+      return resolveSystemTheme();
+    }
+    return mode;
+  }
+
   function applyTheme(theme: UiTheme): void {
     document.documentElement.dataset.theme = theme;
   }
 
-  function syncThemeFromSystem(): void {
-    if (themeSource !== "system") {
+  function themeName(themeId: BundledTheme): string {
+    return themeInfoById.get(themeId)?.displayName ?? themeId;
+  }
+
+  function scopeMatches(rawScope: string | string[], target: string): boolean {
+    const scopeList = Array.isArray(rawScope)
+      ? rawScope
+      : rawScope.split(",").map((part) => part.trim());
+    return scopeList.some(
+      (scope) =>
+        scope === target ||
+        scope.startsWith(`${target}.`) ||
+        target.startsWith(`${scope}.`),
+    );
+  }
+
+  function findThemeTokenColor(
+    theme: ShikiThemeDefinition,
+    targets: string[],
+    fallback: string,
+  ): string {
+    const tokenColors = theme.tokenColors ?? [];
+    for (let index = tokenColors.length - 1; index >= 0; index -= 1) {
+      const rule = tokenColors[index];
+      if (!rule.scope || !rule.settings?.foreground) {
+        continue;
+      }
+      if (targets.some((target) => scopeMatches(rule.scope!, target))) {
+        return rule.settings.foreground;
+      }
+    }
+    return fallback;
+  }
+
+  function extractEditorThemePalette(theme: ShikiThemeDefinition): EditorThemePalette {
+    const fallbackPalette =
+      themePref === "dark"
+        ? {
+            accent: "#e2b714",
+            editorBg: "#323437",
+            editorText: "#d1d0c5",
+            selection: "rgba(226, 183, 20, 0.34)",
+            keyword: "#f7768e",
+            string: "#9ece6a",
+            comment: "#6b7280",
+            number: "#e0af68",
+            functionName: "#7aa2f7",
+          }
+        : {
+            accent: "#a86d00",
+            editorBg: "#f3f4f6",
+            editorText: "#1f2329",
+            selection: "rgba(168, 109, 0, 0.22)",
+            keyword: "#b42318",
+            string: "#2f8f4e",
+            comment: "#6b7280",
+            number: "#a86d00",
+            functionName: "#175cd3",
+          };
+
+    return {
+      accent:
+        theme.colors?.["button.background"] ??
+        theme.colors?.["focusBorder"] ??
+        fallbackPalette.accent,
+      editorBg:
+        theme.colors?.["editor.background"] ?? fallbackPalette.editorBg,
+      editorText:
+        theme.colors?.["editor.foreground"] ?? fallbackPalette.editorText,
+      selection:
+        theme.colors?.["editor.selectionBackground"] ??
+        fallbackPalette.selection,
+      keyword: findThemeTokenColor(
+        theme,
+        ["keyword.control", "keyword.operator", "storage.type", "keyword"],
+        fallbackPalette.keyword,
+      ),
+      string: findThemeTokenColor(
+        theme,
+        ["string", "string.quoted"],
+        fallbackPalette.string,
+      ),
+      comment: findThemeTokenColor(
+        theme,
+        ["comment", "punctuation.definition.comment"],
+        fallbackPalette.comment,
+      ),
+      number: findThemeTokenColor(
+        theme,
+        ["constant.numeric", "number"],
+        fallbackPalette.number,
+      ),
+      functionName: findThemeTokenColor(
+        theme,
+        ["entity.name.function", "support.function", "entity.name.class"],
+        fallbackPalette.functionName,
+      ),
+    };
+  }
+
+  async function applyEditorTheme(themeId: BundledTheme): Promise<void> {
+    const moduleValue = await bundledThemes[themeId]();
+    const theme = ("default" in moduleValue
+      ? moduleValue.default
+      : moduleValue) as ShikiThemeDefinition;
+    const palette = extractEditorThemePalette(theme);
+    const root = document.documentElement;
+
+    root.style.setProperty("--theme-accent", palette.accent);
+    root.style.setProperty("--editor-bg", palette.editorBg);
+    root.style.setProperty("--editor-text", palette.editorText);
+    root.style.setProperty("--editor-selection", palette.selection);
+    root.style.setProperty("--editor-keyword", palette.keyword);
+    root.style.setProperty("--editor-string", palette.string);
+    root.style.setProperty("--editor-comment", palette.comment);
+    root.style.setProperty("--editor-number", palette.number);
+    root.style.setProperty("--editor-function", palette.functionName);
+
+    activeEditorTheme = themeId;
+    activeEditorThemeName = themeName(themeId);
+  }
+
+  function syncThemeState(): void {
+    themePref = resolveAppearanceMode();
+    applyTheme(themePref);
+
+    const nextTheme =
+      themePref === "dark" ? darkEditorTheme : lightEditorTheme;
+    void applyEditorTheme(nextTheme).catch((err) => {
+      error = toErrorMessage(err);
+    });
+  }
+
+  function setAppearanceMode(mode: AppearanceMode): void {
+    appearanceMode = mode;
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, mode);
+    syncThemeState();
+  }
+
+  function setEditorTheme(themeId: BundledTheme): void {
+    const themeInfo = themeInfoById.get(themeId);
+    if (!themeInfo) {
       return;
     }
-    themePref = resolveSystemTheme();
-    applyTheme(themePref);
-  }
 
-  function toggleTheme(): void {
-    themeSource = "manual";
-    themePref = themePref === "dark" ? "light" : "dark";
-    localStorage.setItem("yhack.theme", themePref);
-    applyTheme(themePref);
-  }
+    if (themeInfo.type === "light") {
+      lightEditorTheme = themeId;
+      localStorage.setItem(LIGHT_THEME_STORAGE_KEY, themeId);
+    } else {
+      darkEditorTheme = themeId;
+      localStorage.setItem(DARK_THEME_STORAGE_KEY, themeId);
+    }
 
-  function resetThemeToSystem(): void {
-    themeSource = "system";
-    localStorage.removeItem("yhack.theme");
-    syncThemeFromSystem();
+    syncThemeState();
   }
 
   function toErrorMessage(value: unknown): string {
@@ -378,22 +563,6 @@
     leaderboardTotalPlayers = payload.total_players;
   }
 
-  function leaderboardTier(elo: number): string {
-    if (elo >= 1600) {
-      return "Diamond";
-    }
-    if (elo >= 1400) {
-      return "Platinum";
-    }
-    if (elo >= 1200) {
-      return "Gold";
-    }
-    if (elo >= 1050) {
-      return "Silver";
-    }
-    return "Bronze";
-  }
-
   function leaderboardPercentile(placement: number): string {
     if (leaderboardTotalPlayers <= 1) {
       return "Top 100%";
@@ -412,24 +581,6 @@
       return "Leader";
     }
     return "Ranked";
-  }
-
-  function deriveLeaderboardRows(): LeaderboardEntry[] {
-    if (leaderboardFocus === "top" || !leaderboardCurrentUser) {
-      return leaderboard;
-    }
-
-    const currentUser = leaderboardCurrentUser;
-    const centerPlacement = currentUser.placement;
-    const startPlacement = Math.max(1, centerPlacement - 3);
-    const endPlacement = centerPlacement + 3;
-    const rows = leaderboard.filter(
-      (row) => row.placement >= startPlacement && row.placement <= endPlacement,
-    );
-    if (rows.some((row) => row.user_id === currentUser.user_id)) {
-      return rows;
-    }
-    return leaderboard;
   }
 
   function syncSessionElo(currentStandings: Standing[]): void {
@@ -752,30 +903,61 @@
   }
 
   $: themeStatusText =
-    themeSource === "system"
+    appearanceMode === "system"
       ? `Following system (${themePref})`
-      : `${themePref} override`;
+      : `${appearanceMode} mode`;
 
-  $: leaderboardVisibleRows = deriveLeaderboardRows();
   $: highlightedCode = highlightPython(code);
+  $: availableEditorThemes = bundledThemesInfo.filter(
+    (theme) => theme.type === themePref,
+  );
 
   onMount(() => {
-    const saved = localStorage.getItem("yhack.theme");
-    if (saved === "light" || saved === "dark") {
-      themeSource = "manual";
-      themePref = saved;
+    const savedAppearance = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+    if (
+      savedAppearance === "light" ||
+      savedAppearance === "dark" ||
+      savedAppearance === "system"
+    ) {
+      appearanceMode = savedAppearance;
+    }
+
+    const savedLightTheme = localStorage.getItem(LIGHT_THEME_STORAGE_KEY);
+    if (
+      savedLightTheme &&
+      themeInfoById.get(savedLightTheme as BundledTheme)?.type === "light"
+    ) {
+      lightEditorTheme = savedLightTheme as BundledTheme;
+    }
+
+    const savedDarkTheme = localStorage.getItem(DARK_THEME_STORAGE_KEY);
+    if (
+      savedDarkTheme &&
+      themeInfoById.get(savedDarkTheme as BundledTheme)?.type === "dark"
+    ) {
+      darkEditorTheme = savedDarkTheme as BundledTheme;
     }
 
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
-    syncThemeFromSystem();
-    applyTheme(themePref);
+    syncThemeState();
 
     mediaListener = () => {
-      if (themeSource === "system") {
-        syncThemeFromSystem();
+      if (appearanceMode === "system") {
+        syncThemeState();
       }
     };
     systemMatcher.addEventListener("change", mediaListener);
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!themeMenuOpen || !themeMenuEl) {
+        return;
+      }
+      const target = event.target;
+      if (target instanceof Node && !themeMenuEl.contains(target)) {
+        themeMenuOpen = false;
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
 
     resetConsole();
 
@@ -796,6 +978,7 @@
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener("change", mediaListener);
       }
+      document.removeEventListener("pointerdown", handlePointerDown);
     };
   });
 </script>
@@ -829,22 +1012,65 @@
       <button type="button" class="nav-icon" title="Info">
         <i class="fas fa-info" aria-hidden="true"></i>
       </button>
-      <button
-        type="button"
-        class="nav-theme-toggle"
-        class:dark={themePref === "dark"}
-        on:click={toggleTheme}
-        title={`Theme: ${themeStatusText}`}
-        aria-label={`Toggle theme. Current theme ${themePref}.`}
-      >
-        <i
-          class={`fas ${themePref === "dark" ? "fa-moon" : "fa-sun"}`}
-          aria-hidden="true"
-        ></i>
-        <span class="nav-theme-track" aria-hidden="true">
-          <span class="nav-theme-thumb"></span>
-        </span>
-      </button>
+      <div class="theme-menu-shell" bind:this={themeMenuEl}>
+        <button
+          type="button"
+          class="nav-theme-button"
+          on:click={() => {
+            themeMenuOpen = !themeMenuOpen;
+          }}
+          title={`${themeStatusText} · ${activeEditorThemeName}`}
+          aria-haspopup="dialog"
+          aria-expanded={themeMenuOpen}
+        >
+          <i class="fas fa-palette" aria-hidden="true"></i>
+        </button>
+
+        {#if themeMenuOpen}
+          <div class="theme-menu" role="dialog" aria-label="Theme settings">
+            <div class="theme-menu-section">
+              <span class="theme-menu-label">Appearance</span>
+              <div class="theme-mode-toggle">
+                {#each ["system", "light", "dark"] as option}
+                  <button
+                    type="button"
+                    class:active={appearanceMode === option}
+                    on:click={() => {
+                      setAppearanceMode(option as AppearanceMode);
+                    }}
+                  >
+                    {option}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="theme-menu-section">
+              <div class="theme-menu-heading">
+                <span class="theme-menu-label">Theme</span>
+                <span class="theme-menu-meta">{themeStatusText}</span>
+              </div>
+              <select
+                value={activeEditorTheme}
+                on:change={(event) => {
+                  setEditorTheme(
+                    (event.currentTarget as HTMLSelectElement)
+                      .value as BundledTheme,
+                  );
+                }}
+              >
+                {#each availableEditorThemes as themeOption}
+                  <option value={themeOption.id}>{themeOption.displayName}</option>
+                {/each}
+              </select>
+            </div>
+
+            <p class="theme-menu-summary">
+              Using <strong>{activeEditorThemeName}</strong> for {themePref} mode.
+            </p>
+          </div>
+        {/if}
+      </div>
       <button type="button" class="nav-icon" title="Account">
         <i class="fas fa-user" aria-hidden="true"></i>
       </button>
@@ -1051,28 +1277,9 @@
       <aside class="leaderboard-sidebar">
         <section class="leaderboard-filter-card">
           <p class="eyebrow">Ranked ladder</p>
-          <button
-            type="button"
-            class="leaderboard-filter"
-            class:active={leaderboardFocus === "top"}
-            on:click={() => {
-              leaderboardFocus = "top";
-            }}
-          >
+          <button type="button" class="leaderboard-filter active">
             <i class="fas fa-globe" aria-hidden="true"></i>
             all-time elo
-          </button>
-          <button
-            type="button"
-            class="leaderboard-filter"
-            class:active={leaderboardFocus === "around"}
-            on:click={() => {
-              leaderboardFocus = "around";
-            }}
-            disabled={!leaderboardCurrentUser}
-          >
-            <i class="fas fa-crosshairs" aria-hidden="true"></i>
-            around you
           </button>
         </section>
 
@@ -1091,10 +1298,10 @@
             >
           </div>
           <div class="leaderboard-stat">
-            <span>Your tier</span>
+            <span>Your ELO</span>
             <strong
               >{leaderboardCurrentUser
-                ? leaderboardTier(leaderboardCurrentUser.elo)
+                ? leaderboardCurrentUser.elo
                 : "-"}</strong
             >
           </div>
@@ -1111,17 +1318,13 @@
         </div>
 
         <div class="leaderboard-meta">
-          <span>
-            {leaderboardFocus === "around"
-              ? "Showing players near your current position."
-              : "Showing the top ranked players by ELO."}
-          </span>
+          <span>Showing the top ranked players by ELO.</span>
           <button type="button" class="btn" on:click={() => void loadLeaderboard()}>
             Refresh
           </button>
         </div>
 
-        {#if leaderboardVisibleRows.length === 0}
+        {#if leaderboard.length === 0}
           <section class="leaderboard-empty-state">
             <h2>Leaderboard</h2>
             <p>Registered players will appear here once ranked runs are completed.</p>
@@ -1131,14 +1334,13 @@
             <div class="leaderboard-table leaderboard-table-head" role="presentation">
               <span>#</span>
               <span>player</span>
-              <span>tier</span>
               <span>elo</span>
               <span>percentile</span>
               <span>status</span>
             </div>
 
             <div class="leaderboard-table-body">
-              {#each leaderboardVisibleRows as row}
+              {#each leaderboard as row}
                 <article
                   class="leaderboard-table leaderboard-table-row"
                   class:current={row.user_id === sessionUser?.id}
@@ -1152,7 +1354,6 @@
                   <span class="leaderboard-cell player">
                     <strong>{row.name}</strong>
                   </span>
-                  <span class="leaderboard-cell tier">{leaderboardTier(row.elo)}</span>
                   <span class="leaderboard-cell score">{row.elo}</span>
                   <span class="leaderboard-cell percentile">
                     {leaderboardPercentile(row.placement)}
@@ -1416,10 +1617,10 @@
     </div>
     <div class="footer-right">
       <span
-        ><i class="fas fa-palette" aria-hidden="true"></i> {themeSource ===
+        ><i class="fas fa-palette" aria-hidden="true"></i> {appearanceMode ===
         "system"
-          ? `system ${themePref}`
-          : themePref}</span
+          ? `system ${themePref} · ${activeEditorThemeName}`
+          : `${appearanceMode} · ${activeEditorThemeName}`}</span
       >
       <span
         ><i class="fas fa-code-branch" aria-hidden="true"></i> v0.1.0-alpha</span
