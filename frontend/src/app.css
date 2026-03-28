@@ -1021,7 +1021,7 @@ select:focus {
 
 .leaderboard-table {
   display: grid;
-  grid-template-columns: 80px minmax(180px, 1.5fr) repeat(4, minmax(100px, 1fr));
+  grid-template-columns: 80px minmax(180px, 1.5fr) repeat(3, minmax(100px, 1fr));
   gap: 1rem;
   align-items: center;
 }
@@ -1067,7 +1067,6 @@ select:focus {
   text-overflow: ellipsis;
 }
 
-.leaderboard-cell.tier,
 .leaderboard-cell.percentile,
 .leaderboard-cell.note {
   color: var(--sub-color);
@@ -1164,8 +1163,8 @@ footer a:hover {
     grid-template-columns: 60px minmax(140px, 1.4fr) repeat(2, minmax(86px, 1fr));
   }
 
+  .leaderboard-table-head span:nth-child(4),
   .leaderboard-table-head span:nth-child(5),
-  .leaderboard-table-head span:nth-child(6),
   .leaderboard-table-row .leaderboard-cell.percentile,
   .leaderboard-table-row .leaderboard-cell.note {
     display: none;
