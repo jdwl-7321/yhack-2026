@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
 
   type UiTheme = 'light' | 'dark' | 'system'
   type Mode = 'zen' | 'casual' | 'ranked'
@@ -42,6 +42,9 @@
 
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
   const FALLBACK_THEME = 'String manipulation (unix-like text processing)'
+  const INDENT = '    '
+  const PYTHON_TOKEN_PATTERN =
+    /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(\d+(?:\.\d+)?)\b|\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b/gm
 
   const modeOptions: Mode[] = ['zen', 'casual', 'ranked']
   const difficultyOptions: Difficulty[] = ['easy', 'medium', 'hard', 'expert']
@@ -68,10 +71,82 @@
   let hintOne = ''
   let hintTwo = ''
   let submitResult: SubmitPayload | null = null
+  let highlightedCode = ' '
+  let lineCount = 1
+  let lineNumbers: HTMLDivElement | null = null
+  let highlightLayer: HTMLPreElement | null = null
 
   let busy = false
   let error = ''
   let notice = ''
+
+  function escapeHtml(value: string): string {
+    return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  }
+
+  function highlightPython(source: string): string {
+    let html = ''
+    let lastIndex = 0
+
+    for (const match of source.matchAll(PYTHON_TOKEN_PATTERN)) {
+      const index = match.index ?? 0
+      const token = match[0]
+      html += escapeHtml(source.slice(lastIndex, index))
+
+      const className = match[1]
+        ? 'editor-token-comment'
+        : match[2]
+          ? 'editor-token-string'
+          : match[3]
+            ? 'editor-token-number'
+            : 'editor-token-keyword'
+
+      html += `<span class="${className}">${escapeHtml(token)}</span>`
+      lastIndex = index + token.length
+    }
+
+    html += escapeHtml(source.slice(lastIndex))
+    return html || ' '
+  }
+
+  function syncEditorScroll(event: Event): void {
+    const target = event.currentTarget as HTMLTextAreaElement
+    if (highlightLayer) {
+      highlightLayer.scrollTop = target.scrollTop
+      highlightLayer.scrollLeft = target.scrollLeft
+    }
+    if (lineNumbers) {
+      lineNumbers.scrollTop = target.scrollTop
+    }
+  }
+
+  function handleEditorKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Tab') {
+      return
+    }
+    event.preventDefault()
+
+    const target = event.currentTarget as HTMLTextAreaElement
+    const { selectionStart, selectionEnd } = target
+
+    if (selectionStart === selectionEnd) {
+      code = `${code.slice(0, selectionStart)}${INDENT}${code.slice(selectionEnd)}`
+      const cursor = selectionStart + INDENT.length
+      void tick().then(() => {
+        target.selectionStart = cursor
+        target.selectionEnd = cursor
+      })
+      return
+    }
+
+    const selection = code.slice(selectionStart, selectionEnd)
+    const indented = `${INDENT}${selection.replace(/\n/g, `\n${INDENT}`)}`
+    code = `${code.slice(0, selectionStart)}${indented}${code.slice(selectionEnd)}`
+    void tick().then(() => {
+      target.selectionStart = selectionStart
+      target.selectionEnd = selectionStart + indented.length
+    })
+  }
 
   function resolveTheme(pref: UiTheme): 'light' | 'dark' {
     if (pref === 'light' || pref === 'dark') {
@@ -252,6 +327,9 @@
     timeLimitSeconds = 3600
   }
 
+  $: lineCount = Math.max(1, code.split('\n').length)
+  $: highlightedCode = highlightPython(code)
+
   onMount(() => {
     const saved = localStorage.getItem('yhack.theme')
     if (saved === 'light' || saved === 'dark' || saved === 'system') {
@@ -398,7 +476,25 @@
 
         <label class="editor-label">
           <span>Python submission</span>
-          <textarea bind:value={code} spellcheck="false"></textarea>
+          <div class="editor-shell">
+            <div class="editor-lines" bind:this={lineNumbers} aria-hidden="true">
+              {#each Array(lineCount) as _, index (index)}
+                <span>{index + 1}</span>
+              {/each}
+            </div>
+            <div class="editor-stack">
+              <pre class="editor-highlight" bind:this={highlightLayer} aria-hidden="true">{@html highlightedCode}</pre>
+              <textarea
+                class="editor-input"
+                bind:value={code}
+                spellcheck="false"
+                autocomplete="off"
+                wrap="off"
+                on:keydown={handleEditorKeydown}
+                on:scroll={syncEditorScroll}
+              ></textarea>
+            </div>
+          </div>
         </label>
 
         <div class="action-row">

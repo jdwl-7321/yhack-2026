@@ -144,8 +144,7 @@ label > span,
 }
 
 input,
-select,
-textarea {
+select {
   width: 100%;
   color: var(--text);
   background: var(--surface-lowest);
@@ -158,17 +157,10 @@ textarea {
 }
 
 input:focus,
-select:focus,
-textarea:focus {
+select:focus {
   outline: none;
   border-bottom-color: var(--primary);
   box-shadow: 0 0 8px rgba(173, 198, 255, 0.3);
-}
-
-textarea {
-  min-height: 15rem;
-  font-family: var(--font-mono);
-  resize: vertical;
 }
 
 .switch-row {
@@ -313,6 +305,99 @@ pre {
   font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.editor-shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 15rem;
+  background: var(--surface-lowest);
+  box-shadow: inset 0 0 0 1px var(--outline-ghost);
+}
+
+.editor-lines {
+  margin: 0;
+  padding: 0.55rem 0.45rem;
+  background: var(--surface-low);
+  border-right: 1px solid var(--outline-ghost);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: right;
+  user-select: none;
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.editor-lines::-webkit-scrollbar {
+  display: none;
+}
+
+.editor-lines span {
+  display: block;
+}
+
+.editor-stack {
+  position: relative;
+  min-height: 15rem;
+}
+
+.editor-highlight,
+.editor-input {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.editor-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  pointer-events: none;
+  color: var(--text);
+  word-break: normal;
+}
+
+.editor-highlight::-webkit-scrollbar {
+  display: none;
+}
+
+.editor-input {
+  position: relative;
+  width: 100%;
+  min-height: 15rem;
+  border: 0;
+  resize: vertical;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  overflow: auto;
+}
+
+.editor-input:focus {
+  outline: none;
+}
+
+.editor-token-comment {
+  color: var(--text-muted);
+}
+
+.editor-token-keyword {
+  color: var(--primary);
+}
+
+.editor-token-string {
+  color: var(--success-fg);
+}
+
+.editor-token-number {
+  color: var(--error-fg);
 }
 
 .action-row {
