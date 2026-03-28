@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+from dataclasses import asdict
+from typing import Any, cast
+
+from flask import Flask, jsonify, request
+
+from .constants import THEMES
+from .puzzle import generator_schema
+from .store import Match, MemoryStore, Party, User
+from .types import Difficulty, Mode
+
+SOLUTION_SCAFFOLD = 'def solution(input_str: str) -> str:\n    return ""\n'
+
+
+def create_app(store: MemoryStore | None = None) -> Flask:
+    app = Flask(__name__)
+    data = store or MemoryStore()
+
+    @app.after_request
+    def add_cors_headers(response: Any) -> Any:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        return response
+
+    @app.errorhandler(ValueError)
+    def handle_value_error(exc: ValueError) -> tuple[Any, int]:
+        return jsonify({"error": str(exc)}), 400
+
+    @app.route("/api/health", methods=["GET"])
+    def health() -> Any:
+        return jsonify({"ok": True})
+
+    @app.route("/api/themes", methods=["GET"])
+    def themes() -> Any:
+        return jsonify({"themes": THEMES})
+
+    @app.route("/api/generator/schema", methods=["GET"])
+    def schema() -> Any:
+        return jsonify(generator_schema())
+
+    @app.route("/api/users", methods=["POST"])
+    def create_user() -> Any:
+        payload = request.get_json(silent=True) or {}
+        user = data.create_user(
+            name=str(payload.get("name", "Player")),
+            guest=bool(payload.get("guest", True)),
+            elo=int(payload.get("elo", 1000)),
+        )
+        return jsonify(_user_payload(user))
+
+    @app.route("/api/parties", methods=["POST"])
+    def create_party() -> Any:
+        payload = request.get_json(silent=True) or {}
+        mode = _parse_mode(payload.get("mode"))
+        difficulty = _parse_difficulty(payload.get("difficulty"))
+        party = data.create_party(
+            leader_id=str(payload.get("leader_id", "")),
+            mode=mode,
+            theme=str(payload.get("theme", THEMES[0])),
+            difficulty=difficulty,
+            time_limit_seconds=int(payload.get("time_limit_seconds", 900)),
+            seed=_optional_int(payload.get("seed")),
+        )
+        return jsonify(_party_payload(data, party))
+
+    @app.route("/api/parties/<code>/join", methods=["POST"])
+    def join_party(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        party = data.join_party(code=code, user_id=str(payload.get("user_id", "")))
+        return jsonify(_party_payload(data, party))
+
+    @app.route("/api/parties/<code>/start", methods=["POST"])
+    def start_match(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        match = data.start_match(code=code, seed=_optional_int(payload.get("seed")))
+        return jsonify(_match_payload(data, match))
+
+    @app.route("/api/matches/<match_id>", methods=["GET"])
+    def get_match(match_id: str) -> Any:
+        match = data.get_match(match_id=match_id)
+        return jsonify(_match_payload(data, match, include_samples=True))
+
+    @app.route("/api/matches/<match_id>/submit", methods=["POST"])
+    def submit(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        result = data.submit(
+            match_id=match_id,
+            user_id=str(payload.get("user_id", "")),
+            code=str(payload.get("code", "")),
+        )
+        return jsonify(
+            {
+                **asdict(result),
+                "standings": data.standings(match_id=match_id),
+            }
+        )
+
+    @app.route("/api/matches/<match_id>/hint", methods=["POST"])
+    def hint(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        level = int(payload.get("level", 1))
+        text = data.request_hint(
+            match_id=match_id,
+            user_id=str(payload.get("user_id", "")),
+            level=level,
+        )
+        return jsonify({"level": level, "hint": text})
+
+    @app.route("/api/matches/<match_id>/forfeit", methods=["POST"])
+    def forfeit(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        data.forfeit(match_id=match_id, user_id=str(payload.get("user_id", "")))
+        return jsonify({"standings": data.standings(match_id=match_id)})
+
+    @app.route("/api/matches/<match_id>/finish", methods=["POST"])
+    def finish(match_id: str) -> Any:
+        deltas = data.finish_match(match_id=match_id)
+        return jsonify(
+            {"rating_deltas": deltas, "standings": data.standings(match_id=match_id)}
+        )
+
+    return app
+
+
+def main() -> None:
+    create_app().run(host="0.0.0.0", port=5000, debug=True)
+
+
+def _parse_mode(raw: object) -> Mode:
+    if isinstance(raw, str) and raw in {"zen", "casual", "ranked"}:
+        return cast(Mode, raw)
+    raise ValueError("mode must be one of: zen, casual, ranked")
+
+
+def _parse_difficulty(raw: object) -> Difficulty:
+    if isinstance(raw, str) and raw in {"easy", "medium", "hard", "expert"}:
+        return cast(Difficulty, raw)
+    raise ValueError("difficulty must be one of: easy, medium, hard, expert")
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    raise ValueError("Expected an integer-like value")
+
+
+def _user_payload(user: User) -> dict[str, Any]:
+    return {
+        "id": user.id,
+        "name": user.name,
+        "guest": user.guest,
+        "elo": user.elo,
+    }
+
+
+def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
+    return {
+        "code": party.code,
+        "mode": party.mode,
+        "leader_id": party.leader_id,
+        "settings": {
+            "theme": party.settings.theme,
+            "difficulty": party.settings.difficulty,
+            "time_limit_seconds": party.settings.time_limit_seconds,
+            "seed": party.settings.seed,
+        },
+        "members": [_user_payload(store.users[user_id]) for user_id in party.members],
+        "invite_link": f"/join/{party.code}",
+    }
+
+
+def _match_payload(
+    store: MemoryStore,
+    match: Match,
+    *,
+    include_samples: bool = True,
+) -> dict[str, Any]:
+    sample_tests = [
+        {"input": case.input_str, "output": case.output_str}
+        for case in match.puzzle.sample_tests
+    ]
+
+    payload: dict[str, Any] = {
+        "match_id": match.id,
+        "party_code": match.party_code,
+        "mode": match.mode,
+        "theme": match.theme,
+        "difficulty": match.difficulty,
+        "time_limit_seconds": match.time_limit_seconds,
+        "created_at": match.created_at,
+        "prompt": match.puzzle.prompt,
+        "scaffold": SOLUTION_SCAFFOLD,
+        "sample_tests": sample_tests if include_samples else [],
+        "standings": store.standings(match_id=match.id),
+    }
+    return payload

@@ -1,26 +1,49 @@
-# yhack-2026
+# yhack-2026 prototype
 
-Puzzle contains:
--Script to generate input file
--Program to convert input file to output file
--Human description of what the program does
+Initial full-stack prototype for the PLAN.md game loop.
 
-AI is prompted to generate puzzle
-Theme and difficulty -> Openai api call -> puzzle
+## Stack
 
-Account with auth, guest mode
-ELO system, Zen mode, multiplayer mode
-Multiplayer mode has casual and ranked mode:
-Multiplayer has shareable link and people can join (no automatchmaking yet). Everyone must be logged in for it to be ranked mode. Otherwise, it must be casual. 
-In zen mode and casual multiplayer, no ELO system, party leader can customize theme and difficulty and time limit.
+- Backend: Flask + Python (managed with `uv`)
+- Frontend: Svelte + TypeScript (Vite)
 
-Game idea:
-Users are shown a sample input and corresponding output
-They can code in python in an online editor. when they submit their code for judging it should first run on the sample cases and then run on the script-generated bigger input file. users can ask for hints if they cant figure out the human description of the program they're trying to write. But in ranked this will affect their elo calculation.
-what goes into elo calculation: current elo, everyone else's elo, difficulty of problem, order of solving, time took to solve, partial credit (passed some test cases but not all), some other factors i may have forgotten.
+## Quick start
 
-Technologies:
--Python flask backend
--Sandboxing for code judging (e.g. snekbox)
--Svelte typescript frontend
--Tailwindcss
+### 1) Backend
+
+```bash
+cd backend
+uv sync
+uv run yhack-backend
+```
+
+The API runs on `http://localhost:5000`.
+
+### 2) Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The Vite dev server runs on `http://localhost:5173` and proxies `/api` to Flask.
+
+## Python quality checks
+
+```bash
+cd backend
+uv run pytest
+uvx ty check src tests
+```
+
+## Prototype features
+
+- Zen, casual, and ranked mode start flow
+- Ranked mode fallback to casual if a guest joins
+- Hardcoded theme catalog and seeded puzzle generation
+- Hidden/sampled tests with `solution(input_str: str) -> str` contract
+- Two-level hints (`level 2` reveals sampled variable values)
+- Ranked placement + ELO delta calculation with hint gain multipliers
+- Frontend single-page playable loop with editor and verdict feedback
+- UI theme setting: `light`, `dark`, `system`
