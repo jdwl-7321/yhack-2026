@@ -200,6 +200,9 @@
   let consoleNextId = 1;
   let consoleEl: HTMLDivElement | null = null;
   let highlightEl: HTMLPreElement | null = null;
+  let lineNumbersEl: HTMLPreElement | null = null;
+  let lineNumbers = "1";
+  let editorScrollLeft = 0;
 
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
@@ -297,8 +300,12 @@
       return;
     }
     const target = event.currentTarget as HTMLTextAreaElement;
+    editorScrollLeft = target.scrollLeft;
     highlightEl.scrollTop = target.scrollTop;
     highlightEl.scrollLeft = target.scrollLeft;
+    if (lineNumbersEl) {
+      lineNumbersEl.scrollTop = target.scrollTop;
+    }
   }
 
   function handleEditorKeydown(event: KeyboardEvent): void {
@@ -1000,6 +1007,10 @@
       : `${appearanceMode} mode`;
 
   $: highlightedCode = highlightPython(code);
+  $: lineNumbers = Array.from(
+    { length: Math.max(1, code.split("\n").length) },
+    (_, index) => `${index + 1}`,
+  ).join("\n");
   $: availableEditorThemes = bundledThemesInfo.filter(
     (theme) => theme.type === themePref,
   );
@@ -1565,11 +1576,18 @@
           </section>
 
           <section class="editor-panel">
-            <div class="editor-container">
-              <div class="editor-stack">
-                <pre class="code-highlight" aria-hidden="true" bind:this={highlightEl}
-                  ><code class="hljs language-python">{@html highlightedCode || " "}</code></pre
-                >
+              <div class="editor-container">
+                <div class="editor-stack">
+                  <pre
+                    class="line-numbers"
+                    aria-hidden="true"
+                    bind:this={lineNumbersEl}
+                    style:transform={`translateX(${-editorScrollLeft}px)`}
+                    ><code>{lineNumbers}</code></pre
+                  >
+                  <pre class="code-highlight" aria-hidden="true" bind:this={highlightEl}
+                    ><code class="hljs language-python">{@html highlightedCode || " "}</code></pre
+                  >
                 <textarea
                   id="code-editor"
                   bind:value={code}
@@ -1702,7 +1720,7 @@
 
   <footer>
     <div class="footer-left">
-      <a href="/github"
+      <a href="https://github.com/jdwl-7321/yhack-2026"
         ><i class="fas fa-code-branch" aria-hidden="true"></i> github</a
       >
     </div>
