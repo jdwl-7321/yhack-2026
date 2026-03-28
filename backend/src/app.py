@@ -7,7 +7,7 @@ from typing import Any, cast
 from flask import Flask, jsonify, request, session
 
 from constants import THEMES
-from puzzle import generator_schema
+from puzzle import TestCase, generator_schema
 from store import Match, MemoryStore, Party, User
 from domain_types import Difficulty, Mode
 
@@ -153,9 +153,39 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         return jsonify(
             {
                 **asdict(result),
+                "sample_tests": _sample_tests_payload(
+                    data.get_match(match_id=match_id)
+                ),
                 "standings": data.standings(match_id=match_id),
             }
         )
+
+    @app.route("/api/matches/<match_id>/test", methods=["POST"])
+    def test_samples(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        result = data.test_samples(
+            match_id=match_id,
+            user_id=payload_user_id(payload),
+            code=str(payload.get("code", "")),
+        )
+        return jsonify(
+            {
+                **asdict(result),
+                "sample_tests": _sample_tests_payload(
+                    data.get_match(match_id=match_id)
+                ),
+                "standings": data.standings(match_id=match_id),
+            }
+        )
+
+    @app.route("/api/matches/<match_id>/promote-failed-test", methods=["POST"])
+    def promote_failed_test(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        sample_tests = data.promote_failed_hidden_test(
+            match_id=match_id,
+            user_id=payload_user_id(payload),
+        )
+        return jsonify({"sample_tests": _sample_tests_payload_from_cases(sample_tests)})
 
     @app.route("/api/matches/<match_id>/hint", methods=["POST"])
     def hint(match_id: str) -> Any:
@@ -241,10 +271,7 @@ def _match_payload(
     *,
     include_samples: bool = True,
 ) -> dict[str, Any]:
-    sample_tests = [
-        {"input": case.input_str, "output": case.output_str}
-        for case in match.puzzle.sample_tests
-    ]
+    sample_tests = _sample_tests_payload(match)
 
     payload: dict[str, Any] = {
         "match_id": match.id,
@@ -260,3 +287,11 @@ def _match_payload(
         "standings": store.standings(match_id=match.id),
     }
     return payload
+
+
+def _sample_tests_payload(match: Match) -> list[dict[str, str]]:
+    return _sample_tests_payload_from_cases(match.puzzle.sample_tests)
+
+
+def _sample_tests_payload_from_cases(cases: list[TestCase]) -> list[dict[str, str]]:
+    return [{"input": case.input_str, "output": case.output_str} for case in cases]

@@ -46,7 +46,13 @@
     standings: Standing[]
   }
 
-  type SubmitPayload = {
+  type FailedHiddenTest = {
+    input_str: string
+    expected_output: string
+    actual_output: string
+  }
+
+  type JudgePayload = {
     verdict: 'accepted' | 'sample_failed' | 'wrong_answer' | 'error'
     sample_passed: number
     sample_total: number
@@ -54,6 +60,9 @@
     hidden_total: number
     runtime_ms: number
     message: string
+    stdout: string
+    first_failed_hidden_test: FailedHiddenTest | null
+    sample_tests: Array<{ input: string; output: string }>
     standings: Standing[]
   }
 
@@ -90,7 +99,8 @@
   let code = ''
   let hintOne = ''
   let hintTwo = ''
-  let submitResult: SubmitPayload | null = null
+  let testResult: JudgePayload | null = null
+  let submitResult: JudgePayload | null = null
   let highlightedCode = ' '
   let lineCount = 1
   let lineNumbers: HTMLDivElement | null = null
@@ -265,6 +275,7 @@
       inArena = false
       match = null
       standings = []
+      testResult = null
       submitResult = null
       hintOne = ''
       hintTwo = ''
@@ -287,6 +298,7 @@
     busy = true
     error = ''
     notice = ''
+    testResult = null
     submitResult = null
     hintOne = ''
     hintTwo = ''
@@ -328,16 +340,77 @@
     if (!match || !sessionUser) {
       return
     }
+    const currentMatchId = match.match_id
     busy = true
     error = ''
+    notice = ''
     try {
-      const payload = await api<SubmitPayload>(`/api/matches/${match.match_id}/submit`, {
+      const payload = await api<JudgePayload>(`/api/matches/${currentMatchId}/submit`, {
         method: 'POST',
         body: JSON.stringify({ code }),
       })
       submitResult = payload
+      if (match?.match_id === currentMatchId) {
+        match = { ...match, sample_tests: payload.sample_tests }
+      }
       standings = payload.standings
       syncSessionElo(payload.standings)
+    } catch (err) {
+      error = toErrorMessage(err)
+    } finally {
+      busy = false
+    }
+  }
+
+  async function testSamples(): Promise<void> {
+    if (!match || !sessionUser) {
+      return
+    }
+    const currentMatchId = match.match_id
+    busy = true
+    error = ''
+    notice = ''
+    try {
+      const payload = await api<JudgePayload>(`/api/matches/${currentMatchId}/test`, {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      })
+      testResult = payload
+      if (match?.match_id === currentMatchId) {
+        match = { ...match, sample_tests: payload.sample_tests }
+      }
+      standings = payload.standings
+      syncSessionElo(payload.standings)
+    } catch (err) {
+      error = toErrorMessage(err)
+    } finally {
+      busy = false
+    }
+  }
+
+  async function promoteFailedTest(): Promise<void> {
+    if (!match || !sessionUser || !submitResult?.first_failed_hidden_test) {
+      return
+    }
+    const currentMatchId = match.match_id
+    const currentSubmit = submitResult
+
+    busy = true
+    error = ''
+    notice = ''
+    try {
+      const payload = await api<{ sample_tests: Array<{ input: string; output: string }> }>(
+        `/api/matches/${currentMatchId}/promote-failed-test`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        },
+      )
+      if (match?.match_id === currentMatchId) {
+        match = { ...match, sample_tests: payload.sample_tests }
+      }
+      submitResult = { ...currentSubmit, first_failed_hidden_test: null }
+      notice = 'Promoted failed hidden test to visible samples.'
     } catch (err) {
       error = toErrorMessage(err)
     } finally {
@@ -681,6 +754,7 @@
         </label>
 
         <div class="action-row">
+          <button class="ghost" on:click={testSamples} disabled={busy}>Test Samples</button>
           <button class="primary" on:click={submit} disabled={busy}>Submit</button>
           <button class="ghost" on:click={() => requestHint(1)} disabled={busy}>Hint 1</button>
           <button class="ghost" on:click={() => requestHint(2)} disabled={busy}>Hint 2</button>
@@ -688,13 +762,54 @@
           <button class="ghost" on:click={finishMatch} disabled={busy}>Finish</button>
         </div>
 
+        {#if testResult}
+          <section class="judge-result">
+            <p class="chip" class:ok={testResult.verdict === 'accepted'} class:bad={testResult.verdict !== 'accepted'}>
+              TEST · {testResult.verdict.toUpperCase()} · SAMPLE {testResult.sample_passed}/{testResult.sample_total} · {testResult.runtime_ms}ms
+            </p>
+            {#if testResult.message}
+              <p class="mono subtle">{testResult.message}</p>
+            {/if}
+            {#if testResult.stdout}
+              <p class="mono subtle">Stdout</p>
+              <pre class="stdout-block">{testResult.stdout}</pre>
+            {/if}
+          </section>
+        {/if}
+
         {#if submitResult}
-          <p class="chip" class:ok={submitResult.verdict === 'accepted'} class:bad={submitResult.verdict !== 'accepted'}>
-            {submitResult.verdict.toUpperCase()} · SAMPLE {submitResult.sample_passed}/{submitResult.sample_total} · HIDDEN {submitResult.hidden_passed}/{submitResult.hidden_total} · {submitResult.runtime_ms}ms
+          <section class="judge-result">
+            <p class="chip" class:ok={submitResult.verdict === 'accepted'} class:bad={submitResult.verdict !== 'accepted'}>
+              SUBMIT · {submitResult.verdict.toUpperCase()} · SAMPLE {submitResult.sample_passed}/{submitResult.sample_total} · HIDDEN {submitResult.hidden_passed}/{submitResult.hidden_total} · {submitResult.runtime_ms}ms
+            </p>
+            {#if submitResult.message}
+              <p class="mono subtle">{submitResult.message}</p>
+            {/if}
+            {#if submitResult.stdout}
+              <p class="mono subtle">Stdout</p>
+              <pre class="stdout-block">{submitResult.stdout}</pre>
+            {/if}
+            {#if submitResult.first_failed_hidden_test}
+              <article class="failed-case">
+                <h3>First failed hidden test</h3>
+                <p><strong>Input</strong></p>
+                <pre>{submitResult.first_failed_hidden_test.input_str}</pre>
+                <p><strong>Expected output</strong></p>
+                <pre>{submitResult.first_failed_hidden_test.expected_output}</pre>
+                <p><strong>Your output</strong></p>
+                <pre>{submitResult.first_failed_hidden_test.actual_output}</pre>
+                <button class="ghost" on:click={promoteFailedTest} disabled={busy}>
+                  Use this as sample test
+                </button>
+              </article>
+            {/if}
+          </section>
+        {/if}
+
+        {#if match.sample_tests.length >= 4}
+          <p class="mono subtle">
+            Visible sample limit reached (4). Promoting a new case replaces the oldest sample.
           </p>
-          {#if submitResult.message}
-            <p class="mono subtle">{submitResult.message}</p>
-          {/if}
         {/if}
 
         {#if hintOne}
