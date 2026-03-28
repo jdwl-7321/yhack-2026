@@ -1545,14 +1545,21 @@
           <section class="prompt-panel">
             <article class="prompt-card">
               {#if match.sample_tests.length > 0}
-                <div class="samples-grid">
-                  <span class="sample-head">Sample Input</span>
-                  <span class="sample-head">Sample Output</span>
-                  {#each match.sample_tests as sample}
-                    <pre class="sample-cell">{sample.input}</pre>
-                    <pre class="sample-cell">{sample.output}</pre>
-                  {/each}
-                </div>
+                <section class="samples-panel">
+                  <p class="samples-title">Samples</p>
+                  <div class="samples-scroll">
+                    <div class="samples-grid">
+                      <span class="sample-head index-head">#</span>
+                      <span class="sample-head">Input</span>
+                      <span class="sample-head">Output</span>
+                      {#each match.sample_tests as sample, index}
+                        <span class="sample-index">{index + 1}</span>
+                        <pre class="sample-cell">{sample.input}</pre>
+                        <pre class="sample-cell">{sample.output}</pre>
+                      {/each}
+                    </div>
+                  </div>
+                </section>
               {:else}
                 <p class="standings-empty">No sample tests available.</p>
               {/if}
