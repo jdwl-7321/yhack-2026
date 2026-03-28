@@ -9,11 +9,15 @@ import random
 import uuid
 from typing import Any, Callable, Literal, Sequence, cast
 
+from jinja2 import Environment, StrictUndefined, TemplateError
+
 from constants import NOVELTY_POOL_SIZE, SIMILARITY_THRESHOLD
 from domain_types import Difficulty, JsonScalar
 
 VarType = Literal["int", "float", "bool", "str", "choice"]
 SamplingMode = Literal["uniform", "weighted", "fixed_list"]
+
+_HINT_TEMPLATE_ENV = Environment(autoescape=False, undefined=StrictUndefined)
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,9 +268,9 @@ def generate_puzzle(
             prompt=template.prompt,
             sample_tests=sample_tests,
             hidden_tests=hidden_tests,
-            hint_level_1=template.hint_level_1,
-            hint_level_2=template.hint_level_2,
-            hint_level_3=template.hint_level_3.format(**params),
+            hint_level_1=_render_hint_template(template.hint_level_1, params),
+            hint_level_2=_render_hint_template(template.hint_level_2, params),
+            hint_level_3=_render_hint_template(template.hint_level_3, params),
             variables=params,
             fingerprint=fingerprint,
             signature=signature,
@@ -373,6 +377,13 @@ def _template_for_theme(theme: str) -> _Template:
     return _TEMPLATES["linear"]
 
 
+def _render_hint_template(template: str, params: dict[str, JsonScalar]) -> str:
+    try:
+        return _HINT_TEMPLATE_ENV.from_string(template).render(**params).strip()
+    except TemplateError as exc:
+        raise ValueError(f"Invalid hint template: {exc}") from exc
+
+
 def _linear_solver(input_str: str, params: dict[str, JsonScalar]) -> str:
     multiplier = int(params["multiplier"])
     offset = int(params["offset"])
@@ -467,7 +478,9 @@ _TEMPLATES: dict[str, _Template] = {
         hint_level_2=(
             "Every number goes through the same linear value-mapping step before the final ascending sort."
         ),
-        hint_level_3="This round applies x -> (x * {multiplier}) + {offset}, then sorts ascending.",
+        hint_level_3=(
+            "This round applies x -> (x * {{ multiplier }}) + {{ offset }}, then sorts ascending."
+        ),
         solver=_linear_solver,
         input_factory=_linear_input,
     ),
@@ -498,8 +511,8 @@ _TEMPLATES: dict[str, _Template] = {
             "Letters are shifted by a consistent Caesar-style rule, and token order stays unchanged."
         ),
         hint_level_3=(
-            "This round shifts letters by {shift}; reverse each transformed token only when "
-            "reverse_tokens={reverse_tokens}."
+            "This round shifts letters by {{ shift }}"
+            "{% if reverse_tokens %} and then reverses each transformed token{% endif %}."
         ),
         solver=_cipher_solver,
         input_factory=_cipher_input,
@@ -521,7 +534,10 @@ _TEMPLATES: dict[str, _Template] = {
         ),
         hint_level_1="The output keeps the same square shape as the input matrix.",
         hint_level_2="The transformation is a quarter-turn rotation of the full matrix.",
-        hint_level_3="This round rotates 90 degrees with clockwise={clockwise}.",
+        hint_level_3=(
+            "This round rotates 90 degrees "
+            "{% if clockwise %}clockwise{% else %}counterclockwise{% endif %}."
+        ),
         solver=_grid_solver,
         input_factory=_grid_input,
     ),

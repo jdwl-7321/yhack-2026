@@ -76,3 +76,33 @@ def test_generate_puzzle_is_seed_deterministic() -> None:
     assert [case.output_str for case in first.hidden_tests] == [
         case.output_str for case in second.hidden_tests
     ]
+
+
+def test_hint_templates_render_human_readable_text() -> None:
+    cipher = generate_puzzle(
+        theme=THEMES[0],
+        difficulty="easy",
+        seed=123,
+        novelty_pool=NoveltyPool(similarity_threshold=1.1),
+    )
+
+    assert "{{" not in cipher.hint_level_3
+    assert "reverse_tokens" not in cipher.hint_level_3
+
+    reverse_tokens = bool(cipher.variables["reverse_tokens"])
+    if reverse_tokens:
+        assert "reverses each transformed token" in cipher.hint_level_3
+    else:
+        assert "reverses each transformed token" not in cipher.hint_level_3
+
+    grid = generate_puzzle(
+        theme=THEMES[4],
+        difficulty="easy",
+        seed=456,
+        novelty_pool=NoveltyPool(similarity_threshold=1.1),
+    )
+
+    assert "clockwise=True" not in grid.hint_level_3
+    assert "clockwise=False" not in grid.hint_level_3
+    assert "True" not in grid.hint_level_3
+    assert "False" not in grid.hint_level_3
