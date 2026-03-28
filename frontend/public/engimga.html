@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>engimga - Puzzle Platform</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-color: #323437;
+            --main-color: #e2b714;
+            --caret-color: #e2b714;
+            --sub-color: #646669;
+            --sub-alt-color: #2c2e31;
+            --text-color: #d1d0c5;
+            --error-color: #ca4754;
+            --success-color: #8cc84b;
+            --font-family: 'Roboto Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-family);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+            overflow-x: hidden;
+        }
+
+        #app {
+            width: 100%;
+            max-width: 1100px;
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            position: relative;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-top: 1rem;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 2rem;
+            cursor: pointer;
+        }
+
+        .logo .icon {
+            color: var(--main-color);
+            font-size: 2.2rem;
+        }
+
+        .logo .text {
+            color: var(--text-color);
+            font-weight: 700;
+            font-size: 1.8rem;
+            letter-spacing: -1px;
+            text-transform: lowercase;
+        }
+
+        nav {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 1.2rem;
+            color: var(--sub-color);
+        }
+
+        nav i {
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        nav i:hover, nav i.active {
+            color: var(--text-color);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .btn {
+            background: none;
+            border: none;
+            color: var(--sub-color);
+            font-family: var(--font-family);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+        }
+
+        .btn:hover {
+            color: var(--text-color);
+            background-color: var(--sub-alt-color);
+        }
+
+        .btn.primary {
+            color: var(--bg-color);
+            background-color: var(--text-color);
+        }
+
+        .btn.primary:hover {
+            background-color: var(--main-color);
+        }
+
+        #home-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3rem;
+        }
+
+        .hero-text {
+            text-align: center;
+            color: var(--sub-color);
+            font-size: 1.1rem;
+            max-width: 600px;
+            line-height: 1.5;
+        }
+
+        .hero-text span {
+            color: var(--main-color);
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 1.5rem;
+            background-color: var(--sub-alt-color);
+            padding: 1rem;
+            border-radius: 1rem;
+        }
+
+        .mode-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 200px;
+            text-align: center;
+        }
+
+        .mode-card i {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--sub-color);
+            transition: color 0.2s ease;
+        }
+
+        .mode-card h3 {
+            color: var(--text-color);
+            font-size: 1.2rem;
+            font-weight: 500;
+        }
+
+        .mode-card p {
+            color: var(--sub-color);
+            font-size: 0.85rem;
+        }
+
+        .mode-card:hover {
+            background-color: var(--bg-color);
+        }
+
+        .mode-card:hover i {
+            color: var(--main-color);
+        }
+
+        #race-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .test-config {
+            background-color: var(--sub-alt-color);
+            border-radius: 0.5rem;
+            padding: 0.6rem 1rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1.5rem;
+            margin: 0 auto;
+            color: var(--sub-color);
+            font-size: 0.85rem;
+            width: fit-content;
+        }
+
+        .test-config .group {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .test-config .divider {
+            width: 4px;
+            height: 4px;
+            background-color: var(--sub-color);
+            border-radius: 50%;
+        }
+
+        .active-text { color: var(--main-color); }
+
+        .game-layout {
+            display: flex;
+            gap: 2rem;
+            flex: 1;
+            min-height: 400px;
+        }
+
+        .prompt-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .prompt-card {
+            background-color: var(--sub-alt-color);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .prompt-card h2 {
+            font-size: 1.2rem;
+            color: var(--text-color);
+        }
+
+        .prompt-card p {
+            color: var(--sub-color);
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+
+        .io-block {
+            background-color: var(--bg-color);
+            padding: 1rem;
+            border-radius: 0.25rem;
+            font-size: 0.9rem;
+        }
+
+        .io-label {
+            color: var(--sub-color);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            margin-bottom: 0.25rem;
+            display: block;
+        }
+
+        .io-value {
+            color: var(--main-color);
+        }
+
+        .editor-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .editor-container {
+            flex: 1;
+            position: relative;
+            background-color: var(--sub-alt-color);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-color);
+            font-family: var(--font-family);
+            font-size: 1rem;
+            resize: none;
+            outline: none;
+            line-height: 1.5;
+            caret-color: var(--caret-color);
+        }
+
+        .editor-actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 1rem;
+        }
+
+        .console {
+            background-color: #1e1e1e;
+            color: var(--sub-color);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.85rem;
+            min-height: 100px;
+            max-height: 150px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .console-line.success { color: var(--success-color); }
+        .console-line.error { color: var(--error-color); }
+        .console-line.system { color: var(--main-color); }
+
+        footer {
+            margin-top: auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--sub-color);
+            font-size: 0.8rem;
+            padding-top: 2rem;
+            width: 100%;
+        }
+
+        footer a {
+            color: var(--sub-color);
+            text-decoration: none;
+            transition: color 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        footer a:hover {
+            color: var(--text-color);
+        }
+
+        .footer-left {
+            display: flex;
+            gap: 1.2rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-right {
+            display: flex;
+            gap: 1.2rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <header>
+            <div class="logo" onclick="showHome()">
+                <i class="fas fa-code icon"></i>
+                <div class="text">engimga</div>
+            </div>
+            <nav>
+                <i class="fas fa-keyboard active" onclick="showHome()"></i>
+                <i class="fas fa-crown"></i>
+                <i class="fas fa-info"></i>
+                <i class="fas fa-cog"></i>
+                <i class="fas fa-user"></i>
+            </nav>
+        </header>
+
+        <main id="home-view">
+            <div class="hero-text">
+                Infer the hidden rule. Write the Python snippet.<br>
+                <span>Defeat your opponents.</span>
+            </div>
+
+            <div class="mode-selector">
+                <div class="mode-card" onclick="startRace('zen')">
+                    <i class="fas fa-mountain"></i>
+                    <h3>Zen Mode</h3>
+                    <p>Solo play. No rating. Infinite time.</p>
+                </div>
+                <div class="mode-card" onclick="startRace('casual')">
+                    <i class="fas fa-user-friends"></i>
+                    <h3>Casual Party</h3>
+                    <p>Play with friends via link. Custom rules.</p>
+                </div>
+                <div class="mode-card" onclick="startRace('ranked')">
+                    <i class="fas fa-trophy"></i>
+                    <h3>Ranked</h3>
+                    <p>Random theme. 1 Hour limit. ELO rating.</p>
+                </div>
+            </div>
+        </main>
+
+        <main id="race-view" class="hidden">
+            <div class="test-config">
+                <div class="group">
+                    <span id="header-mode"><i class="fas fa-trophy"></i> ranked</span>
+                </div>
+                <div class="divider"></div>
+                <div class="group">
+                    <span><i class="fas fa-brain"></i> <span id="header-theme">String Manipulation</span></span>
+                </div>
+                <div class="divider"></div>
+                <div class="group">
+                    <span class="active-text"><i class="fas fa-clock"></i> <span id="timer">60:00</span></span>
+                </div>
+            </div>
+
+            <div class="game-layout">
+                <div class="prompt-panel">
+                    <div class="prompt-card">
+                        <h2>Vowel Repeater</h2>
+                        <p>Write a function that takes a string and returns a new string where every vowel (a, e, i, o, u) is repeated twice. Consonants remain unchanged.</p>
+                        
+                        <div class="io-block">
+                            <span class="io-label">Sample Input</span>
+                            <span class="io-value">"hello world"</span>
+                        </div>
+                        <div class="io-block">
+                            <span class="io-label">Sample Output</span>
+                            <span class="io-value">"heelloo woorld"</span>
+                        </div>
+                        <div class="io-block">
+                            <span class="io-label">Constraint</span>
+                            <span style="color: var(--sub-color);">solution(input_str: str) -> str</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="editor-panel">
+                    <div class="editor-container">
+<textarea id="code-editor" spellcheck="false">
+def solution(input_str: str) -> str:
+    # Your code here
+    pass
+</textarea>
+                        <div class="editor-actions">
+                            <button class="btn" onclick="requestHint()"><i class="fas fa-lightbulb"></i> Hint (Lvl 1)</button>
+                            <div style="display:flex; gap: 0.5rem;">
+                                <button class="btn" onclick="forfeit()"><i class="fas fa-flag"></i> Forfeit</button>
+                                <button class="btn primary" id="submit-btn" onclick="submitCode()"><i class="fas fa-play"></i> Submit</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="console" id="console">
+                        <div class="console-line system">Sandbox environment initialized. Python 3.10.</div>
+                        <div class="console-line">Waiting for submission...</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div class="footer-left">
+                <a href="#"><i class="fas fa-envelope"></i> contact</a>
+                <a href="#"><i class="fas fa-heart"></i> donate</a>
+                <a href="#"><i class="fas fa-code-branch"></i> github</a>
+                <a href="#"><i class="fab fa-discord"></i> discord</a>
+                <a href="#"><i class="fas fa-file-alt"></i> terms</a>
+            </div>
+            <div class="footer-right">
+                <a href="#"><i class="fas fa-palette"></i> serika dark</a>
+                <a href="#"><i class="fas fa-code-branch"></i> v0.1.0-alpha</a>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        const homeView = document.getElementById('home-view');
+        const raceView = document.getElementById('race-view');
+        const editor = document.getElementById('code-editor');
+        const consoleEl = document.getElementById('console');
+        const submitBtn = document.getElementById('submit-btn');
+        let timerInterval;
+
+        editor.addEventListener('keydown', function(e) {
+            if (e.key == 'Tab') {
+                e.preventDefault();
+                let start = this.selectionStart;
+                let end = this.selectionEnd;
+                this.value = this.value.substring(0, start) + "    " + this.value.substring(end);
+                this.selectionStart = this.selectionEnd = start + 4;
+            }
+        });
+
+        function showHome() {
+            raceView.classList.add('hidden');
+            homeView.classList.remove('hidden');
+            clearInterval(timerInterval);
+            document.querySelectorAll('nav i').forEach(i => i.classList.remove('active'));
+            document.querySelectorAll('nav i')[0].classList.add('active');
+        }
+
+        function startRace(mode) {
+            homeView.classList.add('hidden');
+            raceView.classList.remove('hidden');
+            
+            let modeIcon = mode === 'ranked' ? 'fa-trophy' : (mode === 'casual' ? 'fa-user-friends' : 'fa-mountain');
+            document.getElementById('header-mode').innerHTML = `<i class="fas ${modeIcon}"></i> ${mode}`;
+            
+            editor.value = "def solution(input_str: str) -> str:\n    # Your code here\n    pass";
+            consoleEl.innerHTML = '<div class="console-line system">Sandbox environment initialized. Python 3.10.</div><div class="console-line">Waiting for submission...</div>';
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-play"></i> Submit';
+
+            let timeLeft = mode === 'ranked' ? 3600 : 9999;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                let m = Math.floor(timeLeft / 60);
+                let s = timeLeft % 60;
+                document.getElementById('timer').innerText = `${m}:${s.toString().padStart(2, '0')}`;
+                timeLeft--;
+                if(timeLeft < 0) clearInterval(timerInterval);
+            }, 1000);
+        }
+
+        function appendConsole(text, type = '') {
+            const line = document.createElement('div');
+            line.className = `console-line ${type}`;
+            line.innerText = text;
+            consoleEl.appendChild(line);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function requestHint() {
+            appendConsole("System: Hint Lvl 1 - Look into Python's replace() method or list comprehensions checking 'in \"aeiou\"'. (Rating gain multiplier reduced)", "system");
+        }
+
+        function forfeit() {
+            clearInterval(timerInterval);
+            submitBtn.disabled = true;
+            appendConsole("You have forfeited the match. ELO -12.", "error");
+        }
+
+        function submitCode() {
+            const code = editor.value;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
+            
+            appendConsole("> Executing submission in sandbox...", "system");
+
+            setTimeout(() => {
+                if (code.includes('pass') || code.trim() === 'def solution(input_str: str) -> str:') {
+                    appendConsole("✗ Sample Tests: 0/2 Passed. Function returned None.", "error");
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="fas fa-play"></i> Submit';
+                    return;
+                }
+
+                appendConsole("✓ Sample Tests: 2/2 Passed.", "success");
+                
+                setTimeout(() => {
+                    appendConsole("> Running hidden test cases...", "system");
+                    
+                    setTimeout(() => {
+                        if (code.includes('return') && code.length > 50) {
+                            appendConsole("✓ Hidden Tests: 15/15 Passed.", "success");
+                            appendConsole("Match complete! ELO +24. Placement: 1st.", "system");
+                            clearInterval(timerInterval);
+                        } else {
+                            appendConsole("✗ Hidden Tests: 4/15 Passed. Edge case failed.", "error");
+                            submitBtn.disabled = false;
+                            submitBtn.innerHTML = '<i class="fas fa-play"></i> Submit';
+                        }
+                    }, 800);
+                }, 400);
+
+            }, 600);
+        }
+    </script>
+</body>
+</html>

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
 
-  type UiTheme = "light" | "dark" | "system";
+  type UiTheme = "light" | "dark";
+  type ThemeSource = "system" | "manual";
+  type View = "home" | "arena" | "leaderboard";
   type AuthMode = "register" | "login";
   type Mode = "zen" | "casual" | "ranked";
   type Difficulty = "easy" | "medium" | "hard" | "expert";
@@ -33,6 +35,20 @@
     hint_level: number;
     forfeited: boolean;
     rating_delta: number;
+  };
+
+  type LeaderboardEntry = {
+    placement: number;
+    user_id: string;
+    name: string;
+    elo: number;
+    guest: boolean;
+  };
+
+  type LeaderboardPayload = {
+    leaderboard: LeaderboardEntry[];
+    current_user: LeaderboardEntry | null;
+    total_players: number;
   };
 
   type MatchPayload = {
@@ -76,17 +92,17 @@
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
+  const LEADERBOARD_LIMIT = 10;
 
   const modeOptions: Mode[] = ["zen", "casual", "ranked"];
   const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
-  const themeOptions: UiTheme[] = ["light", "dark", "system"];
 
   let authMode: AuthMode = "register";
   let authName = "";
   let authPassword = "";
 
   let sessionUser: SessionUser | null = null;
-  let inArena = false;
+  let activeView: View = "home";
 
   let mode: Mode = "zen";
   let difficulty: Difficulty = "easy";
@@ -94,13 +110,19 @@
   let timeLimitSeconds = 900;
   let seed = Math.floor(Math.random() * 1_000_000);
 
-  let themePref: UiTheme = "system";
+  let themePref: UiTheme = "dark";
+  let themeSource: ThemeSource = "system";
   let systemMatcher: MediaQueryList | null = null;
   let mediaListener: (() => void) | null = null;
+  let themeStatusText = "";
 
   let themes = [FALLBACK_THEME];
   let match: MatchPayload | null = null;
   let standings: Standing[] = [];
+  let leaderboard: LeaderboardEntry[] = [];
+  let leaderboardCurrentUser: LeaderboardEntry | null = null;
+  let leaderboardTotalPlayers = 0;
+  let leaderboardVisibleRows: LeaderboardEntry[] = [];
   let code = "";
   let hints: string[] = [];
   let testResult: JudgePayload | null = null;
@@ -109,6 +131,7 @@
   let busy = false;
   let error = "";
   let notice = "";
+  let leaderboardFocus: "top" | "around" = "top";
 
   let timerText = "00:00";
   let timeRemaining = 0;
@@ -247,26 +270,62 @@
   }
 
   function showHome(): void {
-    inArena = false;
+    activeView = "home";
     error = "";
     notice = "";
   }
 
-  function resolveTheme(pref: UiTheme): "light" | "dark" {
-    if (pref === "light" || pref === "dark") {
-      return pref;
+  function showArena(): void {
+    if (!sessionUser) {
+      activeView = "home";
+      return;
     }
+    activeView = "arena";
+    error = "";
+    notice = "";
+  }
+
+  function toggleLeaderboardView(): void {
+    if (activeView === "leaderboard") {
+      if (match && sessionUser) {
+        showArena();
+        return;
+      }
+      showHome();
+      return;
+    }
+    activeView = "leaderboard";
+    error = "";
+    notice = "";
+  }
+
+  function resolveSystemTheme(): UiTheme {
     return systemMatcher?.matches ? "dark" : "light";
   }
 
-  function applyTheme(pref: UiTheme): void {
-    document.documentElement.dataset.theme = resolveTheme(pref);
+  function applyTheme(theme: UiTheme): void {
+    document.documentElement.dataset.theme = theme;
   }
 
-  function setTheme(pref: UiTheme): void {
-    themePref = pref;
-    localStorage.setItem("yhack.theme", pref);
-    applyTheme(pref);
+  function syncThemeFromSystem(): void {
+    if (themeSource !== "system") {
+      return;
+    }
+    themePref = resolveSystemTheme();
+    applyTheme(themePref);
+  }
+
+  function toggleTheme(): void {
+    themeSource = "manual";
+    themePref = themePref === "dark" ? "light" : "dark";
+    localStorage.setItem("yhack.theme", themePref);
+    applyTheme(themePref);
+  }
+
+  function resetThemeToSystem(): void {
+    themeSource = "system";
+    localStorage.removeItem("yhack.theme");
+    syncThemeFromSystem();
   }
 
   function toErrorMessage(value: unknown): string {
@@ -301,6 +360,69 @@
     }
   }
 
+  async function loadLeaderboard(): Promise<void> {
+    const payload = await api<LeaderboardPayload>(
+      `/api/leaderboard?limit=${LEADERBOARD_LIMIT}`,
+    );
+    leaderboard = payload.leaderboard;
+    leaderboardCurrentUser = payload.current_user;
+    leaderboardTotalPlayers = payload.total_players;
+  }
+
+  function leaderboardTier(elo: number): string {
+    if (elo >= 1600) {
+      return "Diamond";
+    }
+    if (elo >= 1400) {
+      return "Platinum";
+    }
+    if (elo >= 1200) {
+      return "Gold";
+    }
+    if (elo >= 1050) {
+      return "Silver";
+    }
+    return "Bronze";
+  }
+
+  function leaderboardPercentile(placement: number): string {
+    if (leaderboardTotalPlayers <= 1) {
+      return "Top 100%";
+    }
+    const percentile = Math.round(
+      (1 - (placement - 1) / (leaderboardTotalPlayers - 1)) * 100,
+    );
+    return `Top ${Math.max(1, percentile)}%`;
+  }
+
+  function leaderboardRowNote(entry: LeaderboardEntry): string {
+    if (entry.user_id === sessionUser?.id) {
+      return "You";
+    }
+    if (entry.placement === 1) {
+      return "Leader";
+    }
+    return "Ranked";
+  }
+
+  function deriveLeaderboardRows(): LeaderboardEntry[] {
+    if (leaderboardFocus === "top" || !leaderboardCurrentUser) {
+      return leaderboard;
+    }
+
+    const currentUser = leaderboardCurrentUser;
+    const centerPlacement = currentUser.placement;
+    const startPlacement = Math.max(1, centerPlacement - 3);
+    const endPlacement = centerPlacement + 3;
+    const rows = leaderboard.filter(
+      (row) => row.placement >= startPlacement && row.placement <= endPlacement,
+    );
+    if (rows.some((row) => row.user_id === currentUser.user_id)) {
+      return rows;
+    }
+    return leaderboard;
+  }
+
   function syncSessionElo(currentStandings: Standing[]): void {
     if (!sessionUser) {
       return;
@@ -317,10 +439,11 @@
     const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
       sessionUser = null;
-      inArena = false;
+      activeView = "home";
       return;
     }
     sessionUser = payload.user;
+    await loadLeaderboard();
   }
 
   async function authenticate(nextMode: AuthMode): Promise<void> {
@@ -338,6 +461,9 @@
         nextMode === "register"
           ? "Account created. Session is active."
           : "Signed in.";
+      void loadLeaderboard().catch((err) => {
+        error = toErrorMessage(err);
+      });
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -352,7 +478,7 @@
     try {
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
       sessionUser = null;
-      inArena = false;
+      activeView = "home";
       match = null;
       standings = [];
       testResult = null;
@@ -363,6 +489,9 @@
       timerText = "00:00";
       notice = "Signed out.";
       resetConsole();
+      void loadLeaderboard().catch((err) => {
+        error = toErrorMessage(err);
+      });
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -373,7 +502,7 @@
   async function startMatch(): Promise<void> {
     if (!sessionUser) {
       error = "Sign in to start a match.";
-      inArena = false;
+      activeView = "home";
       return;
     }
 
@@ -413,7 +542,7 @@
       standings = payload.standings;
       syncSessionElo(payload.standings);
       code = payload.scaffold;
-      inArena = true;
+      activeView = "arena";
 
       syncMatchPresentation(payload);
       startTimer(payload.time_limit_seconds);
@@ -433,13 +562,11 @@
   }
 
   async function launchConfiguredMatch(): Promise<void> {
-    inArena = true;
     await startMatch();
   }
 
   async function startRace(nextMode: Mode): Promise<void> {
     mode = nextMode;
-    inArena = true;
     await startMatch();
   }
 
@@ -643,6 +770,9 @@
       standings = payload.standings;
       syncSessionElo(payload.standings);
       appendConsole("Match marked as finished.", "system");
+      void loadLeaderboard().catch((err) => {
+        error = toErrorMessage(err);
+      });
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Finish failed: ${toErrorMessage(err)}`, "error");
@@ -655,18 +785,27 @@
     timeLimitSeconds = 3600;
   }
 
+  $: themeStatusText =
+    themeSource === "system"
+      ? `Following system (${themePref})`
+      : `${themePref} override`;
+
+  $: leaderboardVisibleRows = deriveLeaderboardRows();
+
   onMount(() => {
     const saved = localStorage.getItem("yhack.theme");
-    if (saved === "light" || saved === "dark" || saved === "system") {
+    if (saved === "light" || saved === "dark") {
+      themeSource = "manual";
       themePref = saved;
     }
 
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
+    syncThemeFromSystem();
     applyTheme(themePref);
 
     mediaListener = () => {
-      if (themePref === "system") {
-        applyTheme(themePref);
+      if (themeSource === "system") {
+        syncThemeFromSystem();
       }
     };
     systemMatcher.addEventListener("change", mediaListener);
@@ -674,6 +813,10 @@
     resetConsole();
 
     void loadThemes().catch((err) => {
+      error = toErrorMessage(err);
+    });
+
+    void loadLeaderboard().catch((err) => {
       error = toErrorMessage(err);
     });
 
@@ -701,30 +844,39 @@
       <button
         type="button"
         class="nav-icon"
-        class:active={!inArena}
+        class:active={activeView !== "leaderboard"}
         on:click={showHome}
-        title="Home"
+        title="Play"
       >
         <i class="fas fa-keyboard" aria-hidden="true"></i>
       </button>
       <button
         type="button"
         class="nav-icon"
-        class:active={inArena}
-        on:click={() => {
-          if (sessionUser) {
-            inArena = true;
-          }
-        }}
-        title="Arena"
+        class:active={activeView === "leaderboard"}
+        on:click={toggleLeaderboardView}
+        title="Leaderboard"
       >
         <i class="fas fa-crown" aria-hidden="true"></i>
       </button>
       <button type="button" class="nav-icon" title="Info">
         <i class="fas fa-info" aria-hidden="true"></i>
       </button>
-      <button type="button" class="nav-icon" title="Theme">
-        <i class="fas fa-palette" aria-hidden="true"></i>
+      <button
+        type="button"
+        class="nav-theme-toggle"
+        class:dark={themePref === "dark"}
+        on:click={toggleTheme}
+        title={`Theme: ${themeStatusText}`}
+        aria-label={`Toggle theme. Current theme ${themePref}.`}
+      >
+        <i
+          class={`fas ${themePref === "dark" ? "fa-moon" : "fa-sun"}`}
+          aria-hidden="true"
+        ></i>
+        <span class="nav-theme-track" aria-hidden="true">
+          <span class="nav-theme-thumb"></span>
+        </span>
       </button>
       <button type="button" class="nav-icon" title="Account">
         <i class="fas fa-user" aria-hidden="true"></i>
@@ -732,7 +884,7 @@
     </nav>
   </header>
 
-  {#if !inArena}
+  {#if activeView === "home"}
     <main id="home-view">
       <div class="hero-text">
         Infer the hidden rule. Write the Python snippet.<br />
@@ -888,21 +1040,6 @@
               </label>
             </div>
 
-            <div class="theme-row">
-              <span>UI theme</span>
-              <div class="segmented">
-                {#each themeOptions as option}
-                  <button
-                    type="button"
-                    class:active={themePref === option}
-                    on:click={() => setTheme(option)}
-                  >
-                    {option}
-                  </button>
-                {/each}
-              </div>
-            </div>
-
             <div class="home-actions">
               <button
                 type="button"
@@ -918,7 +1055,7 @@
                 class="btn"
                 on:click={() => {
                   if (match) {
-                    inArena = true;
+                    showArena();
                   }
                 }}
                 disabled={!match || busy}
@@ -945,6 +1082,127 @@
       {#if error}
         <p class="flash error">{error}</p>
       {/if}
+    </main>
+  {:else if activeView === "leaderboard"}
+    <main id="leaderboard-view">
+      <aside class="leaderboard-sidebar">
+        <section class="leaderboard-filter-card">
+          <p class="eyebrow">Ranked ladder</p>
+          <button
+            type="button"
+            class="leaderboard-filter"
+            class:active={leaderboardFocus === "top"}
+            on:click={() => {
+              leaderboardFocus = "top";
+            }}
+          >
+            <i class="fas fa-globe" aria-hidden="true"></i>
+            all-time elo
+          </button>
+          <button
+            type="button"
+            class="leaderboard-filter"
+            class:active={leaderboardFocus === "around"}
+            on:click={() => {
+              leaderboardFocus = "around";
+            }}
+            disabled={!leaderboardCurrentUser}
+          >
+            <i class="fas fa-crosshairs" aria-hidden="true"></i>
+            around you
+          </button>
+        </section>
+
+        <section class="leaderboard-filter-card">
+          <p class="eyebrow">Overview</p>
+          <div class="leaderboard-stat">
+            <span>Players</span>
+            <strong>{leaderboardTotalPlayers}</strong>
+          </div>
+          <div class="leaderboard-stat">
+            <span>Your rank</span>
+            <strong
+              >{leaderboardCurrentUser
+                ? `#${leaderboardCurrentUser.placement}`
+                : "Unranked"}</strong
+            >
+          </div>
+          <div class="leaderboard-stat">
+            <span>Your tier</span>
+            <strong
+              >{leaderboardCurrentUser
+                ? leaderboardTier(leaderboardCurrentUser.elo)
+                : "-"}</strong
+            >
+          </div>
+        </section>
+      </aside>
+
+      <section class="leaderboard-main">
+        <div class="leaderboard-title-row">
+          <div>
+            <p class="eyebrow">All-time</p>
+            <h1>Ranked Leaderboard</h1>
+          </div>
+          <span class="leaderboard-badge">{leaderboardTotalPlayers} players</span>
+        </div>
+
+        <div class="leaderboard-meta">
+          <span>
+            {leaderboardFocus === "around"
+              ? "Showing players near your current position."
+              : "Showing the top ranked players by ELO."}
+          </span>
+          <button type="button" class="btn" on:click={() => void loadLeaderboard()}>
+            Refresh
+          </button>
+        </div>
+
+        {#if leaderboardVisibleRows.length === 0}
+          <section class="leaderboard-empty-state">
+            <h2>Leaderboard</h2>
+            <p>Registered players will appear here once ranked runs are completed.</p>
+          </section>
+        {:else}
+          <div class="leaderboard-table-wrap">
+            <div class="leaderboard-table leaderboard-table-head" role="presentation">
+              <span>#</span>
+              <span>player</span>
+              <span>tier</span>
+              <span>elo</span>
+              <span>percentile</span>
+              <span>status</span>
+            </div>
+
+            <div class="leaderboard-table-body">
+              {#each leaderboardVisibleRows as row}
+                <article
+                  class="leaderboard-table leaderboard-table-row"
+                  class:current={row.user_id === sessionUser?.id}
+                >
+                  <span class="leaderboard-cell rank">
+                    {#if row.placement === 1}
+                      <i class="fas fa-crown" aria-hidden="true"></i>
+                    {/if}
+                    {row.placement}
+                  </span>
+                  <span class="leaderboard-cell player">
+                    <strong>{row.name}</strong>
+                  </span>
+                  <span class="leaderboard-cell tier">{leaderboardTier(row.elo)}</span>
+                  <span class="leaderboard-cell score">{row.elo}</span>
+                  <span class="leaderboard-cell percentile">
+                    {leaderboardPercentile(row.placement)}
+                  </span>
+                  <span class="leaderboard-cell note">
+                    {leaderboardRowNote(row)}
+                  </span>
+                </article>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </section>
     </main>
   {:else}
     <main id="race-view">
@@ -1224,7 +1482,12 @@
       >
     </div>
     <div class="footer-right">
-      <span><i class="fas fa-palette" aria-hidden="true"></i> serika dark</span>
+      <span
+        ><i class="fas fa-palette" aria-hidden="true"></i> {themeSource ===
+        "system"
+          ? `system ${themePref}`
+          : themePref}</span
+      >
       <span
         ><i class="fas fa-code-branch" aria-hidden="true"></i> v0.1.0-alpha</span
       >

@@ -397,6 +397,38 @@ class MemoryStore:
 
         return standings
 
+    def leaderboard(
+        self, *, limit: int = 10, current_user_id: str | None = None
+    ) -> dict[str, object]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+
+        ranked_users = sorted(
+            (user for user in self.users.values() if not user.guest),
+            key=lambda user: (-user.elo, user.name.casefold(), user.id),
+        )
+
+        top_entries: list[dict[str, object]] = []
+        current_entry: dict[str, object] | None = None
+        for placement, user in enumerate(ranked_users, start=1):
+            entry = {
+                "placement": placement,
+                "user_id": user.id,
+                "name": user.name,
+                "elo": user.elo,
+                "guest": user.guest,
+            }
+            if placement <= limit:
+                top_entries.append(entry)
+            if user.id == current_user_id:
+                current_entry = entry
+
+        return {
+            "leaderboard": top_entries,
+            "current_user": current_entry,
+            "total_players": len(ranked_users),
+        }
+
     def _new_party_code(self) -> str:
         alphabet = string.ascii_uppercase + string.digits
         while True:

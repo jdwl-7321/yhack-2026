@@ -129,6 +129,33 @@ def test_create_party_uses_authenticated_session_user() -> None:
     assert party["leader_id"] == user["user"]["id"]
 
 
+def test_leaderboard_returns_top_players_and_current_user_rank() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "MidPlayer", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    client.post("/api/users", json={"name": "Ace", "guest": False, "elo": 1480})
+    client.post("/api/users", json={"name": "Blair", "guest": False, "elo": 1325})
+    client.post("/api/users", json={"name": "Casey", "guest": False, "elo": 1180})
+
+    response = client.get("/api/leaderboard?limit=2")
+    assert response.status_code == 200
+
+    payload = response.get_json()
+    assert payload is not None
+    assert payload["total_players"] == 4
+    assert [entry["name"] for entry in payload["leaderboard"]] == ["Ace", "Blair"]
+    assert [entry["placement"] for entry in payload["leaderboard"]] == [1, 2]
+    assert payload["current_user"]["name"] == "MidPlayer"
+    assert payload["current_user"]["placement"] == 4
+    assert payload["current_user"]["elo"] == 1000
+
+
 def test_ranked_party_falls_back_to_casual_with_guest() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()

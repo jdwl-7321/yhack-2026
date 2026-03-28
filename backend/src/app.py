@@ -60,6 +60,14 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def themes() -> Any:
         return jsonify({"themes": THEMES})
 
+    @app.route("/api/leaderboard", methods=["GET"])
+    def leaderboard() -> Any:
+        raw_user_id = session.get("user_id")
+        current_user_id = raw_user_id if isinstance(raw_user_id, str) else None
+        raw_limit = request.args.get("limit")
+        limit = _optional_int(raw_limit) if raw_limit is not None else 8
+        return jsonify(data.leaderboard(limit=limit, current_user_id=current_user_id))
+
     @app.route("/api/generator/schema", methods=["GET"])
     def schema() -> Any:
         return jsonify(generator_schema())
