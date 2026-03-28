@@ -1,554 +1,544 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick } from "svelte";
 
-  type UiTheme = 'light' | 'dark' | 'system'
-  type AuthMode = 'register' | 'login'
-  type Mode = 'zen' | 'casual' | 'ranked'
-  type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
+  type UiTheme = "light" | "dark" | "system";
+  type AuthMode = "register" | "login";
+  type Mode = "zen" | "casual" | "ranked";
+  type Difficulty = "easy" | "medium" | "hard" | "expert";
 
   type SessionUser = {
-    id: string
-    name: string
-    guest: boolean
-    elo: number
-  }
+    id: string;
+    name: string;
+    guest: boolean;
+    elo: number;
+  };
 
   type SessionPayload = {
-    authenticated: boolean
-    user?: SessionUser
-  }
+    authenticated: boolean;
+    user?: SessionUser;
+  };
 
   type AuthResponse = {
-    user: SessionUser
-  }
+    user: SessionUser;
+  };
 
   type Standing = {
-    placement: number
-    user_id: string
-    name: string
-    elo: number
-    solved: boolean
-    hidden_passed: number
-    hint_level: number
-    forfeited: boolean
-    rating_delta: number
-  }
+    placement: number;
+    user_id: string;
+    name: string;
+    elo: number;
+    solved: boolean;
+    hidden_passed: number;
+    hint_level: number;
+    forfeited: boolean;
+    rating_delta: number;
+  };
 
   type MatchPayload = {
-    match_id: string
-    mode: Mode
-    theme: string
-    difficulty: Difficulty
-    time_limit_seconds: number
-    prompt: string
-    scaffold: string
-    sample_tests: Array<{ input: string; output: string }>
-    standings: Standing[]
-  }
+    match_id: string;
+    mode: Mode;
+    theme: string;
+    difficulty: Difficulty;
+    time_limit_seconds: number;
+    prompt: string;
+    scaffold: string;
+    sample_tests: Array<{ input: string; output: string }>;
+    standings: Standing[];
+  };
 
   type FailedHiddenTest = {
-    input_str: string
-    expected_output: string
-    actual_output: string
-  }
+    input_str: string;
+    expected_output: string;
+    actual_output: string;
+  };
 
   type JudgePayload = {
-    verdict: 'accepted' | 'sample_failed' | 'wrong_answer' | 'error'
-    sample_passed: number
-    sample_total: number
-    hidden_passed: number
-    hidden_total: number
-    runtime_ms: number
-    message: string
-    stdout: string
-    first_failed_hidden_test: FailedHiddenTest | null
-    sample_tests: Array<{ input: string; output: string }>
-    standings: Standing[]
-  }
+    verdict: "accepted" | "sample_failed" | "wrong_answer" | "error";
+    sample_passed: number;
+    sample_total: number;
+    hidden_passed: number;
+    hidden_total: number;
+    runtime_ms: number;
+    message: string;
+    stdout: string;
+    first_failed_hidden_test: FailedHiddenTest | null;
+    sample_tests: Array<{ input: string; output: string }>;
+    standings: Standing[];
+  };
 
-  const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
-  const FALLBACK_THEME = 'String manipulation (unix-like text processing)'
-  const INDENT = '    '
+  const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+  const FALLBACK_THEME = "String manipulation (unix-like text processing)";
+  const INDENT = "    ";
   const PYTHON_TOKEN_PATTERN =
-    /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(\d+(?:\.\d+)?)\b|\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b/gm
+    /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(\d+(?:\.\d+)?)\b|\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b/gm;
 
-  const modeOptions: Mode[] = ['zen', 'casual', 'ranked']
-  const difficultyOptions: Difficulty[] = ['easy', 'medium', 'hard', 'expert']
-  const themeOptions: UiTheme[] = ['light', 'dark', 'system']
+  const modeOptions: Mode[] = ["zen", "casual", "ranked"];
+  const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
+  const themeOptions: UiTheme[] = ["light", "dark", "system"];
 
-  let authMode: AuthMode = 'register'
-  let authName = ''
-  let authPassword = ''
+  let authMode: AuthMode = "register";
+  let authName = "";
+  let authPassword = "";
 
-  let sessionUser: SessionUser | null = null
-  let inArena = false
+  let sessionUser: SessionUser | null = null;
+  let inArena = false;
 
-  let mode: Mode = 'zen'
-  let difficulty: Difficulty = 'easy'
-  let selectedTheme = FALLBACK_THEME
-  let timeLimitSeconds = 900
-  let seed = Math.floor(Math.random() * 1_000_000)
+  let mode: Mode = "zen";
+  let difficulty: Difficulty = "easy";
+  let selectedTheme = FALLBACK_THEME;
+  let timeLimitSeconds = 900;
+  let seed = Math.floor(Math.random() * 1_000_000);
 
-  let themePref: UiTheme = 'system'
-  let systemMatcher: MediaQueryList | null = null
-  let mediaListener: (() => void) | null = null
+  let themePref: UiTheme = "system";
+  let systemMatcher: MediaQueryList | null = null;
+  let mediaListener: (() => void) | null = null;
 
-  let themes = [FALLBACK_THEME]
-  let match: MatchPayload | null = null
-  let standings: Standing[] = []
-  let code = ''
-  let hintOne = ''
-  let hintTwo = ''
-  let testResult: JudgePayload | null = null
-  let submitResult: JudgePayload | null = null
-  let highlightedCode = ' '
-  let lineCount = 1
-  let lineNumbers: HTMLDivElement | null = null
-  let highlightLayer: HTMLPreElement | null = null
+  let themes = [FALLBACK_THEME];
+  let match: MatchPayload | null = null;
+  let standings: Standing[] = [];
+  let code = "";
+  let hints: string[] = [];
+  let testResult: JudgePayload | null = null;
+  let submitResult: JudgePayload | null = null;
+  let highlightedCode = " ";
+  let lineCount = 1;
+  let lineNumbers: HTMLDivElement | null = null;
+  let highlightLayer: HTMLPreElement | null = null;
 
-  let busy = false
-  let error = ''
-  let notice = ''
+  let busy = false;
+  let error = "";
+  let notice = "";
 
   function escapeHtml(value: string): string {
-    return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
   }
 
   function highlightPython(source: string): string {
-    let html = ''
-    let lastIndex = 0
+    let html = "";
+    let lastIndex = 0;
 
     for (const match of source.matchAll(PYTHON_TOKEN_PATTERN)) {
-      const index = match.index ?? 0
-      const token = match[0]
-      html += escapeHtml(source.slice(lastIndex, index))
+      const index = match.index ?? 0;
+      const token = match[0];
+      html += escapeHtml(source.slice(lastIndex, index));
 
       const className = match[1]
-        ? 'editor-token-comment'
+        ? "editor-token-comment"
         : match[2]
-          ? 'editor-token-string'
+          ? "editor-token-string"
           : match[3]
-            ? 'editor-token-number'
-            : 'editor-token-keyword'
+            ? "editor-token-number"
+            : "editor-token-keyword";
 
-      html += `<span class="${className}">${escapeHtml(token)}</span>`
-      lastIndex = index + token.length
+      html += `<span class="${className}">${escapeHtml(token)}</span>`;
+      lastIndex = index + token.length;
     }
 
-    html += escapeHtml(source.slice(lastIndex))
-    return html || ' '
+    html += escapeHtml(source.slice(lastIndex));
+    return html || " ";
   }
 
   function syncEditorScroll(event: Event): void {
-    const target = event.currentTarget as HTMLTextAreaElement
+    const target = event.currentTarget as HTMLTextAreaElement;
     if (highlightLayer) {
-      highlightLayer.scrollTop = target.scrollTop
-      highlightLayer.scrollLeft = target.scrollLeft
+      highlightLayer.scrollTop = target.scrollTop;
+      highlightLayer.scrollLeft = target.scrollLeft;
     }
     if (lineNumbers) {
-      lineNumbers.scrollTop = target.scrollTop
+      lineNumbers.scrollTop = target.scrollTop;
     }
   }
 
   function handleEditorKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Tab') {
-      return
+    if (event.key !== "Tab") {
+      return;
     }
-    event.preventDefault()
+    event.preventDefault();
 
-    const target = event.currentTarget as HTMLTextAreaElement
-    const { selectionStart, selectionEnd } = target
+    const target = event.currentTarget as HTMLTextAreaElement;
+    const { selectionStart, selectionEnd } = target;
 
     if (selectionStart === selectionEnd) {
-      code = `${code.slice(0, selectionStart)}${INDENT}${code.slice(selectionEnd)}`
-      const cursor = selectionStart + INDENT.length
+      code = `${code.slice(0, selectionStart)}${INDENT}${code.slice(selectionEnd)}`;
+      const cursor = selectionStart + INDENT.length;
       void tick().then(() => {
-        target.selectionStart = cursor
-        target.selectionEnd = cursor
-      })
-      return
+        target.selectionStart = cursor;
+        target.selectionEnd = cursor;
+      });
+      return;
     }
 
-    const selection = code.slice(selectionStart, selectionEnd)
-    const indented = `${INDENT}${selection.replace(/\n/g, `\n${INDENT}`)}`
-    code = `${code.slice(0, selectionStart)}${indented}${code.slice(selectionEnd)}`
+    const selection = code.slice(selectionStart, selectionEnd);
+    const indented = `${INDENT}${selection.replace(/\n/g, `\n${INDENT}`)}`;
+    code = `${code.slice(0, selectionStart)}${indented}${code.slice(selectionEnd)}`;
     void tick().then(() => {
-      target.selectionStart = selectionStart
-      target.selectionEnd = selectionStart + indented.length
-    })
+      target.selectionStart = selectionStart;
+      target.selectionEnd = selectionStart + indented.length;
+    });
   }
 
-  function resolveTheme(pref: UiTheme): 'light' | 'dark' {
-    if (pref === 'light' || pref === 'dark') {
-      return pref
+  function resolveTheme(pref: UiTheme): "light" | "dark" {
+    if (pref === "light" || pref === "dark") {
+      return pref;
     }
-    return systemMatcher?.matches ? 'dark' : 'light'
+    return systemMatcher?.matches ? "dark" : "light";
   }
 
   function applyTheme(pref: UiTheme): void {
-    document.documentElement.dataset.theme = resolveTheme(pref)
+    document.documentElement.dataset.theme = resolveTheme(pref);
   }
 
   function setTheme(pref: UiTheme): void {
-    themePref = pref
-    localStorage.setItem('yhack.theme', pref)
-    applyTheme(pref)
+    themePref = pref;
+    localStorage.setItem("yhack.theme", pref);
+    applyTheme(pref);
   }
 
   function toErrorMessage(value: unknown): string {
     if (value instanceof Error) {
-      return value.message
+      return value.message;
     }
-    return 'Unexpected error'
+    return "Unexpected error";
   }
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       ...init,
-    })
-    const data = (await response.json().catch(() => ({}))) as { error?: string }
+    });
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
     if (!response.ok) {
-      throw new Error(data.error ?? `Request failed (${response.status})`)
+      throw new Error(data.error ?? `Request failed (${response.status})`);
     }
-    return data as T
+    return data as T;
   }
 
   async function loadThemes(): Promise<void> {
-    const payload = await api<{ themes: string[] }>('/api/themes')
+    const payload = await api<{ themes: string[] }>("/api/themes");
     if (payload.themes.length > 0) {
-      themes = payload.themes
+      themes = payload.themes;
       if (!themes.includes(selectedTheme)) {
-        selectedTheme = themes[0]
+        selectedTheme = themes[0];
       }
     }
   }
 
   function syncSessionElo(currentStandings: Standing[]): void {
     if (!sessionUser) {
-      return
+      return;
     }
 
-    const self = currentStandings.find((row) => row.user_id === sessionUser?.id)
+    const self = currentStandings.find(
+      (row) => row.user_id === sessionUser?.id,
+    );
     if (self) {
-      sessionUser = { ...sessionUser, elo: self.elo }
+      sessionUser = { ...sessionUser, elo: self.elo };
     }
   }
 
   async function refreshSession(): Promise<void> {
-    const payload = await api<SessionPayload>('/api/auth/session')
+    const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
-      sessionUser = null
-      inArena = false
-      return
+      sessionUser = null;
+      inArena = false;
+      return;
     }
-    sessionUser = payload.user
+    sessionUser = payload.user;
   }
 
   async function authenticate(nextMode: AuthMode): Promise<void> {
-    busy = true
-    error = ''
-    notice = ''
+    busy = true;
+    error = "";
+    notice = "";
     try {
       const payload = await api<AuthResponse>(`/api/auth/${nextMode}`, {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify({ name: authName, password: authPassword }),
-      })
-      sessionUser = payload.user
-      authPassword = ''
-      notice = nextMode === 'register' ? 'Account created. Session is active.' : 'Signed in.'
+      });
+      sessionUser = payload.user;
+      authPassword = "";
+      notice =
+        nextMode === "register"
+          ? "Account created. Session is active."
+          : "Signed in.";
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function logout(): Promise<void> {
-    busy = true
-    error = ''
-    notice = ''
+    busy = true;
+    error = "";
+    notice = "";
     try {
-      await api<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
-      sessionUser = null
-      inArena = false
-      match = null
-      standings = []
-      testResult = null
-      submitResult = null
-      hints = []
-      code = ''
-      notice = 'Signed out.'
+      await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+      sessionUser = null;
+      inArena = false;
+      match = null;
+      standings = [];
+      testResult = null;
+      submitResult = null;
+      hints = [];
+      code = "";
+      notice = "Signed out.";
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function startMatch(): Promise<void> {
     if (!sessionUser) {
-      error = 'Sign in to start a match.'
-      inArena = false
-      return
+      error = "Sign in to start a match.";
+      inArena = false;
+      return;
     }
 
-    busy = true
-    error = ''
-    notice = ''
-    testResult = null
-    submitResult = null
-    hints = []
+    busy = true;
+    error = "";
+    notice = "";
+    testResult = null;
+    submitResult = null;
+    hints = [];
     try {
-      const party = await api<{ code: string }>('/api/parties', {
-        method: 'POST',
+      const party = await api<{ code: string }>("/api/parties", {
+        method: "POST",
         body: JSON.stringify({
           mode,
           theme: selectedTheme,
           difficulty,
-          time_limit_seconds: mode === 'ranked' ? 3600 : timeLimitSeconds,
+          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
           seed,
         }),
-      })
+      });
 
-      const payload = await api<MatchPayload>(`/api/parties/${party.code}/start`, {
-        method: 'POST',
-        body: JSON.stringify({ seed }),
-      })
+      const payload = await api<MatchPayload>(
+        `/api/parties/${party.code}/start`,
+        {
+          method: "POST",
+          body: JSON.stringify({ seed }),
+        },
+      );
 
-      match = payload
-      standings = payload.standings
-      syncSessionElo(payload.standings)
-      code = payload.scaffold
-      inArena = true
+      match = payload;
+      standings = payload.standings;
+      syncSessionElo(payload.standings);
+      code = payload.scaffold;
+      inArena = true;
       if (payload.mode !== mode) {
-        notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`
+        notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`;
       }
     } catch (err) {
-      error = toErrorMessage(err)
-      match = null
-      standings = []
+      error = toErrorMessage(err);
+      match = null;
+      standings = [];
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function submit(): Promise<void> {
     if (!match || !sessionUser) {
-      return
+      return;
     }
-    const currentMatchId = match.match_id
-    busy = true
-    error = ''
-    notice = ''
+    const currentMatchId = match.match_id;
+    busy = true;
+    error = "";
+    notice = "";
     try {
-      const payload = await api<JudgePayload>(`/api/matches/${currentMatchId}/submit`, {
-        method: 'POST',
-        body: JSON.stringify({ code }),
-      })
-      submitResult = payload
+      const payload = await api<JudgePayload>(
+        `/api/matches/${currentMatchId}/submit`,
+        {
+          method: "POST",
+          body: JSON.stringify({ code }),
+        },
+      );
+      submitResult = payload;
       if (match?.match_id === currentMatchId) {
-        match = { ...match, sample_tests: payload.sample_tests }
+        match = { ...match, sample_tests: payload.sample_tests };
       }
-      standings = payload.standings
-      syncSessionElo(payload.standings)
+      standings = payload.standings;
+      syncSessionElo(payload.standings);
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function testSamples(): Promise<void> {
     if (!match || !sessionUser) {
-      return
+      return;
     }
-    const currentMatchId = match.match_id
-    busy = true
-    error = ''
-    notice = ''
+    const currentMatchId = match.match_id;
+    busy = true;
+    error = "";
+    notice = "";
     try {
-      const payload = await api<JudgePayload>(`/api/matches/${currentMatchId}/test`, {
-        method: 'POST',
-        body: JSON.stringify({ code }),
-      })
-      testResult = payload
+      const payload = await api<JudgePayload>(
+        `/api/matches/${currentMatchId}/test`,
+        {
+          method: "POST",
+          body: JSON.stringify({ code }),
+        },
+      );
+      testResult = payload;
       if (match?.match_id === currentMatchId) {
-        match = { ...match, sample_tests: payload.sample_tests }
+        match = { ...match, sample_tests: payload.sample_tests };
       }
-      standings = payload.standings
-      syncSessionElo(payload.standings)
+      standings = payload.standings;
+      syncSessionElo(payload.standings);
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function promoteFailedTest(): Promise<void> {
     if (!match || !sessionUser || !submitResult?.first_failed_hidden_test) {
-      return
+      return;
     }
-    const currentMatchId = match.match_id
-    const currentSubmit = submitResult
+    const currentMatchId = match.match_id;
+    const currentSubmit = submitResult;
 
-    busy = true
-    error = ''
-    notice = ''
+    busy = true;
+    error = "";
+    notice = "";
     try {
-      const payload = await api<{ sample_tests: Array<{ input: string; output: string }> }>(
-        `/api/matches/${currentMatchId}/promote-failed-test`,
-        {
-          method: 'POST',
-          body: JSON.stringify({}),
-        },
-      )
+      const payload = await api<{
+        sample_tests: Array<{ input: string; output: string }>;
+      }>(`/api/matches/${currentMatchId}/promote-failed-test`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
       if (match?.match_id === currentMatchId) {
-        match = { ...match, sample_tests: payload.sample_tests }
+        match = { ...match, sample_tests: payload.sample_tests };
       }
-      submitResult = { ...currentSubmit, first_failed_hidden_test: null }
-      notice = 'Promoted failed hidden test to visible samples.'
+      submitResult = { ...currentSubmit, first_failed_hidden_test: null };
+      notice = "Promoted failed hidden test to visible samples.";
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
-    }
-  }
-
-  async function promoteFailedTest(): Promise<void> {
-    if (!match || !sessionUser || !submitResult?.first_failed_hidden_test) {
-      return
-    }
-    const currentMatchId = match.match_id
-    const currentSubmit = submitResult
-
-    busy = true
-    error = ''
-    notice = ''
-    try {
-      const payload = await api<{ sample_tests: Array<{ input: string; output: string }> }>(
-        `/api/matches/${currentMatchId}/promote-failed-test`,
-        {
-          method: 'POST',
-          body: JSON.stringify({}),
-        },
-      )
-      if (match?.match_id === currentMatchId) {
-        match = { ...match, sample_tests: payload.sample_tests }
-      }
-      submitResult = { ...currentSubmit, first_failed_hidden_test: null }
-      notice = 'Promoted failed hidden test to visible samples.'
-    } catch (err) {
-      error = toErrorMessage(err)
-    } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function requestHint(): Promise<void> {
     if (!match || !sessionUser) {
-      return
+      return;
     }
-    busy = true
-    error = ''
+    busy = true;
+    error = "";
     try {
       const payload = await api<{ level: 1 | 2 | 3; hint: string }>(
         `/api/matches/${match.match_id}/hint`,
         {
-          method: 'POST',
+          method: "POST",
           body: JSON.stringify({}),
         },
-      )
-      const nextHints = [...hints]
-      nextHints[payload.level - 1] = payload.hint
-      hints = nextHints
+      );
+      const nextHints = [...hints];
+      nextHints[payload.level - 1] = payload.hint;
+      hints = nextHints;
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function forfeit(): Promise<void> {
     if (!match || !sessionUser) {
-      return
+      return;
     }
-    busy = true
-    error = ''
+    busy = true;
+    error = "";
     try {
       const payload = await api<{ standings: Standing[] }>(
         `/api/matches/${match.match_id}/forfeit`,
         {
-          method: 'POST',
+          method: "POST",
           body: JSON.stringify({}),
         },
-      )
-      standings = payload.standings
-      syncSessionElo(payload.standings)
+      );
+      standings = payload.standings;
+      syncSessionElo(payload.standings);
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
   async function finishMatch(): Promise<void> {
     if (!match) {
-      return
+      return;
     }
-    busy = true
-    error = ''
+    busy = true;
+    error = "";
     try {
-      const payload = await api<{ standings: Standing[] }>(`/api/matches/${match.match_id}/finish`, {
-        method: 'POST',
-      })
-      standings = payload.standings
-      syncSessionElo(payload.standings)
+      const payload = await api<{ standings: Standing[] }>(
+        `/api/matches/${match.match_id}/finish`,
+        {
+          method: "POST",
+        },
+      );
+      standings = payload.standings;
+      syncSessionElo(payload.standings);
     } catch (err) {
-      error = toErrorMessage(err)
+      error = toErrorMessage(err);
     } finally {
-      busy = false
+      busy = false;
     }
   }
 
-  $: if (mode === 'ranked') {
-    timeLimitSeconds = 3600
+  $: if (mode === "ranked") {
+    timeLimitSeconds = 3600;
   }
 
-  $: lineCount = Math.max(1, code.split('\n').length)
-  $: highlightedCode = highlightPython(code)
+  $: lineCount = Math.max(1, code.split("\n").length);
+  $: highlightedCode = highlightPython(code);
 
   onMount(() => {
-    const saved = localStorage.getItem('yhack.theme')
-    if (saved === 'light' || saved === 'dark' || saved === 'system') {
-      themePref = saved
+    const saved = localStorage.getItem("yhack.theme");
+    if (saved === "light" || saved === "dark" || saved === "system") {
+      themePref = saved;
     }
 
-    systemMatcher = window.matchMedia('(prefers-color-scheme: dark)')
-    applyTheme(themePref)
+    systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
+    applyTheme(themePref);
 
     mediaListener = () => {
-      if (themePref === 'system') {
-        applyTheme(themePref)
+      if (themePref === "system") {
+        applyTheme(themePref);
       }
-    }
-    systemMatcher.addEventListener('change', mediaListener)
+    };
+    systemMatcher.addEventListener("change", mediaListener);
 
     void loadThemes().catch((err) => {
-      error = toErrorMessage(err)
-    })
+      error = toErrorMessage(err);
+    });
 
     void refreshSession().catch((err) => {
-      error = toErrorMessage(err)
-    })
+      error = toErrorMessage(err);
+    });
 
     return () => {
       if (systemMatcher && mediaListener) {
-        systemMatcher.removeEventListener('change', mediaListener)
+        systemMatcher.removeEventListener("change", mediaListener);
       }
-    }
-  })
+    };
+  });
 </script>
 
 <div class="shell">
@@ -565,22 +555,22 @@
         <div class="switch-row auth-switch">
           <button
             type="button"
-            class:active={authMode === 'register'}
+            class:active={authMode === "register"}
             on:click={() => {
-              authMode = 'register'
-              error = ''
-              notice = ''
+              authMode = "register";
+              error = "";
+              notice = "";
             }}
           >
             Create account
           </button>
           <button
             type="button"
-            class:active={authMode === 'login'}
+            class:active={authMode === "login"}
             on:click={() => {
-              authMode = 'login'
-              error = ''
-              notice = ''
+              authMode = "login";
+              error = "";
+              notice = "";
             }}
           >
             Sign in
@@ -598,14 +588,22 @@
             type="password"
             bind:value={authPassword}
             minlength="6"
-            autocomplete={authMode === 'login' ? 'current-password' : 'new-password'}
+            autocomplete={authMode === "login"
+              ? "current-password"
+              : "new-password"}
           />
         </label>
 
-        <button class="primary" on:click={() => authenticate(authMode)} disabled={busy}>
-          {authMode === 'register' ? 'Create Account' : 'Sign In'}
+        <button
+          class="primary"
+          on:click={() => authenticate(authMode)}
+          disabled={busy}
+        >
+          {authMode === "register" ? "Create Account" : "Sign In"}
         </button>
-        <p class="subtle note">No guest toggle needed. Session auth is now cookie-backed.</p>
+        <p class="subtle note">
+          No guest toggle needed. Session auth is now cookie-backed.
+        </p>
       {:else if !inArena}
         <h2>Home</h2>
         <p class="session-chip">Signed in as {sessionUser.name}</p>
@@ -614,15 +612,17 @@
         <button
           class="primary"
           on:click={() => {
-            inArena = true
-            error = ''
-            notice = ''
+            inArena = true;
+            error = "";
+            notice = "";
           }}
           disabled={busy}
         >
           Enter Arena
         </button>
-        <button class="ghost wide" on:click={logout} disabled={busy}>Sign Out</button>
+        <button class="ghost wide" on:click={logout} disabled={busy}
+          >Sign Out</button
+        >
       {:else}
         <h2>Match Setup</h2>
         <p class="session-chip">{sessionUser.name} · ELO {sessionUser.elo}</p>
@@ -638,7 +638,7 @@
 
         <label>
           <span>Puzzle theme</span>
-          <select bind:value={selectedTheme} disabled={mode === 'ranked'}>
+          <select bind:value={selectedTheme} disabled={mode === "ranked"}>
             {#each themes as theme}
               <option value={theme}>{theme}</option>
             {/each}
@@ -647,7 +647,7 @@
 
         <label>
           <span>Difficulty</span>
-          <select bind:value={difficulty} disabled={mode === 'ranked'}>
+          <select bind:value={difficulty} disabled={mode === "ranked"}>
             {#each difficultyOptions as option}
               <option value={option}>{option.toUpperCase()}</option>
             {/each}
@@ -661,7 +661,7 @@
             bind:value={timeLimitSeconds}
             min="60"
             max="7200"
-            disabled={mode === 'ranked'}
+            disabled={mode === "ranked"}
           />
         </label>
 
@@ -671,20 +671,22 @@
         </label>
 
         <button class="primary" on:click={startMatch} disabled={busy}>
-          {match ? 'Restart Match' : 'Start Match'}
+          {match ? "Restart Match" : "Start Match"}
         </button>
         <button
           class="ghost wide"
           on:click={() => {
-            inArena = false
-            error = ''
-            notice = ''
+            inArena = false;
+            error = "";
+            notice = "";
           }}
           disabled={busy}
         >
           Back to Home
         </button>
-        <button class="ghost wide" on:click={logout} disabled={busy}>Sign Out</button>
+        <button class="ghost wide" on:click={logout} disabled={busy}
+          >Sign Out</button
+        >
       {/if}
 
       <div class="theme-switcher">
@@ -715,8 +717,9 @@
         <div class="home-state">
           <h2>Landing</h2>
           <p>
-            Create an account or sign in to unlock session-backed play. Your identity persists, ranked
-            checks use your real account, and you can launch matches from a clean home page.
+            Create an account or sign in to unlock session-backed play. Your
+            identity persists, ranked checks use your real account, and you can
+            launch matches from a clean home page.
           </p>
           <ul>
             <li>Cookie-backed session auth</li>
@@ -728,8 +731,8 @@
         <div class="home-state">
           <h2>Welcome, {sessionUser.name}</h2>
           <p>
-            You are signed in and ready. Enter the arena from the left panel when you want to generate
-            a puzzle match.
+            You are signed in and ready. Enter the arena from the left panel
+            when you want to generate a puzzle match.
           </p>
           <ul>
             <li>Current ELO: {sessionUser.elo}</li>
@@ -738,7 +741,9 @@
           </ul>
         </div>
       {:else if !match}
-        <p class="empty">Start a match to load prompt, samples, and editor scaffold.</p>
+        <p class="empty">
+          Start a match to load prompt, samples, and editor scaffold.
+        </p>
       {:else}
         <header class="arena-head">
           <h2>{match.theme}</h2>
@@ -762,13 +767,20 @@
         <label class="editor-label">
           <span>Python submission</span>
           <div class="editor-shell">
-            <div class="editor-lines" bind:this={lineNumbers} aria-hidden="true">
+            <div
+              class="editor-lines"
+              bind:this={lineNumbers}
+              aria-hidden="true"
+            >
               {#each Array(lineCount) as _, index (index)}
                 <span>{index + 1}</span>
               {/each}
             </div>
             <div class="editor-stack">
-              <pre class="editor-highlight" bind:this={highlightLayer} aria-hidden="true">{@html highlightedCode}</pre>
+              <pre
+                class="editor-highlight"
+                bind:this={highlightLayer}
+                aria-hidden="true">{@html highlightedCode}</pre>
               <textarea
                 class="editor-input"
                 bind:value={code}
@@ -783,19 +795,36 @@
         </label>
 
         <div class="action-row">
-          <button class="ghost" on:click={testSamples} disabled={busy}>Test Samples</button>
-          <button class="primary" on:click={submit} disabled={busy}>Submit</button>
-          <button class="ghost" on:click={requestHint} disabled={busy || hints.length >= 3}>
+          <button class="ghost" on:click={testSamples} disabled={busy}
+            >Test Samples</button
+          >
+          <button class="primary" on:click={submit} disabled={busy}
+            >Submit</button
+          >
+          <button
+            class="ghost"
+            on:click={requestHint}
+            disabled={busy || hints.length >= 3}
+          >
             Get next hint
           </button>
-          <button class="ghost" on:click={forfeit} disabled={busy}>Forfeit</button>
-          <button class="ghost" on:click={finishMatch} disabled={busy}>Finish</button>
+          <button class="ghost" on:click={forfeit} disabled={busy}
+            >Forfeit</button
+          >
+          <button class="ghost" on:click={finishMatch} disabled={busy}
+            >Finish</button
+          >
         </div>
 
         {#if testResult}
           <section class="judge-result">
-            <p class="chip" class:ok={testResult.verdict === 'accepted'} class:bad={testResult.verdict !== 'accepted'}>
-              TEST · {testResult.verdict.toUpperCase()} · SAMPLE {testResult.sample_passed}/{testResult.sample_total} · {testResult.runtime_ms}ms
+            <p
+              class="chip"
+              class:ok={testResult.verdict === "accepted"}
+              class:bad={testResult.verdict !== "accepted"}
+            >
+              TEST · {testResult.verdict.toUpperCase()} · SAMPLE {testResult.sample_passed}/{testResult.sample_total}
+              · {testResult.runtime_ms}ms
             </p>
             {#if testResult.message}
               <p class="mono subtle">{testResult.message}</p>
@@ -809,8 +838,14 @@
 
         {#if submitResult}
           <section class="judge-result">
-            <p class="chip" class:ok={submitResult.verdict === 'accepted'} class:bad={submitResult.verdict !== 'accepted'}>
-              SUBMIT · {submitResult.verdict.toUpperCase()} · SAMPLE {submitResult.sample_passed}/{submitResult.sample_total} · HIDDEN {submitResult.hidden_passed}/{submitResult.hidden_total} · {submitResult.runtime_ms}ms
+            <p
+              class="chip"
+              class:ok={submitResult.verdict === "accepted"}
+              class:bad={submitResult.verdict !== "accepted"}
+            >
+              SUBMIT · {submitResult.verdict.toUpperCase()} · SAMPLE {submitResult.sample_passed}/{submitResult.sample_total}
+              · HIDDEN {submitResult.hidden_passed}/{submitResult.hidden_total} ·
+              {submitResult.runtime_ms}ms
             </p>
             {#if submitResult.message}
               <p class="mono subtle">{submitResult.message}</p>
@@ -825,10 +860,15 @@
                 <p><strong>Input</strong></p>
                 <pre>{submitResult.first_failed_hidden_test.input_str}</pre>
                 <p><strong>Expected output</strong></p>
-                <pre>{submitResult.first_failed_hidden_test.expected_output}</pre>
+                <pre>{submitResult.first_failed_hidden_test
+                    .expected_output}</pre>
                 <p><strong>Your output</strong></p>
                 <pre>{submitResult.first_failed_hidden_test.actual_output}</pre>
-                <button class="ghost" on:click={promoteFailedTest} disabled={busy}>
+                <button
+                  class="ghost"
+                  on:click={promoteFailedTest}
+                  disabled={busy}
+                >
                   Use this as sample test
                 </button>
               </article>
@@ -838,7 +878,8 @@
 
         {#if match.sample_tests.length >= 4}
           <p class="mono subtle">
-            Visible sample limit reached (4). Promoting a new case replaces the oldest sample.
+            Visible sample limit reached (4). Promoting a new case replaces the
+            oldest sample.
           </p>
         {/if}
 
@@ -856,9 +897,15 @@
                 <span class="mono">hidden {row.hidden_passed}</span>
                 <span class="mono">hint {row.hint_level}</span>
                 <span class="mono">ELO {row.elo}</span>
-                <span class="mono delta">{row.rating_delta >= 0 ? '+' : ''}{row.rating_delta}</span>
-                <span class="state" class:ok={row.solved} class:bad={!row.solved}>
-                  {row.forfeited ? 'FORFEIT' : row.solved ? 'SOLVED' : 'OPEN'}
+                <span class="mono delta"
+                  >{row.rating_delta >= 0 ? "+" : ""}{row.rating_delta}</span
+                >
+                <span
+                  class="state"
+                  class:ok={row.solved}
+                  class:bad={!row.solved}
+                >
+                  {row.forfeited ? "FORFEIT" : row.solved ? "SOLVED" : "OPEN"}
                 </span>
               </li>
             {/each}

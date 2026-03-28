@@ -305,10 +305,7 @@ class MemoryStore:
         player.last_failed_hidden_test = None
         return match.puzzle.sample_tests
 
-    def request_hint(self, *, match_id: str, user_id: str, level: int) -> str:
-        if level not in {1, 2}:
-            raise ValueError("Hint level must be 1 or 2")
-
+    def request_hint(self, *, match_id: str, user_id: str) -> tuple[int, str]:
         match = self._require_match(match_id)
         player = self._require_player(match, user_id)
         if player.hint_level >= 3:
