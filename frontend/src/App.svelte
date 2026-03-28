@@ -108,6 +108,14 @@
 
   type EditorThemePalette = {
     accent: string;
+    bg: string;
+    surface: string;
+    text: string;
+    mutedText: string;
+    panelBorder: string;
+    consoleBg: string;
+    success: string;
+    error: string;
     editorBg: string;
     editorText: string;
     selection: string;
@@ -127,6 +135,7 @@
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
+  const APPEARANCE_MODE_ORDER: AppearanceMode[] = ["system", "light", "dark"];
   const themeInfoById = new Map(
     bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
   );
@@ -293,13 +302,31 @@
   }
 
   function handleEditorKeydown(event: KeyboardEvent): void {
+    const target = event.currentTarget as HTMLTextAreaElement;
+    const { selectionStart, selectionEnd } = target;
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+
+      const beforeCursor = code.slice(0, selectionStart);
+      const currentLine = beforeCursor.split("\n").at(-1) ?? "";
+      const baseIndent = currentLine.match(/^[\t ]*/)?.[0] ?? "";
+      const extraIndent = /:\s*(#.*)?$/.test(currentLine.trimEnd()) ? INDENT : "";
+      const insertion = `\n${baseIndent}${extraIndent}`;
+
+      code = `${code.slice(0, selectionStart)}${insertion}${code.slice(selectionEnd)}`;
+      const cursor = selectionStart + insertion.length;
+      void tick().then(() => {
+        target.selectionStart = cursor;
+        target.selectionEnd = cursor;
+      });
+      return;
+    }
+
     if (event.key !== "Tab") {
       return;
     }
     event.preventDefault();
-
-    const target = event.currentTarget as HTMLTextAreaElement;
-    const { selectionStart, selectionEnd } = target;
 
     if (selectionStart === selectionEnd) {
       code = `${code.slice(0, selectionStart)}${INDENT}${code.slice(selectionEnd)}`;
@@ -355,6 +382,13 @@
     return systemMatcher?.matches ? "dark" : "light";
   }
 
+  function cycleAppearanceMode(): void {
+    const currentIndex = APPEARANCE_MODE_ORDER.indexOf(appearanceMode);
+    const nextMode =
+      APPEARANCE_MODE_ORDER[(currentIndex + 1) % APPEARANCE_MODE_ORDER.length];
+    setAppearanceMode(nextMode);
+  }
+
   function resolveAppearanceMode(mode: AppearanceMode = appearanceMode): UiTheme {
     if (mode === "system") {
       return resolveSystemTheme();
@@ -405,6 +439,14 @@
       themePref === "dark"
         ? {
             accent: "#e2b714",
+            bg: "#323437",
+            surface: "#2c2e31",
+            text: "#d1d0c5",
+            mutedText: "#646669",
+            panelBorder: "rgba(226, 183, 20, 0.12)",
+            consoleBg: "#1e1e1e",
+            success: "#8cc84b",
+            error: "#ca4754",
             editorBg: "#323437",
             editorText: "#d1d0c5",
             selection: "rgba(226, 183, 20, 0.34)",
@@ -416,6 +458,14 @@
           }
         : {
             accent: "#a86d00",
+            bg: "#f3f4f6",
+            surface: "#e5e7eb",
+            text: "#1f2329",
+            mutedText: "#63646a",
+            panelBorder: "rgba(168, 109, 0, 0.14)",
+            consoleBg: "#1f2329",
+            success: "#2f8f4e",
+            error: "#b42318",
             editorBg: "#f3f4f6",
             editorText: "#1f2329",
             selection: "rgba(168, 109, 0, 0.22)",
@@ -431,6 +481,38 @@
         theme.colors?.["button.background"] ??
         theme.colors?.["focusBorder"] ??
         fallbackPalette.accent,
+      bg:
+        theme.colors?.["editor.background"] ??
+        theme.colors?.["sideBar.background"] ??
+        fallbackPalette.bg,
+      surface:
+        theme.colors?.["sideBar.background"] ??
+        theme.colors?.["panel.background"] ??
+        theme.colors?.["editorWidget.background"] ??
+        fallbackPalette.surface,
+      text:
+        theme.colors?.["editor.foreground"] ?? fallbackPalette.text,
+      mutedText:
+        theme.colors?.["descriptionForeground"] ??
+        theme.colors?.["editorLineNumber.foreground"] ??
+        fallbackPalette.mutedText,
+      panelBorder:
+        theme.colors?.["panel.border"] ??
+        theme.colors?.["editorWidget.border"] ??
+        theme.colors?.["contrastBorder"] ??
+        fallbackPalette.panelBorder,
+      consoleBg:
+        theme.colors?.["terminal.background"] ??
+        theme.colors?.["editor.background"] ??
+        fallbackPalette.consoleBg,
+      success:
+        theme.colors?.["terminal.ansiGreen"] ??
+        theme.colors?.["testing.iconPassed"] ??
+        fallbackPalette.success,
+      error:
+        theme.colors?.["terminal.ansiRed"] ??
+        theme.colors?.["errorForeground"] ??
+        fallbackPalette.error,
       editorBg:
         theme.colors?.["editor.background"] ?? fallbackPalette.editorBg,
       editorText:
@@ -474,7 +556,17 @@
     const palette = extractEditorThemePalette(theme);
     const root = document.documentElement;
 
+    root.style.setProperty("--main-color", palette.accent);
+    root.style.setProperty("--caret-color", palette.accent);
     root.style.setProperty("--theme-accent", palette.accent);
+    root.style.setProperty("--bg-color", palette.bg);
+    root.style.setProperty("--sub-alt-color", palette.surface);
+    root.style.setProperty("--text-color", palette.text);
+    root.style.setProperty("--sub-color", palette.mutedText);
+    root.style.setProperty("--panel-border", palette.panelBorder);
+    root.style.setProperty("--console-bg", palette.consoleBg);
+    root.style.setProperty("--success-color", palette.success);
+    root.style.setProperty("--error-color", palette.error);
     root.style.setProperty("--editor-bg", palette.editorBg);
     root.style.setProperty("--editor-text", palette.editorText);
     root.style.setProperty("--editor-selection", palette.selection);
@@ -1012,6 +1104,22 @@
       <button type="button" class="nav-icon" title="Info">
         <i class="fas fa-info" aria-hidden="true"></i>
       </button>
+      <button
+        type="button"
+        class="nav-mode-button"
+        title={`Appearance: ${appearanceMode}`}
+        on:click={cycleAppearanceMode}
+      >
+        <i
+          class={`fas ${appearanceMode === "light"
+            ? "fa-sun"
+            : appearanceMode === "dark"
+              ? "fa-moon"
+              : "fa-desktop"}`}
+          aria-hidden="true"
+        ></i>
+        <span>{appearanceMode}</span>
+      </button>
       <div class="theme-menu-shell" bind:this={themeMenuEl}>
         <button
           type="button"
@@ -1029,26 +1137,9 @@
         {#if themeMenuOpen}
           <div class="theme-menu" role="dialog" aria-label="Theme settings">
             <div class="theme-menu-section">
-              <span class="theme-menu-label">Appearance</span>
-              <div class="theme-mode-toggle">
-                {#each ["system", "light", "dark"] as option}
-                  <button
-                    type="button"
-                    class:active={appearanceMode === option}
-                    on:click={() => {
-                      setAppearanceMode(option as AppearanceMode);
-                    }}
-                  >
-                    {option}
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="theme-menu-section">
               <div class="theme-menu-heading">
                 <span class="theme-menu-label">Theme</span>
-                <span class="theme-menu-meta">{themeStatusText}</span>
+                <span class="theme-menu-meta">{themePref} mode</span>
               </div>
               <select
                 value={activeEditorTheme}
@@ -1066,7 +1157,7 @@
             </div>
 
             <p class="theme-menu-summary">
-              Using <strong>{activeEditorThemeName}</strong> for {themePref} mode.
+              Using <strong>{activeEditorThemeName}</strong> across the full {themePref} theme.
             </p>
           </div>
         {/if}
