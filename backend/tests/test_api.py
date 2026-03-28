@@ -1,6 +1,51 @@
+from typing import Any
+
 from app import create_app
 from constants import THEMES
 from store import MemoryStore
+
+
+def _start_single_player_match(client: Any, *, seed: int = 3) -> tuple[dict, dict]:
+    user = client.post("/api/users", json={"name": "Ada", "guest": False}).get_json()
+    assert user is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": user["id"],
+            "mode": "zen",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "seed": seed,
+        },
+    ).get_json()
+    assert party is not None
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start", json={"seed": seed}
+    ).get_json()
+    assert match is not None
+    return user, match
+
+
+def _sample_only_solution(sample_tests: list[dict[str, str]]) -> str:
+    branch_lines: list[str] = []
+    for sample in sample_tests:
+        branch_lines.extend(
+            [
+                f"    if input_str == {sample['input']!r}:",
+                f"        return {sample['output']!r}",
+            ]
+        )
+
+    branch_block = "\n".join(branch_lines)
+    return (
+        "def solution(input_str: str) -> str:\n"
+        "    print('trace', len(input_str))\n"
+        f"{branch_block}\n"
+        "    return ''\n"
+    )
 
 
 def test_auth_session_register_login_logout() -> None:
@@ -158,3 +203,62 @@ def test_hint_unlock_sequence_and_submit_flow() -> None:
     ).get_json()
     assert result is not None
     assert result["verdict"] == "error"
+
+
+def test_sample_test_endpoint_runs_samples_only_and_returns_stdout() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    user, match = _start_single_player_match(client, seed=11)
+    code = _sample_only_solution(match["sample_tests"])
+
+    test_run = client.post(
+        f"/api/matches/{match['match_id']}/test",
+        json={"user_id": user["id"], "code": code},
+    ).get_json()
+    assert test_run is not None
+    assert test_run["verdict"] == "accepted"
+    assert test_run["hidden_total"] == 0
+    assert "trace" in test_run["stdout"]
+
+    submit_run = client.post(
+        f"/api/matches/{match['match_id']}/submit",
+        json={"user_id": user["id"], "code": code},
+    ).get_json()
+    assert submit_run is not None
+    assert submit_run["verdict"] == "wrong_answer"
+    assert submit_run["first_failed_hidden_test"] is not None
+
+
+def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    user, match = _start_single_player_match(client, seed=13)
+
+    latest_samples = match["sample_tests"]
+    for _ in range(5):
+        code = _sample_only_solution(latest_samples)
+        submit_run = client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={"user_id": user["id"], "code": code},
+        ).get_json()
+        assert submit_run is not None
+        assert submit_run["verdict"] == "wrong_answer"
+        failed = submit_run["first_failed_hidden_test"]
+        assert failed is not None
+
+        promoted = client.post(
+            f"/api/matches/{match['match_id']}/promote-failed-test",
+            json={"user_id": user["id"]},
+        ).get_json()
+        assert promoted is not None
+
+        latest_samples = promoted["sample_tests"]
+        assert len(latest_samples) <= 4
+        assert {
+            "input": failed["input_str"],
+            "output": failed["expected_output"],
+        } in latest_samples
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert len(refreshed_match["sample_tests"]) == 4

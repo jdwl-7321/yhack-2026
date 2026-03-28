@@ -9,7 +9,13 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from constants import THEMES
 from judge import JudgeResult, judge_submission
-from puzzle import NoveltyPool, PuzzleInstance, generate_puzzle
+from puzzle import (
+    NoveltyPool,
+    PuzzleInstance,
+    TestCase,
+    generate_additional_hidden_test,
+    generate_puzzle,
+)
 from rating import (
     RankedResult,
     assign_ranked_difficulty,
@@ -55,6 +61,7 @@ class MatchPlayer:
     hint_level: int = 0
     forfeited: bool = False
     hints_used: set[int] = field(default_factory=set)
+    last_failed_hidden_test: TestCase | None = None
 
 
 @dataclass(slots=True)
@@ -230,6 +237,14 @@ class MemoryStore:
             hidden_tests=match.puzzle.hidden_tests,
         )
 
+        if result.first_failed_hidden_test is None:
+            player.last_failed_hidden_test = None
+        else:
+            player.last_failed_hidden_test = TestCase(
+                input_str=result.first_failed_hidden_test.input_str,
+                output_str=result.first_failed_hidden_test.expected_output,
+            )
+
         now = time()
         if result.hidden_passed >= player.hidden_passed:
             player.hidden_passed = result.hidden_passed
@@ -240,7 +255,60 @@ class MemoryStore:
         match.submissions.append(result)
         return result
 
-    def request_hint(self, *, match_id: str, user_id: str) -> tuple[int, str]:
+    def test_samples(self, *, match_id: str, user_id: str, code: str) -> JudgeResult:
+        match = self._require_match(match_id)
+        player = self._require_player(match, user_id)
+        if player.forfeited:
+            raise ValueError("Player already forfeited")
+
+        return judge_submission(
+            code=code,
+            sample_tests=match.puzzle.sample_tests,
+            hidden_tests=match.puzzle.hidden_tests,
+            include_hidden_tests=False,
+        )
+
+    def promote_failed_hidden_test(
+        self, *, match_id: str, user_id: str
+    ) -> list[TestCase]:
+        match = self._require_match(match_id)
+        player = self._require_player(match, user_id)
+        failed = player.last_failed_hidden_test
+        if failed is None:
+            raise ValueError("No failed hidden test available yet")
+
+        if failed not in match.puzzle.sample_tests:
+            if len(match.puzzle.sample_tests) >= 4:
+                match.puzzle.sample_tests.pop(0)
+            match.puzzle.sample_tests.append(failed)
+
+        removed = False
+        for index, hidden_case in enumerate(match.puzzle.hidden_tests):
+            if hidden_case == failed:
+                match.puzzle.hidden_tests.pop(index)
+                removed = True
+                break
+
+        if removed:
+            replacement = generate_additional_hidden_test(
+                theme=match.puzzle.theme,
+                difficulty=match.puzzle.difficulty,
+                variables=match.puzzle.variables,
+                existing_cases=[
+                    *match.puzzle.sample_tests,
+                    *match.puzzle.hidden_tests,
+                ],
+                seed=random.randint(1, 10**9),
+            )
+            match.puzzle.hidden_tests.append(replacement)
+
+        player.last_failed_hidden_test = None
+        return match.puzzle.sample_tests
+
+    def request_hint(self, *, match_id: str, user_id: str, level: int) -> str:
+        if level not in {1, 2}:
+            raise ValueError("Hint level must be 1 or 2")
+
         match = self._require_match(match_id)
         player = self._require_player(match, user_id)
         if player.hint_level >= 3:

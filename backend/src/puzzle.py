@@ -224,7 +224,7 @@ def generate_puzzle(
         specs = parse_variable_specs(template.variable_schema)
         params = sample_parameters(specs, attempt_seed)
         sample_tests = _build_cases(template, params, rng, difficulty, count=2)
-        hidden_count = {"easy": 6, "medium": 8, "hard": 10, "expert": 12}[difficulty]
+        hidden_count = {"easy": 10, "medium": 12, "hard": 14, "expert": 16}[difficulty]
         hidden_tests = _build_cases(
             template, params, rng, difficulty, count=hidden_count
         )
@@ -362,6 +362,29 @@ def _build_cases(
             TestCase(input_str=input_str, output_str=template.solver(input_str, params))
         )
     return cases
+
+
+def generate_additional_hidden_test(
+    *,
+    theme: str,
+    difficulty: Difficulty,
+    variables: dict[str, JsonScalar],
+    existing_cases: Sequence[TestCase],
+    seed: int,
+    retry_budget: int = 30,
+) -> TestCase:
+    template = _template_for_theme(theme)
+    rng = random.Random(seed)
+    existing_pairs = {(case.input_str, case.output_str) for case in existing_cases}
+
+    for _ in range(retry_budget):
+        input_str = template.input_factory(rng, difficulty)
+        output_str = template.solver(input_str, variables)
+        case = TestCase(input_str=input_str, output_str=output_str)
+        if (case.input_str, case.output_str) not in existing_pairs:
+            return case
+
+    raise ValueError("Failed to generate a unique hidden test case")
 
 
 def _template_for_theme(theme: str) -> _Template:

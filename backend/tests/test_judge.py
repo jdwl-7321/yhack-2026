@@ -43,3 +43,47 @@ def solution(input_str: str) -> str:
     )
     assert result.verdict == "sample_failed"
     assert result.hidden_passed == 0
+
+
+def test_allows_stdlib_builtins_and_captures_stdout() -> None:
+    code = """
+def solution(input_str: str) -> str:
+    print("debug", ord("a"))
+    return str(len(input_str.split()))
+"""
+    result = judge_submission(code, [TestCase("1 2", "2")], [TestCase("x", "1")])
+    assert result.verdict == "accepted"
+    assert "debug 97" in result.stdout
+
+
+def test_test_mode_skips_hidden_suite() -> None:
+    code = """
+def solution(input_str: str) -> str:
+    return str(len(input_str.split()))
+"""
+    result = judge_submission(
+        code,
+        [TestCase("1 2", "2")],
+        [TestCase("a b c", "0")],
+        include_hidden_tests=False,
+    )
+    assert result.verdict == "accepted"
+    assert result.hidden_total == 0
+    assert result.hidden_passed == 0
+
+
+def test_returns_first_failed_hidden_test() -> None:
+    code = """
+def solution(input_str: str) -> str:
+    return "ok"
+"""
+    result = judge_submission(
+        code,
+        [TestCase("sample", "ok")],
+        [TestCase("hidden 1", "bad"), TestCase("hidden 2", "bad")],
+    )
+    assert result.verdict == "wrong_answer"
+    assert result.first_failed_hidden_test is not None
+    assert result.first_failed_hidden_test.input_str == "hidden 1"
+    assert result.first_failed_hidden_test.expected_output == "bad"
+    assert result.first_failed_hidden_test.actual_output == "ok"

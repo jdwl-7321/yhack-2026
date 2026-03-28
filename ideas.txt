@@ -1,0 +1,10 @@
+# Cryptography
+* caesar cipher
+* random single-character replacement cipher (need to make sure input has all chars)
+
+# Data crunching
+* mean, std
+* points on a line / quadratic -> coeffs
+
+# Strings
+* 
