@@ -93,6 +93,45 @@
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
   const LEADERBOARD_LIMIT = 10;
+  const PYTHON_KEYWORDS = [
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "continue",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "False",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "None",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "True",
+    "try",
+    "while",
+    "with",
+    "yield",
+  ];
+  const PYTHON_KEYWORD_PATTERN = new RegExp(
+    `\\b(${PYTHON_KEYWORDS.join("|")})\\b`,
+    "g",
+  );
 
   const modeOptions: Mode[] = ["zen", "casual", "ranked"];
   const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
@@ -108,7 +147,6 @@
   let difficulty: Difficulty = "easy";
   let selectedTheme = FALLBACK_THEME;
   let timeLimitSeconds = 900;
-  let seed = Math.floor(Math.random() * 1_000_000);
 
   let themePref: UiTheme = "dark";
   let themeSource: ThemeSource = "system";
@@ -137,14 +175,12 @@
   let timeRemaining = 0;
   let timerInterval: ReturnType<typeof setInterval> | null = null;
 
-  let promptHeading = "Puzzle Prompt";
-  let signatureLine = "def solution(input_str: str) -> str";
-  let topSample: { input: string; output: string } | null = null;
-  let secondSample: { input: string; output: string } | null = null;
+  let highlightedCode = "";
 
   let consoleEntries: ConsoleEntry[] = [];
   let consoleNextId = 1;
   let consoleEl: HTMLDivElement | null = null;
+  let highlightEl: HTMLPreElement | null = null;
 
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
@@ -154,20 +190,6 @@
       return "fa-user-friends";
     }
     return "fa-mountain";
-  }
-
-  function derivePromptHeading(prompt: string): string {
-    const firstLine = prompt
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.length > 0);
-    if (!firstLine) {
-      return "Puzzle Prompt";
-    }
-    if (firstLine.length > 56) {
-      return "Puzzle Prompt";
-    }
-    return firstLine.replace(/[.:]$/, "");
   }
 
   function formatDuration(totalSeconds: number): string {
@@ -228,16 +250,71 @@
     });
   }
 
-  function syncMatchPresentation(payload: MatchPayload): void {
-    promptHeading = derivePromptHeading(payload.prompt);
-    signatureLine = (payload.scaffold.split("\n")[0] ?? signatureLine).trim();
-    topSample = payload.sample_tests[0] ?? null;
-    secondSample = payload.sample_tests[1] ?? null;
+  function appendJudgeOutput(payload: JudgePayload): void {
+    if (payload.stdout.trim().length > 0) {
+      appendConsole(payload.stdout.trimEnd(), "info");
+    }
+    if (payload.message) {
+      appendConsole(
+        payload.message,
+        payload.verdict === "accepted" ? "success" : "error",
+      );
+    }
   }
 
-  function updateSampleBlocks(): void {
-    topSample = match?.sample_tests[0] ?? null;
-    secondSample = match?.sample_tests[1] ?? null;
+  function escapeHtml(value: string): string {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function highlightPython(source: string): string {
+    const literals: string[] = [];
+    let masked = escapeHtml(source).replace(
+      /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')/gm,
+      (segment, commentSegment) => {
+        const className = commentSegment ? "comment" : "string";
+        const index = literals.push(
+          `<span class="token ${className}">${segment}</span>`,
+        );
+        return `@@LITERAL_${index - 1}@@`;
+      },
+    );
+
+    masked = masked.replace(
+      /\b(def|class)\s+([A-Za-z_]\w*)/g,
+      (_, keyword: string, name: string) =>
+        `@@DEFCLASS_${keyword}_${name}@@`,
+    );
+
+    masked = masked.replace(
+      PYTHON_KEYWORD_PATTERN,
+      '<span class="token keyword">$1</span>',
+    );
+    masked = masked.replace(
+      /\b(\d+(?:\.\d+)?)\b/g,
+      '<span class="token number">$1</span>',
+    );
+
+    masked = masked.replace(
+      /@@DEFCLASS_([A-Za-z_]+)_([A-Za-z_]\w*)@@/g,
+      '<span class="token keyword">$1</span> <span class="token function">$2</span>',
+    );
+
+    return masked.replace(
+      /@@LITERAL_(\d+)@@/g,
+      (_, index: string) => literals[Number(index)] ?? "",
+    );
+  }
+
+  function syncEditorScroll(event: Event): void {
+    if (!highlightEl) {
+      return;
+    }
+    const target = event.currentTarget as HTMLTextAreaElement;
+    highlightEl.scrollTop = target.scrollTop;
+    highlightEl.scrollLeft = target.scrollLeft;
   }
 
   function handleEditorKeydown(event: KeyboardEvent): void {
@@ -522,7 +599,6 @@
           theme: selectedTheme,
           difficulty,
           time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
-          seed,
         }),
       });
 
@@ -530,7 +606,7 @@
         `/api/parties/${party.code}/start`,
         {
           method: "POST",
-          body: JSON.stringify({ seed }),
+          body: JSON.stringify({}),
         },
       );
 
@@ -544,7 +620,6 @@
       code = payload.scaffold;
       activeView = "arena";
 
-      syncMatchPresentation(payload);
       startTimer(payload.time_limit_seconds);
       resetConsole();
       appendConsole(`Match loaded: ${payload.theme}`, "system");
@@ -594,7 +669,6 @@
       if (match?.match_id === currentMatchId) {
         match = { ...match, sample_tests: payload.sample_tests };
       }
-      updateSampleBlocks();
       standings = payload.standings;
       syncSessionElo(payload.standings);
 
@@ -602,12 +676,7 @@
         `Submit: sample ${payload.sample_passed}/${payload.sample_total}, hidden ${payload.hidden_passed}/${payload.hidden_total}, ${payload.runtime_ms}ms`,
         payload.verdict === "accepted" ? "success" : "error",
       );
-      if (payload.message) {
-        appendConsole(
-          payload.message,
-          payload.verdict === "accepted" ? "success" : "error",
-        );
-      }
+      appendJudgeOutput(payload);
       if (payload.first_failed_hidden_test) {
         appendConsole(
           "First failed hidden test available for promotion.",
@@ -649,7 +718,6 @@
       if (match?.match_id === currentMatchId) {
         match = { ...match, sample_tests: payload.sample_tests };
       }
-      updateSampleBlocks();
       standings = payload.standings;
       syncSessionElo(payload.standings);
 
@@ -657,12 +725,7 @@
         `Samples: ${payload.sample_passed}/${payload.sample_total} passed (${payload.runtime_ms}ms)`,
         payload.verdict === "accepted" ? "success" : "error",
       );
-      if (payload.message) {
-        appendConsole(
-          payload.message,
-          payload.verdict === "accepted" ? "success" : "error",
-        );
-      }
+      appendJudgeOutput(payload);
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Sample test failed: ${toErrorMessage(err)}`, "error");
@@ -691,7 +754,6 @@
       if (match?.match_id === currentMatchId) {
         match = { ...match, sample_tests: payload.sample_tests };
       }
-      updateSampleBlocks();
       submitResult = { ...currentSubmit, first_failed_hidden_test: null };
       notice = "Promoted failed hidden test to visible samples.";
       appendConsole("Promoted failed hidden test to samples.", "system");
@@ -720,7 +782,6 @@
       const nextHints = [...hints];
       nextHints[payload.level - 1] = payload.hint;
       hints = nextHints;
-      appendConsole(`Hint level ${payload.level}: ${payload.hint}`, "system");
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Hint request failed: ${toErrorMessage(err)}`, "error");
@@ -754,33 +815,6 @@
     }
   }
 
-  async function finishMatch(): Promise<void> {
-    if (!match) {
-      return;
-    }
-    busy = true;
-    error = "";
-    try {
-      const payload = await api<{ standings: Standing[] }>(
-        `/api/matches/${match.match_id}/finish`,
-        {
-          method: "POST",
-        },
-      );
-      standings = payload.standings;
-      syncSessionElo(payload.standings);
-      appendConsole("Match marked as finished.", "system");
-      void loadLeaderboard().catch((err) => {
-        error = toErrorMessage(err);
-      });
-    } catch (err) {
-      error = toErrorMessage(err);
-      appendConsole(`Finish failed: ${toErrorMessage(err)}`, "error");
-    } finally {
-      busy = false;
-    }
-  }
-
   $: if (mode === "ranked") {
     timeLimitSeconds = 3600;
   }
@@ -791,6 +825,7 @@
       : `${themePref} override`;
 
   $: leaderboardVisibleRows = deriveLeaderboardRows();
+  $: highlightedCode = highlightPython(code);
 
   onMount(() => {
     const saved = localStorage.getItem("yhack.theme");
@@ -1034,10 +1069,6 @@
                 />
               </label>
 
-              <label>
-                <span>Seed</span>
-                <input type="number" bind:value={seed} />
-              </label>
             </div>
 
             <div class="home-actions">
@@ -1216,8 +1247,7 @@
       {:else if !match}
         <section class="race-empty">
           <p>
-            Start a match from Home to load prompt, samples, and editor
-            scaffold.
+            Start a match from Home to load samples and the editor scaffold.
           </p>
           <button type="button" class="btn" on:click={showHome}
             >Back Home</button
@@ -1265,33 +1295,18 @@
         <div class="game-layout">
           <section class="prompt-panel">
             <article class="prompt-card">
-              <h2>{promptHeading}</h2>
-              <p class="prompt-text">{match.prompt}</p>
-
-              {#if topSample}
-                <div class="io-block">
-                  <span class="io-label">Sample Input</span>
-                  <span class="io-value">{topSample.input}</span>
+              {#if match.sample_tests.length > 0}
+                <div class="samples-grid">
+                  <span class="sample-head">Sample Input</span>
+                  <span class="sample-head">Sample Output</span>
+                  {#each match.sample_tests as sample}
+                    <pre class="sample-cell">{sample.input}</pre>
+                    <pre class="sample-cell">{sample.output}</pre>
+                  {/each}
                 </div>
-                <div class="io-block">
-                  <span class="io-label">Sample Output</span>
-                  <span class="io-value">{topSample.output}</span>
-                </div>
+              {:else}
+                <p class="standings-empty">No sample tests available.</p>
               {/if}
-
-              {#if secondSample}
-                <div class="io-block">
-                  <span class="io-label">Extra Sample</span>
-                  <span class="io-value"
-                    >{secondSample.input} => {secondSample.output}</span
-                  >
-                </div>
-              {/if}
-
-              <div class="io-block">
-                <span class="io-label">Constraint</span>
-                <span class="signature">{signatureLine}</span>
-              </div>
 
               {#if hints.length > 0}
                 <div class="hint-stack">
@@ -1327,14 +1342,20 @@
 
           <section class="editor-panel">
             <div class="editor-container">
-              <textarea
-                id="code-editor"
-                bind:value={code}
-                spellcheck="false"
-                autocomplete="off"
-                wrap="off"
-                on:keydown={handleEditorKeydown}
-              ></textarea>
+              <div class="editor-stack">
+                <pre class="code-highlight" aria-hidden="true" bind:this={highlightEl}
+                  ><code>{@html highlightedCode || " "}</code></pre
+                >
+                <textarea
+                  id="code-editor"
+                  bind:value={code}
+                  spellcheck="false"
+                  autocomplete="off"
+                  wrap="off"
+                  on:keydown={handleEditorKeydown}
+                  on:scroll={syncEditorScroll}
+                ></textarea>
+              </div>
 
               <div class="editor-actions">
                 <button
@@ -1362,14 +1383,6 @@
                     disabled={busy}
                   >
                     <i class="fas fa-vial" aria-hidden="true"></i> Run Samples
-                  </button>
-                  <button
-                    type="button"
-                    class="btn"
-                    on:click={finishMatch}
-                    disabled={busy}
-                  >
-                    <i class="fas fa-check" aria-hidden="true"></i> Finish
                   </button>
                   <button
                     type="button"
