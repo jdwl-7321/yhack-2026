@@ -427,37 +427,27 @@ select:focus {
   font-size: 1.05rem;
 }
 
-.prompt-text {
-  margin: 0;
-  color: var(--sub-color);
-  font-size: 0.9rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.io-block {
-  background-color: var(--bg-color);
-  padding: 0.75rem;
-  border-radius: 0.35rem;
+.samples-grid {
   display: grid;
-  gap: 0.25rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.45rem;
 }
 
-.io-label {
+.sample-head {
   color: var(--sub-color);
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-.io-value {
-  color: var(--main-color);
-  font-size: 0.83rem;
+.sample-cell {
+  margin: 0;
+  white-space: pre-wrap;
   word-break: break-word;
-}
-
-.signature {
-  color: var(--text-color);
+  background-color: var(--bg-color);
+  color: var(--main-color);
+  border-radius: 0.35rem;
+  padding: 0.75rem;
   font-size: 0.83rem;
 }
 
@@ -510,12 +500,41 @@ select:focus {
   min-height: 320px;
 }
 
-#code-editor {
+.editor-stack {
+  position: relative;
   flex: 1;
+  min-height: 220px;
+}
+
+.code-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 0.45rem;
   background: var(--bg-color);
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.code-highlight code {
+  display: block;
+  min-height: 100%;
+}
+
+#code-editor {
+  width: 100%;
+  height: 100%;
+  background: transparent;
   border: 0;
   border-radius: 0.45rem;
-  color: var(--text-color);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
   font-family: var(--font-family);
   font-size: 0.9rem;
   resize: vertical;
@@ -524,6 +543,28 @@ select:focus {
   caret-color: var(--caret-color);
   min-height: 220px;
   padding: 0.75rem;
+  position: relative;
+  z-index: 1;
+}
+
+.token.keyword {
+  color: #f7768e;
+}
+
+.token.string {
+  color: #9ece6a;
+}
+
+.token.comment {
+  color: #6b7280;
+}
+
+.token.number {
+  color: #e0af68;
+}
+
+.token.function {
+  color: #7aa2f7;
 }
 
 .editor-actions {
@@ -551,6 +592,11 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+}
+
+.console-line {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .console-line.info {
