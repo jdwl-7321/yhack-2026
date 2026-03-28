@@ -596,7 +596,7 @@ select:focus {
 
 .game-layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 1rem;
   flex: 1;
   min-height: 420px;
@@ -629,10 +629,32 @@ select:focus {
   font-size: 1.05rem;
 }
 
+
+.samples-panel {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.samples-title {
+  margin: 0;
+  color: var(--main-color);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.samples-scroll {
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 0.45rem;
+  background-color: var(--bg-color);
+}
+
 .samples-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.45rem;
+  grid-template-columns: 3rem minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  min-width: 520px;
 }
 
 .sample-head {
@@ -640,17 +662,39 @@ select:focus {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 28%, transparent);
+  background-color: var(--bg-color);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.index-head {
+  text-align: center;
+}
+
+.sample-index {
+  display: block;
+  color: var(--sub-color);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  padding: 0.7rem 0.3rem;
+  text-align: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
 .sample-cell {
+  display: block;
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  background-color: var(--bg-color);
   color: var(--main-color);
-  border-radius: 0.35rem;
-  padding: 0.75rem;
+  padding: 0.7rem;
   font-size: 0.83rem;
+  line-height: 1.4;
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
 .hint-stack {
