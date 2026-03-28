@@ -5,10 +5,10 @@ from typing import Any, cast
 
 from flask import Flask, jsonify, request
 
-from .constants import THEMES
-from .puzzle import generator_schema
-from .store import Match, MemoryStore, Party, User
-from .types import Difficulty, Mode
+from constants import THEMES
+from puzzle import generator_schema
+from store import Match, MemoryStore, Party, User
+from domain_types import Difficulty, Mode
 
 SOLUTION_SCAFFOLD = 'def solution(input_str: str) -> str:\n    return ""\n'
 

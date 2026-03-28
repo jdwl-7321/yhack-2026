@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Callable, Literal, cast
 
-from .puzzle import TestCase
+from puzzle import TestCase
 
 Verdict = Literal["accepted", "sample_failed", "wrong_answer", "error"]
 

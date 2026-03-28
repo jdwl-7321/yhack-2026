@@ -1,4 +1,4 @@
-from yhack_backend.rating import (
+from rating import (
     RankedResult,
     assign_ranked_difficulty,
     elo_deltas,

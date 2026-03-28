@@ -1,5 +1,5 @@
-from yhack_backend.judge import judge_submission
-from yhack_backend.puzzle import TestCase
+from judge import judge_submission
+from puzzle import TestCase
 
 
 def test_accepts_valid_solution() -> None:

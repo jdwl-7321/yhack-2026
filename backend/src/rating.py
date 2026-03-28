@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .types import Difficulty, Mode
+from domain_types import Difficulty, Mode
 
 _DIFFICULTY_MULTIPLIER = {
     "easy": 0.9,

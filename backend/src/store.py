@@ -6,17 +6,17 @@ import string
 from time import time
 import uuid
 
-from .constants import THEMES
-from .judge import JudgeResult, judge_submission
-from .puzzle import NoveltyPool, PuzzleInstance, generate_puzzle
-from .rating import (
+from constants import THEMES
+from judge import JudgeResult, judge_submission
+from puzzle import NoveltyPool, PuzzleInstance, generate_puzzle
+from rating import (
     RankedResult,
     assign_ranked_difficulty,
     elo_deltas,
     order_ranked_results,
     resolve_mode,
 )
-from .types import Difficulty, Mode
+from domain_types import Difficulty, Mode
 
 
 @dataclass(slots=True)

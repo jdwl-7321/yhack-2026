@@ -9,8 +9,8 @@ import random
 import uuid
 from typing import Any, Callable, Literal, Sequence, cast
 
-from .constants import NOVELTY_POOL_SIZE, SIMILARITY_THRESHOLD
-from .types import Difficulty, JsonScalar
+from constants import NOVELTY_POOL_SIZE, SIMILARITY_THRESHOLD
+from domain_types import Difficulty, JsonScalar
 
 VarType = Literal["int", "float", "bool", "str", "choice"]
 SamplingMode = Literal["uniform", "weighted", "fixed_list"]

@@ -1,6 +1,6 @@
-from yhack_backend.app import create_app
-from yhack_backend.constants import THEMES
-from yhack_backend.store import MemoryStore
+from app import create_app
+from constants import THEMES
+from store import MemoryStore
 
 
 def test_ranked_party_falls_back_to_casual_with_guest() -> None:

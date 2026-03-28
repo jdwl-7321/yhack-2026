@@ -1,7 +1,7 @@
 import pytest
 
-from yhack_backend.constants import THEMES
-from yhack_backend.puzzle import (
+from constants import THEMES
+from puzzle import (
     NoveltyPool,
     generate_puzzle,
     parse_variable_specs,

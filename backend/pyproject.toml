@@ -8,7 +8,7 @@ dependencies = [
 ]
 
 [project.scripts]
-yhack-backend = "yhack_backend.app:main"
+yhack-backend = "app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -20,7 +20,8 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/yhack_backend"]
+only-include = ["src"]
+sources = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
