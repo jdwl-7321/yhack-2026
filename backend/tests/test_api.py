@@ -26,7 +26,8 @@ def _start_single_player_match(client: Any, *, seed: int = 3) -> tuple[dict, dic
     assert party is not None
 
     match = client.post(
-        f"/api/parties/{party['code']}/start", json={"seed": seed}
+        f"/api/parties/{party['code']}/start",
+        json={"seed": seed, "user_id": user["id"]},
     ).get_json()
     assert match is not None
     return user, match
@@ -189,10 +190,229 @@ def test_ranked_party_falls_back_to_casual_with_guest() -> None:
     client.post(f"/api/parties/{party['code']}/join", json={"user_id": guest["id"]})
 
     match = client.post(
-        f"/api/parties/{party['code']}/start", json={"seed": 7}
+        f"/api/parties/{party['code']}/start",
+        json={"seed": 7, "user_id": leader["id"]},
     ).get_json()
     assert match is not None
     assert match["mode"] == "casual"
+
+
+def test_casual_party_join_code_and_member_limit_are_enforced() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    member = client.post(
+        "/api/users",
+        json={"name": "Member", "guest": False, "elo": 1180},
+    ).get_json()
+    extra = client.post(
+        "/api/users",
+        json={"name": "Extra", "guest": False, "elo": 1160},
+    ).get_json()
+
+    assert leader is not None and member is not None and extra is not None
+
+    party_response = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "medium",
+            "time_limit_seconds": 600,
+            "member_limit": 2,
+            "seed": 31,
+        },
+    )
+    assert party_response.status_code == 200
+    party = party_response.get_json()
+    assert party is not None
+    assert party["join_code"] == party["code"]
+    assert party["member_limit"] == 2
+
+    join_ok = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": member["id"]},
+    )
+    assert join_ok.status_code == 200
+    assert join_ok.get_json()["is_full"] is True
+
+    join_full = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": extra["id"]},
+    )
+    assert join_full.status_code == 400
+    assert join_full.get_json() == {"error": "Party is full"}
+
+
+def test_party_leader_can_set_limit_and_kick_members() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    member = client.post(
+        "/api/users",
+        json={"name": "Member", "guest": False, "elo": 1180},
+    ).get_json()
+
+    assert leader is not None and member is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "ranked",
+            "theme": THEMES[0],
+            "difficulty": "hard",
+            "time_limit_seconds": 3600,
+            "member_limit": 4,
+            "seed": 41,
+        },
+    ).get_json()
+    assert party is not None
+
+    client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": member["id"]},
+    )
+
+    reduced_limit = client.post(
+        f"/api/parties/{party['code']}/limit",
+        json={"user_id": leader["id"], "member_limit": 3},
+    )
+    assert reduced_limit.status_code == 200
+    assert reduced_limit.get_json()["member_limit"] == 3
+
+    denied_kick = client.post(
+        f"/api/parties/{party['code']}/kick",
+        json={"user_id": member["id"], "member_id": leader["id"]},
+    )
+    assert denied_kick.status_code == 400
+    assert denied_kick.get_json() == {"error": "Only the party leader can do that"}
+
+    kick = client.post(
+        f"/api/parties/{party['code']}/kick",
+        json={"user_id": leader["id"], "member_id": member["id"]},
+    )
+    assert kick.status_code == 200
+    kicked_party = kick.get_json()
+    assert kicked_party is not None
+    assert [entry["id"] for entry in kicked_party["members"]] == [leader["id"]]
+
+
+def test_party_leader_can_update_party_settings() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    member = client.post(
+        "/api/users",
+        json={"name": "Member", "guest": False, "elo": 1180},
+    ).get_json()
+
+    assert leader is not None and member is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 600,
+            "member_limit": 4,
+            "seed": 41,
+        },
+    ).get_json()
+    assert party is not None
+
+    denied = client.post(
+        f"/api/parties/{party['code']}/settings",
+        json={
+            "user_id": member["id"],
+            "theme": THEMES[1],
+            "difficulty": "hard",
+            "time_limit_seconds": 900,
+        },
+    )
+    assert denied.status_code == 400
+    assert denied.get_json() == {"error": "Only the party leader can do that"}
+
+    updated = client.post(
+        f"/api/parties/{party['code']}/settings",
+        json={
+            "user_id": leader["id"],
+            "theme": THEMES[1],
+            "difficulty": "hard",
+            "time_limit_seconds": 900,
+            "seed": 222,
+        },
+    )
+    assert updated.status_code == 200
+    payload = updated.get_json()
+    assert payload is not None
+    assert payload["settings"]["theme"] == THEMES[1]
+    assert payload["settings"]["difficulty"] == "hard"
+    assert payload["settings"]["time_limit_seconds"] == 900
+    assert payload["settings"]["seed"] == 222
+
+
+def test_only_party_leader_can_start_match() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    member = client.post(
+        "/api/users",
+        json={"name": "Member", "guest": False, "elo": 1180},
+    ).get_json()
+
+    assert leader is not None and member is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 600,
+            "member_limit": 3,
+            "seed": 45,
+        },
+    ).get_json()
+    assert party is not None
+
+    client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": member["id"]},
+    )
+
+    denied = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": member["id"], "seed": 45},
+    )
+    assert denied.status_code == 400
+    assert denied.get_json() == {"error": "Only the party leader can start the match"}
+
+    started = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 45},
+    )
+    assert started.status_code == 200
 
 
 def test_hint_unlock_sequence_and_submit_flow() -> None:
@@ -216,7 +436,8 @@ def test_hint_unlock_sequence_and_submit_flow() -> None:
     assert party is not None
 
     match = client.post(
-        f"/api/parties/{party['code']}/start", json={"seed": 3}
+        f"/api/parties/{party['code']}/start",
+        json={"seed": 3, "user_id": user["id"]},
     ).get_json()
     assert match is not None
 
@@ -342,7 +563,8 @@ def test_ranked_submit_auto_finishes_and_updates_elo() -> None:
     assert party is not None
 
     match = client.post(
-        f"/api/parties/{party['code']}/start", json={"seed": 21}
+        f"/api/parties/{party['code']}/start",
+        json={"seed": 21, "user_id": user["id"]},
     ).get_json()
     assert match is not None
 
@@ -404,7 +626,8 @@ def test_sqlite_ranked_elo_persists_after_auto_finish(tmp_path: Path) -> None:
     assert party is not None
 
     match = first_client.post(
-        f"/api/parties/{party['code']}/start", json={"seed": 22}
+        f"/api/parties/{party['code']}/start",
+        json={"seed": 22, "user_id": user["id"]},
     ).get_json()
     assert match is not None
 
