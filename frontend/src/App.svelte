@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import hljs from "highlight.js/lib/core";
+  import python from "highlight.js/lib/languages/python";
 
   type UiTheme = "light" | "dark";
   type ThemeSource = "system" | "manual";
@@ -93,45 +95,10 @@
   const FALLBACK_THEME = "String manipulation (unix-like text processing)";
   const INDENT = "    ";
   const LEADERBOARD_LIMIT = 10;
-  const PYTHON_KEYWORDS = [
-    "and",
-    "as",
-    "assert",
-    "async",
-    "await",
-    "break",
-    "continue",
-    "del",
-    "elif",
-    "else",
-    "except",
-    "False",
-    "finally",
-    "for",
-    "from",
-    "global",
-    "if",
-    "import",
-    "in",
-    "is",
-    "lambda",
-    "None",
-    "nonlocal",
-    "not",
-    "or",
-    "pass",
-    "raise",
-    "return",
-    "True",
-    "try",
-    "while",
-    "with",
-    "yield",
-  ];
-  const PYTHON_KEYWORD_PATTERN = new RegExp(
-    `\\b(${PYTHON_KEYWORDS.join("|")})\\b`,
-    "g",
-  );
+
+  if (!hljs.getLanguage("python")) {
+    hljs.registerLanguage("python", python);
+  }
 
   const modeOptions: Mode[] = ["zen", "casual", "ranked"];
   const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
@@ -262,50 +229,15 @@
     }
   }
 
-  function escapeHtml(value: string): string {
-    return value
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-  }
-
   function highlightPython(source: string): string {
-    const literals: string[] = [];
-    let masked = escapeHtml(source).replace(
-      /(#.*$)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')/gm,
-      (segment, commentSegment) => {
-        const className = commentSegment ? "comment" : "string";
-        const index = literals.push(
-          `<span class="token ${className}">${segment}</span>`,
-        );
-        return `@@LITERAL_${index - 1}@@`;
-      },
-    );
+    if (!source) {
+      return "";
+    }
 
-    masked = masked.replace(
-      /\b(def|class)\s+([A-Za-z_]\w*)/g,
-      (_, keyword: string, name: string) =>
-        `@@DEFCLASS_${keyword}_${name}@@`,
-    );
-
-    masked = masked.replace(
-      PYTHON_KEYWORD_PATTERN,
-      '<span class="token keyword">$1</span>',
-    );
-    masked = masked.replace(
-      /\b(\d+(?:\.\d+)?)\b/g,
-      '<span class="token number">$1</span>',
-    );
-
-    masked = masked.replace(
-      /@@DEFCLASS_([A-Za-z_]+)_([A-Za-z_]\w*)@@/g,
-      '<span class="token keyword">$1</span> <span class="token function">$2</span>',
-    );
-
-    return masked.replace(
-      /@@LITERAL_(\d+)@@/g,
-      (_, index: string) => literals[Number(index)] ?? "",
-    );
+    return hljs.highlight(source, {
+      language: "python",
+      ignoreIllegals: true,
+    }).value;
   }
 
   function syncEditorScroll(event: Event): void {
@@ -1344,7 +1276,7 @@
             <div class="editor-container">
               <div class="editor-stack">
                 <pre class="code-highlight" aria-hidden="true" bind:this={highlightEl}
-                  ><code>{@html highlightedCode || " "}</code></pre
+                  ><code class="hljs language-python">{@html highlightedCode || " "}</code></pre
                 >
                 <textarea
                   id="code-editor"
