@@ -485,6 +485,14 @@ select:focus {
   align-items: start;
 }
 
+#settings-view {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
 .test-config {
   background-color: var(--sub-alt-color);
   border-radius: 0.5rem;
@@ -1101,6 +1109,288 @@ select:focus {
   white-space: nowrap;
 }
 
+.settings-sidebar {
+  display: grid;
+}
+
+.settings-nav-card,
+.settings-panel,
+.settings-control-card,
+.settings-preview-card {
+  background: var(--sub-alt-color);
+  border: 1px solid var(--panel-border);
+  border-radius: 1rem;
+  box-shadow: var(--panel-shadow);
+}
+
+.settings-nav-card {
+  position: sticky;
+  top: 1rem;
+  padding: 1.15rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-nav-card h1,
+.settings-title-row h2,
+.settings-panel h3 {
+  margin: 0;
+}
+
+.settings-sidebar-copy,
+.settings-title-copy,
+.settings-helper-copy {
+  margin: 0;
+  color: var(--sub-color);
+  line-height: 1.6;
+}
+
+.settings-summary-list,
+.settings-section-nav,
+.settings-main,
+.settings-panel,
+.settings-profile-grid,
+.settings-stat-grid,
+.settings-mode-grid,
+.settings-editor-grid,
+.settings-system-grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.settings-summary-item,
+.settings-stat-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  background: color-mix(in srgb, var(--bg-color) 72%, var(--sub-alt-color) 28%);
+  border-radius: 0.75rem;
+  padding: 0.85rem 0.95rem;
+}
+
+.settings-summary-item span,
+.settings-stat-card span,
+.settings-panel-note,
+.settings-preview-labels span {
+  color: var(--sub-color);
+  font-size: 0.78rem;
+}
+
+.settings-summary-item strong,
+.settings-stat-card strong,
+.settings-preview-labels strong {
+  color: var(--text-color);
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+.settings-section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.8rem;
+  color: var(--sub-color);
+  text-decoration: none;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.settings-section-link:hover {
+  color: var(--text-color);
+  background: var(--bg-color);
+  transform: translateX(3px);
+}
+
+.settings-main {
+  min-width: 0;
+}
+
+.settings-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.settings-title-row h2 {
+  font-size: clamp(1.9rem, 3vw, 2.7rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.settings-panel {
+  padding: 1.15rem;
+  scroll-margin-top: 1rem;
+}
+
+.settings-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.settings-profile-grid,
+.settings-editor-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+.settings-identity-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--main-color) 18%, transparent),
+    transparent 65%
+  );
+  border-radius: 1rem;
+  padding: 1rem;
+  min-height: 100%;
+}
+
+.settings-avatar {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 1rem;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--main-color) 18%, var(--bg-color) 82%);
+  color: var(--main-color);
+  font-size: 1.45rem;
+  font-weight: 700;
+}
+
+.settings-identity-copy {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.settings-identity-copy strong {
+  font-size: 1rem;
+}
+
+.settings-identity-copy span {
+  color: var(--sub-color);
+  line-height: 1.5;
+}
+
+.settings-stat-grid,
+.settings-system-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.settings-mode-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-mode-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1rem;
+  border-radius: 0.9rem;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg-color) 70%, var(--sub-alt-color) 30%);
+  color: var(--sub-color);
+  font-family: var(--font-family);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+
+.settings-mode-card i {
+  color: var(--main-color);
+  font-size: 1.15rem;
+}
+
+.settings-mode-card strong {
+  color: var(--text-color);
+  font-size: 0.9rem;
+}
+
+.settings-mode-card span {
+  line-height: 1.55;
+  font-size: 0.8rem;
+}
+
+.settings-mode-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--main-color) 35%, transparent);
+}
+
+.settings-mode-card.active {
+  border-color: color-mix(in srgb, var(--main-color) 50%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--main-color) 22%, transparent);
+}
+
+.settings-control-card,
+.settings-preview-card {
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-control-group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-preview-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.settings-code-preview {
+  border-radius: 0.85rem;
+  background: var(--editor-bg);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 65%, transparent);
+  overflow: hidden;
+}
+
+.settings-code-preview pre {
+  margin: 0;
+  padding: 1rem;
+  color: var(--editor-text);
+  font-family: var(--font-family);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-keyword {
+  color: var(--editor-keyword);
+}
+
+.preview-function {
+  color: var(--editor-function);
+}
+
+.preview-string {
+  color: var(--editor-string);
+}
+
+.preview-number {
+  color: var(--editor-number);
+}
+
+.preview-comment {
+  color: var(--editor-comment);
+}
+
 footer {
   margin-top: auto;
   display: flex;
@@ -1147,6 +1437,13 @@ footer a:hover {
     grid-template-columns: 1fr;
   }
 
+  #settings-view,
+  .settings-profile-grid,
+  .settings-editor-grid,
+  .settings-mode-grid {
+    grid-template-columns: 1fr;
+  }
+
   .standing-row {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     row-gap: 0.3rem;
@@ -1154,6 +1451,10 @@ footer a:hover {
 
   .state {
     justify-self: start;
+  }
+
+  .settings-nav-card {
+    position: static;
   }
 }
 
@@ -1192,5 +1493,23 @@ footer a:hover {
   .leaderboard-table-row .leaderboard-cell.percentile,
   .leaderboard-table-row .leaderboard-cell.note {
     display: none;
+  }
+
+  .settings-stat-grid,
+  .settings-system-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-summary-item,
+  .settings-stat-card,
+  .settings-preview-labels,
+  .settings-panel-heading,
+  .settings-title-row {
+    align-items: flex-start;
+  }
+
+  .settings-summary-item,
+  .settings-stat-card {
+    flex-direction: column;
   }
 }

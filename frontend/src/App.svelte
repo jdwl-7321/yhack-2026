@@ -10,7 +10,7 @@
 
   type UiTheme = "light" | "dark";
   type AppearanceMode = UiTheme | "system";
-  type View = "home" | "arena" | "leaderboard";
+  type View = "home" | "arena" | "leaderboard" | "settings";
   type AuthMode = "register" | "login";
   type Mode = "zen" | "casual" | "ranked";
   type Difficulty = "easy" | "medium" | "hard" | "expert";
@@ -204,6 +204,10 @@
   let lineNumbers = "1";
   let editorScrollLeft = 0;
 
+  function userInitial(name: string | undefined): string {
+    return name?.trim().charAt(0).toUpperCase() || "?";
+  }
+
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
       return "fa-trophy";
@@ -383,6 +387,20 @@
     activeView = "leaderboard";
     error = "";
     notice = "";
+  }
+
+  function showSettings(): void {
+    activeView = "settings";
+    error = "";
+    notice = "";
+  }
+
+  function showPlayView(): void {
+    if (match && sessionUser) {
+      showArena();
+      return;
+    }
+    showHome();
   }
 
   function resolveSystemTheme(): UiTheme {
@@ -1111,8 +1129,8 @@
       <button
         type="button"
         class="nav-icon"
-        class:active={activeView !== "leaderboard"}
-        on:click={showHome}
+        class:active={activeView === "home" || activeView === "arena"}
+        on:click={showPlayView}
         title="Play"
       >
         <i class="fas fa-keyboard" aria-hidden="true"></i>
@@ -1128,6 +1146,15 @@
       </button>
       <button type="button" class="nav-icon" title="Info">
         <i class="fas fa-info" aria-hidden="true"></i>
+      </button>
+      <button
+        type="button"
+        class="nav-icon"
+        class:active={activeView === "settings"}
+        on:click={showSettings}
+        title="Settings"
+      >
+        <i class="fas fa-gear" aria-hidden="true"></i>
       </button>
       <button
         type="button"
@@ -1187,9 +1214,6 @@
           </div>
         {/if}
       </div>
-      <button type="button" class="nav-icon" title="Account">
-        <i class="fas fa-user" aria-hidden="true"></i>
-      </button>
     </nav>
   </header>
 
@@ -1482,6 +1506,342 @@
             </div>
           </div>
         {/if}
+      </section>
+    </main>
+  {:else if activeView === "settings"}
+    <main id="settings-view">
+      <aside class="settings-sidebar">
+        <section class="settings-nav-card">
+          <p class="eyebrow">Workspace</p>
+          <h1>Settings</h1>
+          <p class="settings-sidebar-copy">
+            Tune the arena, editor, and account surface so the app matches your
+            workflow.
+          </p>
+
+          <div class="settings-summary-list">
+            <div class="settings-summary-item">
+              <span>Session</span>
+              <strong>{sessionUser ? sessionUser.name : "Guest mode"}</strong>
+            </div>
+            <div class="settings-summary-item">
+              <span>Appearance</span>
+              <strong>{themeStatusText}</strong>
+            </div>
+            <div class="settings-summary-item">
+              <span>Editor theme</span>
+              <strong>{activeEditorThemeName}</strong>
+            </div>
+          </div>
+
+          <nav class="settings-section-nav" aria-label="Settings sections">
+            <a href="#settings-profile" class="settings-section-link">
+              <i class="fas fa-id-badge" aria-hidden="true"></i>
+              <span>Profile</span>
+            </a>
+            <a href="#settings-arena" class="settings-section-link">
+              <i class="fas fa-sliders" aria-hidden="true"></i>
+              <span>Arena Defaults</span>
+            </a>
+            <a href="#settings-editor" class="settings-section-link">
+              <i class="fas fa-palette" aria-hidden="true"></i>
+              <span>Editor Theme</span>
+            </a>
+            <a href="#settings-system" class="settings-section-link">
+              <i class="fas fa-server" aria-hidden="true"></i>
+              <span>System</span>
+            </a>
+          </nav>
+
+          <button type="button" class="btn primary wide" on:click={showPlayView}>
+            Back to Play
+          </button>
+        </section>
+      </aside>
+
+      <section class="settings-main">
+        <div class="settings-title-row">
+          <div>
+            <p class="eyebrow">Configuration</p>
+            <h2>Workspace Control Panel</h2>
+            <p class="settings-title-copy">
+              Inspired by the reference mockup, but rebuilt in Enigma's native
+              terminal-first style.
+            </p>
+          </div>
+          <span class="leaderboard-badge">Local settings</span>
+        </div>
+
+        <section id="settings-profile" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">Profile</p>
+              <h3>Pilot Identity</h3>
+            </div>
+            <span class="settings-panel-note">
+              {sessionUser ? "Connected account" : "Offline preview"}
+            </span>
+          </div>
+
+          <div class="settings-profile-grid">
+            <article class="settings-identity-card">
+              <div class="settings-avatar" aria-hidden="true">
+                {userInitial(sessionUser?.name)}
+              </div>
+              <div class="settings-identity-copy">
+                <strong>{sessionUser?.name ?? "Guest challenger"}</strong>
+                <span>
+                  {sessionUser
+                    ? `Current ladder rating: ${sessionUser.elo} ELO`
+                    : "Sign in to persist ranked progress and match history."}
+                </span>
+              </div>
+            </article>
+
+            <div class="settings-stat-grid">
+              <div class="settings-stat-card">
+                <span>Account state</span>
+                <strong>{sessionUser ? "Authenticated" : "Guest"}</strong>
+              </div>
+              <div class="settings-stat-card">
+                <span>Leaderboard rank</span>
+                <strong>
+                  {leaderboardCurrentUser
+                    ? `#${leaderboardCurrentUser.placement}`
+                    : "Unranked"}
+                </strong>
+              </div>
+              <div class="settings-stat-card">
+                <span>Active match</span>
+                <strong>{match ? match.mode.toUpperCase() : "None"}</strong>
+              </div>
+              <div class="settings-stat-card">
+                <span>Visible themes</span>
+                <strong>{themes.length}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-action-row">
+            {#if sessionUser}
+              <button type="button" class="btn" on:click={logout} disabled={busy}>
+                <i class="fas fa-right-from-bracket" aria-hidden="true"></i>
+                Sign Out
+              </button>
+            {/if}
+            <button
+              type="button"
+              class="btn"
+              on:click={() => void refreshSession()}
+              disabled={busy}
+            >
+              <i class="fas fa-arrows-rotate" aria-hidden="true"></i>
+              Refresh Session
+            </button>
+          </div>
+        </section>
+
+        <section id="settings-arena" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">Arena</p>
+              <h3>Match Defaults</h3>
+            </div>
+            <span class="settings-panel-note">Used the next time you queue</span>
+          </div>
+
+          <div class="settings-mode-grid" role="group" aria-label="Default mode">
+            {#each modeOptions as option}
+              <button
+                type="button"
+                class="settings-mode-card"
+                class:active={mode === option}
+                on:click={() => {
+                  mode = option;
+                }}
+              >
+                <i class={`fas ${raceModeIcon(option)}`} aria-hidden="true"></i>
+                <strong>{option.toUpperCase()}</strong>
+                <span>
+                  {option === "zen"
+                    ? "Solo practice with no pressure."
+                    : option === "casual"
+                      ? "Share a link and customize the room."
+                      : "Backend-governed queue with rating changes."}
+                </span>
+              </button>
+            {/each}
+          </div>
+
+          <div class="field-grid">
+            <label>
+              <span>Difficulty</span>
+              <select bind:value={difficulty}>
+                {#each difficultyOptions as option}
+                  <option value={option}>{option.toUpperCase()}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label>
+              <span>Puzzle Theme</span>
+              <select bind:value={selectedTheme} disabled={mode === "ranked"}>
+                {#each themes as theme}
+                  <option value={theme}>{theme}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label>
+              <span>Timer (seconds)</span>
+              <input
+                type="number"
+                bind:value={timeLimitSeconds}
+                min="60"
+                max="7200"
+                disabled={mode === "ranked"}
+              />
+            </label>
+          </div>
+
+          <p class="settings-helper-copy">
+            Ranked still locks time to 3600 seconds and lets the backend choose
+            the valid puzzle configuration.
+          </p>
+        </section>
+
+        <section id="settings-editor" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">Editor</p>
+              <h3>Appearance & Theme</h3>
+            </div>
+            <span class="settings-panel-note">{themePref} mode live preview</span>
+          </div>
+
+          <div class="settings-editor-grid">
+            <article class="settings-control-card">
+              <div class="settings-control-group">
+                <span class="eyebrow">Appearance mode</span>
+                <div class="segmented">
+                  {#each APPEARANCE_MODE_ORDER as option}
+                    <button
+                      type="button"
+                      class:active={appearanceMode === option}
+                      on:click={() => setAppearanceMode(option)}
+                    >
+                      {option}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <label>
+                <span>{themePref} theme palette</span>
+                <select
+                  value={activeEditorTheme}
+                  on:change={(event) => {
+                    setEditorTheme(
+                      (event.currentTarget as HTMLSelectElement)
+                        .value as BundledTheme,
+                    );
+                  }}
+                >
+                  {#each availableEditorThemes as themeOption}
+                    <option value={themeOption.id}>{themeOption.displayName}</option>
+                  {/each}
+                </select>
+              </label>
+
+              <div class="settings-action-row">
+                <button type="button" class="btn" on:click={cycleAppearanceMode}>
+                  <i class="fas fa-circle-half-stroke" aria-hidden="true"></i>
+                  Cycle Appearance
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={() => {
+                    themeMenuOpen = true;
+                  }}
+                >
+                  <i class="fas fa-swatchbook" aria-hidden="true"></i>
+                  Open Header Palette
+                </button>
+              </div>
+            </article>
+
+            <article class="settings-preview-card">
+              <div class="settings-preview-labels">
+                <span>{themeStatusText}</span>
+                <strong>{activeEditorThemeName}</strong>
+              </div>
+              <div class="settings-code-preview" aria-hidden="true">
+                <pre><span class="preview-keyword">def</span> <span class="preview-function">solve</span>(line):
+    <span class="preview-keyword">return</span> <span class="preview-string">line</span>.strip()[::<span class="preview-number">-1</span>]  <span class="preview-comment"># hidden-rule ready</span></pre>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="settings-system" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">System</p>
+              <h3>Frontend & Backend Snapshot</h3>
+            </div>
+            <span class="settings-panel-note">Quick health checks</span>
+          </div>
+
+          <div class="settings-system-grid">
+            <div class="settings-stat-card">
+              <span>API target</span>
+              <strong>{API_BASE || "Same origin"}</strong>
+            </div>
+            <div class="settings-stat-card">
+              <span>Leaderboard rows</span>
+              <strong>{leaderboard.length}</strong>
+            </div>
+            <div class="settings-stat-card">
+              <span>Current screen</span>
+              <strong>{activeView}</strong>
+            </div>
+            <div class="settings-stat-card">
+              <span>Busy state</span>
+              <strong>{busy ? "Working" : "Idle"}</strong>
+            </div>
+          </div>
+
+          <div class="settings-action-row">
+            <button
+              type="button"
+              class="btn"
+              on:click={() => void loadThemes()}
+              disabled={busy}
+            >
+              <i class="fas fa-brush" aria-hidden="true"></i>
+              Reload Themes
+            </button>
+            <button
+              type="button"
+              class="btn"
+              on:click={() => void loadLeaderboard()}
+              disabled={busy}
+            >
+              <i class="fas fa-ranking-star" aria-hidden="true"></i>
+              Refresh Leaderboard
+            </button>
+            <button
+              type="button"
+              class="btn primary"
+              on:click={launchConfiguredMatch}
+              disabled={!sessionUser || busy}
+            >
+              <i class="fas fa-bolt" aria-hidden="true"></i>
+              Launch With Defaults
+            </button>
+          </div>
+        </section>
       </section>
     </main>
   {:else}
