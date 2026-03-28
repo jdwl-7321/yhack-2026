@@ -3,6 +3,8 @@ from typing import Any
 
 from app import create_app
 from constants import THEMES
+from judge import JudgeResult
+import store as store_module
 from store import MemoryStore, SqliteStore
 
 
@@ -315,3 +317,133 @@ def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
     refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
     assert refreshed_match is not None
     assert len(refreshed_match["sample_tests"]) == 4
+
+
+def test_ranked_submit_auto_finishes_and_updates_elo() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    user = client.post(
+        "/api/users", json={"name": "RankedAda", "guest": False, "elo": 1000}
+    ).get_json()
+    assert user is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": user["id"],
+            "mode": "ranked",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "seed": 21,
+        },
+    ).get_json()
+    assert party is not None
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start", json={"seed": 21}
+    ).get_json()
+    assert match is not None
+
+    def _accepted_submission(
+        code: str, sample_tests: Any, hidden_tests: Any
+    ) -> JudgeResult:
+        return JudgeResult(
+            verdict="accepted",
+            sample_passed=len(sample_tests),
+            sample_total=len(sample_tests),
+            hidden_passed=len(hidden_tests),
+            hidden_total=len(hidden_tests),
+            runtime_ms=1,
+        )
+
+    original_judge_submission = store_module.judge_submission
+    store_module.judge_submission = _accepted_submission
+    try:
+        submit_payload = client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={
+                "user_id": user["id"],
+                "code": "def solution(input_str: str) -> str:\n    return input_str\n",
+            },
+        ).get_json()
+    finally:
+        store_module.judge_submission = original_judge_submission
+
+    assert submit_payload is not None
+    self_row = next(
+        row for row in submit_payload["standings"] if row["user_id"] == user["id"]
+    )
+    assert self_row["rating_delta"] != 0
+    assert self_row["elo"] == 1000 + self_row["rating_delta"]
+
+
+def test_sqlite_ranked_elo_persists_after_auto_finish(tmp_path: Path) -> None:
+    db_path = tmp_path / "ranked.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+
+    user = first_client.post(
+        "/api/users", json={"name": "PersistElo", "guest": False, "elo": 1000}
+    ).get_json()
+    assert user is not None
+
+    party = first_client.post(
+        "/api/parties",
+        json={
+            "leader_id": user["id"],
+            "mode": "ranked",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "seed": 22,
+        },
+    ).get_json()
+    assert party is not None
+
+    match = first_client.post(
+        f"/api/parties/{party['code']}/start", json={"seed": 22}
+    ).get_json()
+    assert match is not None
+
+    def _accepted_submission(
+        code: str, sample_tests: Any, hidden_tests: Any
+    ) -> JudgeResult:
+        return JudgeResult(
+            verdict="accepted",
+            sample_passed=len(sample_tests),
+            sample_total=len(sample_tests),
+            hidden_passed=len(hidden_tests),
+            hidden_total=len(hidden_tests),
+            runtime_ms=1,
+        )
+
+    original_judge_submission = store_module.judge_submission
+    store_module.judge_submission = _accepted_submission
+    try:
+        submit_payload = first_client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={
+                "user_id": user["id"],
+                "code": "def solution(input_str: str) -> str:\n    return input_str\n",
+            },
+        ).get_json()
+    finally:
+        store_module.judge_submission = original_judge_submission
+
+    assert submit_payload is not None
+    updated_elo = next(
+        row["elo"]
+        for row in submit_payload["standings"]
+        if row["user_id"] == user["id"]
+    )
+    assert updated_elo > 1000
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    leaderboard = second_client.get("/api/leaderboard?limit=1").get_json()
+    assert leaderboard is not None
+    assert leaderboard["leaderboard"][0]["name"] == "PersistElo"
+    assert leaderboard["leaderboard"][0]["elo"] == updated_elo

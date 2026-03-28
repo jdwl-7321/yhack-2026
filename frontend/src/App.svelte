@@ -127,7 +127,6 @@
   let leaderboard: LeaderboardEntry[] = [];
   let leaderboardCurrentUser: LeaderboardEntry | null = null;
   let leaderboardTotalPlayers = 0;
-  let leaderboardVisibleRows: LeaderboardEntry[] = [];
   let code = "";
   let hints: string[] = [];
   let testResult: JudgePayload | null = null;
@@ -136,7 +135,6 @@
   let busy = false;
   let error = "";
   let notice = "";
-  let leaderboardFocus: "top" | "around" = "top";
 
   let timerText = "00:00";
   let timeRemaining = 0;
@@ -378,22 +376,6 @@
     leaderboardTotalPlayers = payload.total_players;
   }
 
-  function leaderboardTier(elo: number): string {
-    if (elo >= 1600) {
-      return "Diamond";
-    }
-    if (elo >= 1400) {
-      return "Platinum";
-    }
-    if (elo >= 1200) {
-      return "Gold";
-    }
-    if (elo >= 1050) {
-      return "Silver";
-    }
-    return "Bronze";
-  }
-
   function leaderboardPercentile(placement: number): string {
     if (leaderboardTotalPlayers <= 1) {
       return "Top 100%";
@@ -412,24 +394,6 @@
       return "Leader";
     }
     return "Ranked";
-  }
-
-  function deriveLeaderboardRows(): LeaderboardEntry[] {
-    if (leaderboardFocus === "top" || !leaderboardCurrentUser) {
-      return leaderboard;
-    }
-
-    const currentUser = leaderboardCurrentUser;
-    const centerPlacement = currentUser.placement;
-    const startPlacement = Math.max(1, centerPlacement - 3);
-    const endPlacement = centerPlacement + 3;
-    const rows = leaderboard.filter(
-      (row) => row.placement >= startPlacement && row.placement <= endPlacement,
-    );
-    if (rows.some((row) => row.user_id === currentUser.user_id)) {
-      return rows;
-    }
-    return leaderboard;
   }
 
   function syncSessionElo(currentStandings: Standing[]): void {
@@ -756,7 +720,6 @@
       ? `Following system (${themePref})`
       : `${themePref} override`;
 
-  $: leaderboardVisibleRows = deriveLeaderboardRows();
   $: highlightedCode = highlightPython(code);
 
   onMount(() => {
@@ -1051,28 +1014,9 @@
       <aside class="leaderboard-sidebar">
         <section class="leaderboard-filter-card">
           <p class="eyebrow">Ranked ladder</p>
-          <button
-            type="button"
-            class="leaderboard-filter"
-            class:active={leaderboardFocus === "top"}
-            on:click={() => {
-              leaderboardFocus = "top";
-            }}
-          >
+          <button type="button" class="leaderboard-filter active">
             <i class="fas fa-globe" aria-hidden="true"></i>
             all-time elo
-          </button>
-          <button
-            type="button"
-            class="leaderboard-filter"
-            class:active={leaderboardFocus === "around"}
-            on:click={() => {
-              leaderboardFocus = "around";
-            }}
-            disabled={!leaderboardCurrentUser}
-          >
-            <i class="fas fa-crosshairs" aria-hidden="true"></i>
-            around you
           </button>
         </section>
 
@@ -1091,10 +1035,10 @@
             >
           </div>
           <div class="leaderboard-stat">
-            <span>Your tier</span>
+            <span>Your ELO</span>
             <strong
               >{leaderboardCurrentUser
-                ? leaderboardTier(leaderboardCurrentUser.elo)
+                ? leaderboardCurrentUser.elo
                 : "-"}</strong
             >
           </div>
@@ -1111,17 +1055,13 @@
         </div>
 
         <div class="leaderboard-meta">
-          <span>
-            {leaderboardFocus === "around"
-              ? "Showing players near your current position."
-              : "Showing the top ranked players by ELO."}
-          </span>
+          <span>Showing the top ranked players by ELO.</span>
           <button type="button" class="btn" on:click={() => void loadLeaderboard()}>
             Refresh
           </button>
         </div>
 
-        {#if leaderboardVisibleRows.length === 0}
+        {#if leaderboard.length === 0}
           <section class="leaderboard-empty-state">
             <h2>Leaderboard</h2>
             <p>Registered players will appear here once ranked runs are completed.</p>
@@ -1131,14 +1071,13 @@
             <div class="leaderboard-table leaderboard-table-head" role="presentation">
               <span>#</span>
               <span>player</span>
-              <span>tier</span>
               <span>elo</span>
               <span>percentile</span>
               <span>status</span>
             </div>
 
             <div class="leaderboard-table-body">
-              {#each leaderboardVisibleRows as row}
+              {#each leaderboard as row}
                 <article
                   class="leaderboard-table leaderboard-table-row"
                   class:current={row.user_id === sessionUser?.id}
@@ -1152,7 +1091,6 @@
                   <span class="leaderboard-cell player">
                     <strong>{row.name}</strong>
                   </span>
-                  <span class="leaderboard-cell tier">{leaderboardTier(row.elo)}</span>
                   <span class="leaderboard-cell score">{row.elo}</span>
                   <span class="leaderboard-cell percentile">
                     {leaderboardPercentile(row.placement)}

@@ -255,6 +255,7 @@ class MemoryStore:
             player.solved_at = now
 
         match.submissions.append(result)
+        self._auto_finish_ranked_match(match)
         return result
 
     def test_samples(self, *, match_id: str, user_id: str, code: str) -> JudgeResult:
@@ -328,6 +329,7 @@ class MemoryStore:
         match = self._require_match(match_id)
         player = self._require_player(match, user_id)
         player.forfeited = True
+        self._auto_finish_ranked_match(match)
 
     def finish_match(self, *, match_id: str) -> dict[str, int]:
         match = self._require_match(match_id)
@@ -435,6 +437,17 @@ class MemoryStore:
             code = "".join(random.choice(alphabet) for _ in range(6))
             if code not in self.parties:
                 return code
+
+    def _auto_finish_ranked_match(self, match: Match) -> None:
+        if match.finished or match.mode != "ranked":
+            return
+
+        all_players_done = all(
+            player.forfeited or player.solved_at is not None
+            for player in match.players.values()
+        )
+        if all_players_done:
+            self.finish_match(match_id=match.id)
 
     @staticmethod
     def _normalize_name(name: str) -> str:
