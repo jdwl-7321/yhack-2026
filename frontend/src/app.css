@@ -580,6 +580,18 @@ select:focus {
   min-height: 100%;
 }
 
+.code-highlight .hljs {
+  background: transparent;
+  color: var(--text-color);
+  padding: 0;
+  tab-size: 4;
+}
+
+.code-highlight .hljs * {
+  font-style: normal;
+  font-weight: 400;
+}
+
 #code-editor {
   width: 100%;
   height: 100%;
@@ -598,25 +610,32 @@ select:focus {
   padding: 0.75rem;
   position: relative;
   z-index: 1;
+  tab-size: 4;
 }
 
-.token.keyword {
+.code-highlight .hljs-keyword,
+.code-highlight .hljs-literal,
+.code-highlight .hljs-built_in {
   color: #f7768e;
 }
 
-.token.string {
+.code-highlight .hljs-string,
+.code-highlight .hljs-doctag {
   color: #9ece6a;
 }
 
-.token.comment {
+.code-highlight .hljs-comment,
+.code-highlight .hljs-quote {
   color: #6b7280;
 }
 
-.token.number {
+.code-highlight .hljs-number {
   color: #e0af68;
 }
 
-.token.function {
+.code-highlight .hljs-title,
+.code-highlight .hljs-title.class_,
+.code-highlight .hljs-title.function_ {
   color: #7aa2f7;
 }
 
