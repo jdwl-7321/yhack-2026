@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import os
+from pathlib import Path
 from typing import Any, cast
 
 from flask import Flask, jsonify, request, session
 
 from constants import THEMES
 from puzzle import TestCase, generator_schema
-from store import Match, MemoryStore, Party, User
+from store import Match, MemoryStore, Party, SqliteStore, User
 from domain_types import Difficulty, Mode
 
 SOLUTION_SCAFFOLD = 'def solution(input_str: str) -> str:\n    return ""\n'
+DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
 
 
 def create_app(store: MemoryStore | None = None) -> Flask:
@@ -19,7 +21,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     app.config["SECRET_KEY"] = os.environ.get("YHACK_SECRET_KEY", "dev-secret")
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    data = store or MemoryStore()
+    data = store or SqliteStore(os.environ.get("YHACK_DB_PATH", str(DEFAULT_DB_PATH)))
 
     def session_user_id() -> str:
         value = session.get("user_id")

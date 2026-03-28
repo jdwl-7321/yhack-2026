@@ -18,6 +18,8 @@ uv run yhack-backend
 ```
 
 The API runs on `http://localhost:5000`.
+Auth accounts now persist in SQLite at `backend/data/yhack.sqlite3` by default.
+Override with `YHACK_DB_PATH=/custom/path.sqlite3`.
 
 ### 2) Frontend
 

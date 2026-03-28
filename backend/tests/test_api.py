@@ -1,8 +1,9 @@
+from pathlib import Path
 from typing import Any
 
 from app import create_app
 from constants import THEMES
-from store import MemoryStore
+from store import MemoryStore, SqliteStore
 
 
 def _start_single_player_match(client: Any, *, seed: int = 3) -> tuple[dict, dict]:
@@ -76,6 +77,31 @@ def test_auth_session_register_login_logout() -> None:
     )
     assert login.status_code == 200
     assert client.get("/api/auth/session").get_json()["authenticated"] is True
+
+
+def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+    register = first_client.post(
+        "/api/auth/register",
+        json={"name": "PersistedUser", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    login = second_client.post(
+        "/api/auth/login",
+        json={"name": "PersistedUser", "password": "secret123"},
+    )
+    assert login.status_code == 200
+
+    session_payload = second_client.get("/api/auth/session").get_json()
+    assert session_payload is not None
+    assert session_payload["authenticated"] is True
+    assert session_payload["user"]["name"] == "PersistedUser"
 
 
 def test_create_party_uses_authenticated_session_user() -> None:

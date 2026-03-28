@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import random
+import sqlite3
 import string
 from time import time
 import uuid
@@ -435,3 +437,122 @@ class MemoryStore:
         if player is None:
             raise ValueError("User is not part of this match")
         return player
+
+
+class SqliteStore(MemoryStore):
+    def __init__(self, db_path: str) -> None:
+        super().__init__()
+        sqlite_path = Path(db_path).expanduser().resolve()
+        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(sqlite_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._create_schema()
+        self._load_users()
+
+    def create_user(
+        self,
+        *,
+        name: str,
+        guest: bool,
+        elo: int = 1000,
+        password_hash: str | None = None,
+        normalized_name: str | None = None,
+    ) -> User:
+        user = User(
+            id=f"u_{uuid.uuid4().hex[:8]}",
+            name=name.strip() or "Player",
+            guest=guest,
+            elo=elo,
+            password_hash=password_hash,
+        )
+
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO users (id, name, normalized_name, guest, elo, password_hash)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user.id,
+                    user.name,
+                    normalized_name,
+                    1 if guest else 0,
+                    user.elo,
+                    user.password_hash,
+                ),
+            )
+
+        self.users[user.id] = user
+        if normalized_name is not None:
+            self.user_name_index[normalized_name] = user.id
+        return user
+
+    def register_account(self, *, name: str, password: str) -> User:
+        normalized_name = self._normalize_name(name)
+        if len(password) < 6:
+            raise ValueError("Password must be at least 6 characters")
+
+        try:
+            return self.create_user(
+                name=name,
+                guest=False,
+                elo=1000,
+                password_hash=generate_password_hash(password),
+                normalized_name=normalized_name,
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("Display name is already registered") from None
+
+    def finish_match(self, *, match_id: str) -> dict[str, int]:
+        deltas = super().finish_match(match_id=match_id)
+        if not deltas:
+            return deltas
+
+        with self._conn:
+            self._conn.executemany(
+                "UPDATE users SET elo = ? WHERE id = ?",
+                [
+                    (self.users[user_id].elo, user_id)
+                    for user_id in deltas
+                    if user_id in self.users
+                ],
+            )
+        return deltas
+
+    def _create_schema(self) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    normalized_name TEXT UNIQUE,
+                    guest INTEGER NOT NULL CHECK (guest IN (0, 1)),
+                    elo INTEGER NOT NULL,
+                    password_hash TEXT
+                )
+                """
+            )
+
+    def _load_users(self) -> None:
+        rows = self._conn.execute(
+            "SELECT id, name, normalized_name, guest, elo, password_hash FROM users"
+        ).fetchall()
+
+        for row in rows:
+            user = User(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                guest=bool(row["guest"]),
+                elo=int(row["elo"]),
+                password_hash=(
+                    str(row["password_hash"])
+                    if row["password_hash"] is not None
+                    else None
+                ),
+            )
+            self.users[user.id] = user
+
+            normalized_name = row["normalized_name"]
+            if normalized_name is not None:
+                self.user_name_index[str(normalized_name)] = user.id
