@@ -159,6 +159,14 @@ select:focus {
   gap: 0.4rem;
 }
 
+.auth-switch {
+  margin-bottom: 0.9rem;
+}
+
+.auth-switch button {
+  flex: 1;
+}
+
 button {
   border: 0;
   border-radius: 0;
@@ -176,6 +184,11 @@ button {
   font-size: 0.72rem;
   font-weight: 700;
   padding: 0.45rem 0.65rem;
+}
+
+.wide {
+  width: 100%;
+  margin-top: 0.5rem;
 }
 
 .switch-row button.active,
@@ -417,6 +430,38 @@ pre {
 
 .subtle {
   margin: 0;
+}
+
+.note {
+  margin-top: 0.7rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.session-chip {
+  margin: 0 0 0.55rem;
+  padding: 0.55rem 0.65rem;
+  background: var(--surface-lowest);
+  box-shadow: inset 0 0 0 1px var(--outline-ghost);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.home-state {
+  background: var(--surface-lowest);
+  padding: 1.2rem;
+}
+
+.home-state p {
+  margin: 0.6rem 0;
+  color: var(--text-muted);
+}
+
+.home-state ul {
+  margin: 0.8rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
 }
 
 .hint {
