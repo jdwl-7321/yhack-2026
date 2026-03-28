@@ -12,7 +12,10 @@ from puzzle import TestCase, generator_schema
 from store import Match, MemoryStore, Party, SqliteStore, User
 from domain_types import Difficulty, Mode
 
-SOLUTION_SCAFFOLD = 'def solution(input_str: str) -> str:\n    return ""\n'
+SOLUTION_SCAFFOLD = (
+    "def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:\n"
+    '    return ""\n'
+)
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
 
 

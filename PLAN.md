@@ -24,7 +24,7 @@ Out-of-scope for first release:
    - Sample input/output pair(s)
    - Python editor with scaffolded function signature:
      ```python
-     def solution(input_str: str) -> str:
+     def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
          ...
      ```
 4. On submit:
@@ -94,7 +94,7 @@ Out-of-scope for first release:
 
 ### Judge runtime
 - Use sandbox executor (e.g., snekbox)
-- Load submitted module and call `solution(input_str)` directly (no stdin/stdout contract)
+- Load submitted module and call `solution(input_str, sample_cases)` directly (no stdin/stdout contract)
 - Strict limits:
   - CPU time
   - Memory
@@ -187,14 +187,14 @@ Quality gates:
 ## 7) Submission and judging flow
 
 Player code contract:
-- Submission must define a top-level function `solution(input_str: str) -> str`.
-- Judge passes the full raw input text as a single string argument.
+- Submission must define a top-level function `solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str`.
+- Judge passes the full raw input text as the first argument and visible sample cases as the second argument.
 - Function must return the full output as a single string (not print).
 - Missing function, wrong signature, runtime exception, or non-string return yields a failed verdict.
 
 1. Receive submission and attach to match + user.
 2. Compile/execute in sandbox.
-3. For each test case, invoke `solution(input_str)` and capture returned string output.
+3. For each test case, invoke `solution(input_str, sample_cases)` and capture returned string output.
 4. Run sample tests and return fast failure feedback.
 5. Run hidden tests for final score.
 6. Store detailed result:
@@ -266,7 +266,7 @@ Proposed approach:
   - mode eligibility and fallback logic
   - ranked difficulty assignment from average party ELO
   - hint level penalties on rating gain
-  - `solution(input_str) -> str` validator and error handling
+  - `solution(input_str, sample_cases) -> str` validator and error handling
   - variable schema validator and per-type range parsing
   - variable sampling modes (`uniform`, `weighted`, `fixed_list`)
   - deterministic parameter sampling from seed
@@ -317,7 +317,7 @@ Phase 3 (quality and scale)
 2. Define generator payload/response schema including variable constraints (`name`, `type`, `range`, `sampling`) and novelty controls.
 3. Implement database schema + migrations for core entities, puzzle instances, and novelty pool tracking.
 4. Build judge service abstraction around sandbox execution.
-5. Implement function-contract execution (`solution(input_str) -> str`) and validator errors.
+5. Implement function-contract execution (`solution(input_str, sample_cases) -> str`) and validator errors.
 6. Implement parameter sampling and freeze-per-match puzzle instances.
 7. Implement novelty fingerprint checks with rolling pool + retry budget.
 8. Implement party flow (create/join via share link) and room state updates, including forfeit/quit.
@@ -338,7 +338,7 @@ Phase 3 (quality and scale)
 7. Puzzles are generated on-demand per match.
 8. Theme source is a hardcoded list; Zen/Casual allow selection, Ranked uses random selection.
 9. Ranked theme/difficulty are system-assigned, with difficulty based on average party ELO.
-10. Player submissions must expose `solution(input_str) -> str`; judge invokes this function per test.
+10. Player submissions must expose `solution(input_str, sample_cases) -> str`; judge invokes this function per test.
 11. Puzzle templates may declare typed variables with bounded ranges; match instances sample and freeze values.
 12. Generator enforces novelty using a bounded rolling pool to reduce duplicate puzzles.
 13. Sampled variable values stay hidden during normal play and are revealed in the final hint description.

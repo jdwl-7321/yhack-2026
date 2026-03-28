@@ -42,7 +42,7 @@ def _sample_only_solution(sample_tests: list[dict[str, str]]) -> str:
 
     branch_block = "\n".join(branch_lines)
     return (
-        "def solution(input_str: str) -> str:\n"
+        "def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:\n"
         "    print('trace', len(input_str))\n"
         f"{branch_block}\n"
         "    return ''\n"

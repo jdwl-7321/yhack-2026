@@ -65,11 +65,13 @@ def judge_submission(
     runtime_ms = 0
     stdout_chunks: list[str] = []
     hidden_total = len(hidden_tests) if include_hidden_tests else 0
+    sample_cases = [(case.input_str, case.output_str) for case in sample_tests]
 
     for case_index, case in enumerate(sample_tests, start=1):
         ok, output, error, elapsed_ms, stdout = _run_case(
             code,
             case.input_str,
+            sample_cases,
             timeout_seconds,
         )
         runtime_ms += elapsed_ms
@@ -115,6 +117,7 @@ def judge_submission(
         ok, output, error, elapsed_ms, stdout = _run_case(
             code,
             case.input_str,
+            sample_cases,
             timeout_seconds,
         )
         runtime_ms += elapsed_ms
@@ -167,10 +170,15 @@ def judge_submission(
 def _run_case(
     code: str,
     input_str: str,
+    sample_cases: list[tuple[str, str]],
     timeout_seconds: float,
 ) -> tuple[bool, str, str, int, str]:
     queue: mp.Queue[tuple[str, str, str, int, str]] = mp.Queue(maxsize=1)
-    proc = mp.Process(target=_worker, args=(code, input_str, queue), daemon=True)
+    proc = mp.Process(
+        target=_worker,
+        args=(code, input_str, sample_cases, queue),
+        daemon=True,
+    )
     proc.start()
     proc.join(timeout_seconds)
 
@@ -195,6 +203,7 @@ def _run_case(
 def _worker(
     code: str,
     input_str: str,
+    sample_cases: list[tuple[str, str]],
     queue: mp.Queue[tuple[str, str, str, int, str]],
 ) -> None:
     started = perf_counter()
@@ -207,14 +216,16 @@ def _worker(
 
             solution_candidate = namespace.get("solution")
             if not callable(solution_candidate):
-                raise TypeError("Missing solution(input_str) function")
-            solution = cast(Callable[[str], object], solution_candidate)
+                raise TypeError("Missing solution(input_str, sample_cases) function")
+            solution = cast(
+                Callable[[str, list[tuple[str, str]]], object], solution_candidate
+            )
 
             signature = inspect.signature(solution)
-            if len(signature.parameters) != 1:
-                raise TypeError("solution must take exactly one argument")
+            if len(signature.parameters) != 2:
+                raise TypeError("solution must take exactly two arguments")
 
-            output = solution(input_str)
+            output = solution(input_str, sample_cases)
             if not isinstance(output, str):
                 raise TypeError("solution must return a string")
 

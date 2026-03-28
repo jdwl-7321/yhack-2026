@@ -6,7 +6,7 @@ def test_accepts_valid_solution() -> None:
     sample = [TestCase("1 2 3", "3")]
     hidden = [TestCase("4 5", "2")]
     code = """
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     return str(len(input_str.split()))
 """
 
@@ -23,7 +23,7 @@ def test_rejects_missing_solution_function() -> None:
 
 def test_rejects_non_string_return() -> None:
     code = """
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     return 1
 """
     result = judge_submission(code, [TestCase("x", "x")], [TestCase("y", "y")])
@@ -33,7 +33,7 @@ def solution(input_str: str) -> str:
 
 def test_sample_failure_short_circuits_hidden() -> None:
     code = """
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     return "wrong"
 """
     result = judge_submission(
@@ -47,7 +47,7 @@ def solution(input_str: str) -> str:
 
 def test_allows_stdlib_builtins_and_captures_stdout() -> None:
     code = """
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     print("debug", ord("a"))
     return str(len(input_str.split()))
 """
@@ -58,7 +58,7 @@ def solution(input_str: str) -> str:
 
 def test_test_mode_skips_hidden_suite() -> None:
     code = """
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     return str(len(input_str.split()))
 """
     result = judge_submission(
@@ -74,7 +74,7 @@ def solution(input_str: str) -> str:
 
 def test_returns_first_failed_hidden_test() -> None:
     code = """
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     return "ok"
 """
     result = judge_submission(
@@ -87,3 +87,23 @@ def solution(input_str: str) -> str:
     assert result.first_failed_hidden_test.input_str == "hidden 1"
     assert result.first_failed_hidden_test.expected_output == "bad"
     assert result.first_failed_hidden_test.actual_output == "ok"
+
+
+def test_solution_can_use_visible_samples_to_solve_hidden_cases() -> None:
+    code = """
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
+    source, target = sample_cases[0]
+    shift = (ord(target[0]) - ord(source[0])) % 26
+
+    encoded: list[str] = []
+    for char in input_str:
+        if "a" <= char <= "z":
+            encoded.append(chr((ord(char) - ord("a") + shift) % 26 + ord("a")))
+        else:
+            encoded.append(char)
+    return "".join(encoded)
+"""
+    sample = [TestCase("abc", "def"), TestCase("xyz", "abc")]
+    hidden = [TestCase("cab", "fde")]
+    result = judge_submission(code, sample, hidden)
+    assert result.verdict == "accepted"

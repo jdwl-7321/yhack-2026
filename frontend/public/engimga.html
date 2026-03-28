@@ -447,7 +447,7 @@
                         </div>
                         <div class="io-block">
                             <span class="io-label">Constraint</span>
-                            <span style="color: var(--sub-color);">solution(input_str: str) -> str</span>
+                            <span style="color: var(--sub-color);">solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str</span>
                         </div>
                     </div>
                 </div>
@@ -455,7 +455,7 @@
                 <div class="editor-panel">
                     <div class="editor-container">
 <textarea id="code-editor" spellcheck="false">
-def solution(input_str: str) -> str:
+def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:
     # Your code here
     pass
 </textarea>
@@ -524,7 +524,7 @@ def solution(input_str: str) -> str:
             let modeIcon = mode === 'ranked' ? 'fa-trophy' : (mode === 'casual' ? 'fa-user-friends' : 'fa-mountain');
             document.getElementById('header-mode').innerHTML = `<i class="fas ${modeIcon}"></i> ${mode}`;
             
-            editor.value = "def solution(input_str: str) -> str:\n    # Your code here\n    pass";
+            editor.value = "def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:\n    # Your code here\n    pass";
             consoleEl.innerHTML = '<div class="console-line system">Sandbox environment initialized. Python 3.10.</div><div class="console-line">Waiting for submission...</div>';
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="fas fa-play"></i> Submit';
@@ -566,7 +566,7 @@ def solution(input_str: str) -> str:
             appendConsole("> Executing submission in sandbox...", "system");
 
             setTimeout(() => {
-                if (code.includes('pass') || code.trim() === 'def solution(input_str: str) -> str:') {
+                if (code.includes('pass') || code.trim() === 'def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:') {
                     appendConsole("✗ Sample Tests: 0/2 Passed. Function returned None.", "error");
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = '<i class="fas fa-play"></i> Submit';
