@@ -3,6 +3,61 @@ from constants import THEMES
 from store import MemoryStore
 
 
+def test_auth_session_register_login_logout() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    initial_session = client.get("/api/auth/session").get_json()
+    assert initial_session == {"authenticated": False}
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "Ada", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    after_register = client.get("/api/auth/session").get_json()
+    assert after_register is not None
+    assert after_register["authenticated"] is True
+    assert after_register["user"]["name"] == "Ada"
+
+    logout = client.post("/api/auth/logout")
+    assert logout.status_code == 200
+    assert client.get("/api/auth/session").get_json() == {"authenticated": False}
+
+    login = client.post(
+        "/api/auth/login",
+        json={"name": "Ada", "password": "secret123"},
+    )
+    assert login.status_code == 200
+    assert client.get("/api/auth/session").get_json()["authenticated"] is True
+
+
+def test_create_party_uses_authenticated_session_user() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    user = client.post(
+        "/api/auth/register",
+        json={"name": "Leader", "password": "secret123"},
+    ).get_json()
+    assert user is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "mode": "zen",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "seed": 3,
+        },
+    ).get_json()
+
+    assert party is not None
+    assert party["leader_id"] == user["user"]["id"]
+
+
 def test_ranked_party_falls_back_to_casual_with_guest() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()

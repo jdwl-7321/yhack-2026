@@ -5,6 +5,7 @@ import random
 import string
 from time import time
 import uuid
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from constants import THEMES
 from judge import JudgeResult, judge_submission
@@ -25,6 +26,7 @@ class User:
     name: str
     guest: bool
     elo: int = 1000
+    password_hash: str | None = None
 
 
 @dataclass(slots=True)
@@ -74,18 +76,57 @@ class Match:
 class MemoryStore:
     def __init__(self) -> None:
         self.users: dict[str, User] = {}
+        self.user_name_index: dict[str, str] = {}
         self.parties: dict[str, Party] = {}
         self.matches: dict[str, Match] = {}
         self.novelty_pool = NoveltyPool()
 
-    def create_user(self, *, name: str, guest: bool, elo: int = 1000) -> User:
+    def create_user(
+        self,
+        *,
+        name: str,
+        guest: bool,
+        elo: int = 1000,
+        password_hash: str | None = None,
+    ) -> User:
         user = User(
             id=f"u_{uuid.uuid4().hex[:8]}",
             name=name.strip() or "Player",
             guest=guest,
             elo=elo,
+            password_hash=password_hash,
         )
         self.users[user.id] = user
+        return user
+
+    def register_account(self, *, name: str, password: str) -> User:
+        normalized_name = self._normalize_name(name)
+        if normalized_name in self.user_name_index:
+            raise ValueError("Display name is already registered")
+
+        if len(password) < 6:
+            raise ValueError("Password must be at least 6 characters")
+
+        user = self.create_user(
+            name=name,
+            guest=False,
+            elo=1000,
+            password_hash=generate_password_hash(password),
+        )
+        self.user_name_index[normalized_name] = user.id
+        return user
+
+    def authenticate(self, *, name: str, password: str) -> User:
+        normalized_name = self._normalize_name(name)
+        user_id = self.user_name_index.get(normalized_name)
+        if user_id is None:
+            raise ValueError("Invalid credentials")
+
+        user = self._require_user(user_id)
+        if user.password_hash is None or not check_password_hash(
+            user.password_hash, password
+        ):
+            raise ValueError("Invalid credentials")
         return user
 
     def create_party(
@@ -291,6 +332,15 @@ class MemoryStore:
             code = "".join(random.choice(alphabet) for _ in range(6))
             if code not in self.parties:
                 return code
+
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        normalized = name.strip()
+        if len(normalized) < 3:
+            raise ValueError("Display name must be at least 3 characters")
+        if len(normalized) > 24:
+            raise ValueError("Display name must be 24 characters or less")
+        return normalized.casefold()
 
     def _require_user(self, user_id: str) -> User:
         user = self.users.get(user_id)

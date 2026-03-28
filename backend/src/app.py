@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import os
 from typing import Any, cast
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, session
 
 from constants import THEMES
 from puzzle import generator_schema
@@ -15,13 +16,34 @@ SOLUTION_SCAFFOLD = 'def solution(input_str: str) -> str:\n    return ""\n'
 
 def create_app(store: MemoryStore | None = None) -> Flask:
     app = Flask(__name__)
+    app.config["SECRET_KEY"] = os.environ.get("YHACK_SECRET_KEY", "dev-secret")
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     data = store or MemoryStore()
+
+    def session_user_id() -> str:
+        value = session.get("user_id")
+        if not isinstance(value, str) or not value:
+            raise ValueError("Authentication required")
+        return value
+
+    def payload_user_id(payload: dict[str, Any]) -> str:
+        explicit = payload.get("user_id")
+        if isinstance(explicit, str) and explicit:
+            return explicit
+        return session_user_id()
 
     @app.after_request
     def add_cors_headers(response: Any) -> Any:
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        origin = request.headers.get("Origin")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
 
     @app.errorhandler(ValueError)
@@ -40,6 +62,44 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def schema() -> Any:
         return jsonify(generator_schema())
 
+    @app.route("/api/auth/session", methods=["GET"])
+    def auth_session() -> Any:
+        user_id = session.get("user_id")
+        if not isinstance(user_id, str) or not user_id:
+            return jsonify({"authenticated": False})
+
+        user = data.users.get(user_id)
+        if user is None:
+            session.pop("user_id", None)
+            return jsonify({"authenticated": False})
+
+        return jsonify({"authenticated": True, "user": _user_payload(user)})
+
+    @app.route("/api/auth/register", methods=["POST"])
+    def auth_register() -> Any:
+        payload = request.get_json(silent=True) or {}
+        user = data.register_account(
+            name=str(payload.get("name", "")),
+            password=str(payload.get("password", "")),
+        )
+        session["user_id"] = user.id
+        return jsonify({"user": _user_payload(user)})
+
+    @app.route("/api/auth/login", methods=["POST"])
+    def auth_login() -> Any:
+        payload = request.get_json(silent=True) or {}
+        user = data.authenticate(
+            name=str(payload.get("name", "")),
+            password=str(payload.get("password", "")),
+        )
+        session["user_id"] = user.id
+        return jsonify({"user": _user_payload(user)})
+
+    @app.route("/api/auth/logout", methods=["POST"])
+    def auth_logout() -> Any:
+        session.pop("user_id", None)
+        return jsonify({"ok": True})
+
     @app.route("/api/users", methods=["POST"])
     def create_user() -> Any:
         payload = request.get_json(silent=True) or {}
@@ -56,7 +116,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         mode = _parse_mode(payload.get("mode"))
         difficulty = _parse_difficulty(payload.get("difficulty"))
         party = data.create_party(
-            leader_id=str(payload.get("leader_id", "")),
+            leader_id=str(payload.get("leader_id", "")) or session_user_id(),
             mode=mode,
             theme=str(payload.get("theme", THEMES[0])),
             difficulty=difficulty,
@@ -68,7 +128,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     @app.route("/api/parties/<code>/join", methods=["POST"])
     def join_party(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
-        party = data.join_party(code=code, user_id=str(payload.get("user_id", "")))
+        party = data.join_party(code=code, user_id=payload_user_id(payload))
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/start", methods=["POST"])
@@ -87,7 +147,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         result = data.submit(
             match_id=match_id,
-            user_id=str(payload.get("user_id", "")),
+            user_id=payload_user_id(payload),
             code=str(payload.get("code", "")),
         )
         return jsonify(
@@ -103,7 +163,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         level = int(payload.get("level", 1))
         text = data.request_hint(
             match_id=match_id,
-            user_id=str(payload.get("user_id", "")),
+            user_id=payload_user_id(payload),
             level=level,
         )
         return jsonify({"level": level, "hint": text})
@@ -111,7 +171,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     @app.route("/api/matches/<match_id>/forfeit", methods=["POST"])
     def forfeit(match_id: str) -> Any:
         payload = request.get_json(silent=True) or {}
-        data.forfeit(match_id=match_id, user_id=str(payload.get("user_id", "")))
+        data.forfeit(match_id=match_id, user_id=payload_user_id(payload))
         return jsonify({"standings": data.standings(match_id=match_id)})
 
     @app.route("/api/matches/<match_id>/finish", methods=["POST"])

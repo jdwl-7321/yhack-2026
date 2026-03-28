@@ -2,8 +2,25 @@
   import { onMount, tick } from 'svelte'
 
   type UiTheme = 'light' | 'dark' | 'system'
+  type AuthMode = 'register' | 'login'
   type Mode = 'zen' | 'casual' | 'ranked'
   type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
+
+  type SessionUser = {
+    id: string
+    name: string
+    guest: boolean
+    elo: number
+  }
+
+  type SessionPayload = {
+    authenticated: boolean
+    user?: SessionUser
+  }
+
+  type AuthResponse = {
+    user: SessionUser
+  }
 
   type Standing = {
     placement: number
@@ -50,9 +67,13 @@
   const difficultyOptions: Difficulty[] = ['easy', 'medium', 'hard', 'expert']
   const themeOptions: UiTheme[] = ['light', 'dark', 'system']
 
-  let displayName = 'Player'
-  let isGuest = false
-  let elo = 1000
+  let authMode: AuthMode = 'register'
+  let authName = ''
+  let authPassword = ''
+
+  let sessionUser: SessionUser | null = null
+  let inArena = false
+
   let mode: Mode = 'zen'
   let difficulty: Difficulty = 'easy'
   let selectedTheme = FALLBACK_THEME
@@ -64,7 +85,6 @@
   let mediaListener: (() => void) | null = null
 
   let themes = [FALLBACK_THEME]
-  let userId = ''
   let match: MatchPayload | null = null
   let standings: Standing[] = []
   let code = ''
@@ -174,6 +194,7 @@
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
       ...init,
     })
@@ -194,7 +215,75 @@
     }
   }
 
+  function syncSessionElo(currentStandings: Standing[]): void {
+    if (!sessionUser) {
+      return
+    }
+
+    const self = currentStandings.find((row) => row.user_id === sessionUser?.id)
+    if (self) {
+      sessionUser = { ...sessionUser, elo: self.elo }
+    }
+  }
+
+  async function refreshSession(): Promise<void> {
+    const payload = await api<SessionPayload>('/api/auth/session')
+    if (!payload.authenticated || !payload.user) {
+      sessionUser = null
+      inArena = false
+      return
+    }
+    sessionUser = payload.user
+  }
+
+  async function authenticate(nextMode: AuthMode): Promise<void> {
+    busy = true
+    error = ''
+    notice = ''
+    try {
+      const payload = await api<AuthResponse>(`/api/auth/${nextMode}`, {
+        method: 'POST',
+        body: JSON.stringify({ name: authName, password: authPassword }),
+      })
+      sessionUser = payload.user
+      authPassword = ''
+      notice = nextMode === 'register' ? 'Account created. Session is active.' : 'Signed in.'
+    } catch (err) {
+      error = toErrorMessage(err)
+    } finally {
+      busy = false
+    }
+  }
+
+  async function logout(): Promise<void> {
+    busy = true
+    error = ''
+    notice = ''
+    try {
+      await api<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
+      sessionUser = null
+      inArena = false
+      match = null
+      standings = []
+      submitResult = null
+      hintOne = ''
+      hintTwo = ''
+      code = ''
+      notice = 'Signed out.'
+    } catch (err) {
+      error = toErrorMessage(err)
+    } finally {
+      busy = false
+    }
+  }
+
   async function startMatch(): Promise<void> {
+    if (!sessionUser) {
+      error = 'Sign in to start a match.'
+      inArena = false
+      return
+    }
+
     busy = true
     error = ''
     notice = ''
@@ -202,16 +291,9 @@
     hintOne = ''
     hintTwo = ''
     try {
-      const user = await api<{ id: string }>('/api/users', {
-        method: 'POST',
-        body: JSON.stringify({ name: displayName, guest: isGuest, elo }),
-      })
-      userId = user.id
-
       const party = await api<{ code: string }>('/api/parties', {
         method: 'POST',
         body: JSON.stringify({
-          leader_id: user.id,
           mode,
           theme: selectedTheme,
           difficulty,
@@ -227,7 +309,9 @@
 
       match = payload
       standings = payload.standings
+      syncSessionElo(payload.standings)
       code = payload.scaffold
+      inArena = true
       if (payload.mode !== mode) {
         notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`
       }
@@ -241,7 +325,7 @@
   }
 
   async function submit(): Promise<void> {
-    if (!match || !userId) {
+    if (!match || !sessionUser) {
       return
     }
     busy = true
@@ -249,10 +333,11 @@
     try {
       const payload = await api<SubmitPayload>(`/api/matches/${match.match_id}/submit`, {
         method: 'POST',
-        body: JSON.stringify({ user_id: userId, code }),
+        body: JSON.stringify({ code }),
       })
       submitResult = payload
       standings = payload.standings
+      syncSessionElo(payload.standings)
     } catch (err) {
       error = toErrorMessage(err)
     } finally {
@@ -261,7 +346,7 @@
   }
 
   async function requestHint(level: 1 | 2): Promise<void> {
-    if (!match || !userId) {
+    if (!match || !sessionUser) {
       return
     }
     busy = true
@@ -269,7 +354,7 @@
     try {
       const payload = await api<{ hint: string }>(`/api/matches/${match.match_id}/hint`, {
         method: 'POST',
-        body: JSON.stringify({ user_id: userId, level }),
+        body: JSON.stringify({ level }),
       })
       if (level === 1) {
         hintOne = payload.hint
@@ -284,7 +369,7 @@
   }
 
   async function forfeit(): Promise<void> {
-    if (!match || !userId) {
+    if (!match || !sessionUser) {
       return
     }
     busy = true
@@ -294,10 +379,11 @@
         `/api/matches/${match.match_id}/forfeit`,
         {
           method: 'POST',
-          body: JSON.stringify({ user_id: userId }),
+          body: JSON.stringify({}),
         },
       )
       standings = payload.standings
+      syncSessionElo(payload.standings)
     } catch (err) {
       error = toErrorMessage(err)
     } finally {
@@ -316,6 +402,7 @@
         method: 'POST',
       })
       standings = payload.standings
+      syncSessionElo(payload.standings)
     } catch (err) {
       error = toErrorMessage(err)
     } finally {
@@ -350,6 +437,10 @@
       error = toErrorMessage(err)
     })
 
+    void refreshSession().catch((err) => {
+      error = toErrorMessage(err)
+    })
+
     return () => {
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener('change', mediaListener)
@@ -363,66 +454,140 @@
     <p class="eyebrow">YHACK-2026 / INITIAL PROTOTYPE</p>
     <h1>Infer the rule. Ship the solver.</h1>
     <p class="subtext">
-      Fast end-to-end loop with puzzle generation, hidden judging, hints, party modes, and ranked
-      fallback logic.
+      Home + account session flow for signing in, launching matches, and keeping ranked eligibility
+      tied to logged-in players.
     </p>
   </header>
 
   <main class="layout">
     <section class="panel controls">
-      <h2>Session Control</h2>
+      {#if !sessionUser}
+        <h2>Account</h2>
 
-      <label>
-        <span>Display name</span>
-        <input bind:value={displayName} maxlength="24" />
-      </label>
+        <div class="switch-row auth-switch">
+          <button
+            type="button"
+            class:active={authMode === 'register'}
+            on:click={() => {
+              authMode = 'register'
+              error = ''
+              notice = ''
+            }}
+          >
+            Create account
+          </button>
+          <button
+            type="button"
+            class:active={authMode === 'login'}
+            on:click={() => {
+              authMode = 'login'
+              error = ''
+              notice = ''
+            }}
+          >
+            Sign in
+          </button>
+        </div>
 
-      <label class="inline">
-        <input type="checkbox" bind:checked={isGuest} />
-        <span>Guest account</span>
-      </label>
+        <label>
+          <span>Display name</span>
+          <input bind:value={authName} maxlength="24" autocomplete="username" />
+        </label>
 
-      <label>
-        <span>Player ELO</span>
-        <input type="number" bind:value={elo} min="100" max="3000" />
-      </label>
+        <label>
+          <span>Password</span>
+          <input
+            type="password"
+            bind:value={authPassword}
+            minlength="6"
+            autocomplete={authMode === 'login' ? 'current-password' : 'new-password'}
+          />
+        </label>
 
-      <label>
-        <span>Mode</span>
-        <select bind:value={mode}>
-          {#each modeOptions as option}
-            <option value={option}>{option.toUpperCase()}</option>
-          {/each}
-        </select>
-      </label>
+        <button class="primary" on:click={() => authenticate(authMode)} disabled={busy}>
+          {authMode === 'register' ? 'Create Account' : 'Sign In'}
+        </button>
+        <p class="subtle note">No guest toggle needed. Session auth is now cookie-backed.</p>
+      {:else if !inArena}
+        <h2>Home</h2>
+        <p class="session-chip">Signed in as {sessionUser.name}</p>
+        <p class="mono">Current ELO · {sessionUser.elo}</p>
 
-      <label>
-        <span>Puzzle theme</span>
-        <select bind:value={selectedTheme} disabled={mode === 'ranked'}>
-          {#each themes as theme}
-            <option value={theme}>{theme}</option>
-          {/each}
-        </select>
-      </label>
+        <button
+          class="primary"
+          on:click={() => {
+            inArena = true
+            error = ''
+            notice = ''
+          }}
+          disabled={busy}
+        >
+          Enter Arena
+        </button>
+        <button class="ghost wide" on:click={logout} disabled={busy}>Sign Out</button>
+      {:else}
+        <h2>Match Setup</h2>
+        <p class="session-chip">{sessionUser.name} · ELO {sessionUser.elo}</p>
 
-      <label>
-        <span>Difficulty</span>
-        <select bind:value={difficulty} disabled={mode === 'ranked'}>
-          {#each difficultyOptions as option}
-            <option value={option}>{option.toUpperCase()}</option>
-          {/each}
-        </select>
-      </label>
+        <label>
+          <span>Mode</span>
+          <select bind:value={mode}>
+            {#each modeOptions as option}
+              <option value={option}>{option.toUpperCase()}</option>
+            {/each}
+          </select>
+        </label>
 
-      <label>
-        <span>Time limit (seconds)</span>
-        <input type="number" bind:value={timeLimitSeconds} min="60" max="7200" disabled={mode === 'ranked'} />
-      </label>
+        <label>
+          <span>Puzzle theme</span>
+          <select bind:value={selectedTheme} disabled={mode === 'ranked'}>
+            {#each themes as theme}
+              <option value={theme}>{theme}</option>
+            {/each}
+          </select>
+        </label>
 
-      <label>
-        <span>Seed</span>
-        <input type="number" bind:value={seed} />
-      </label>
+        <label>
+          <span>Difficulty</span>
+          <select bind:value={difficulty} disabled={mode === 'ranked'}>
+            {#each difficultyOptions as option}
+              <option value={option}>{option.toUpperCase()}</option>
+            {/each}
+          </select>
+        </label>
+
+        <label>
+          <span>Time limit (seconds)</span>
+          <input
+            type="number"
+            bind:value={timeLimitSeconds}
+            min="60"
+            max="7200"
+            disabled={mode === 'ranked'}
+          />
+        </label>
+
+        <label>
+          <span>Seed</span>
+          <input type="number" bind:value={seed} />
+        </label>
+
+        <button class="primary" on:click={startMatch} disabled={busy}>
+          {match ? 'Restart Match' : 'Start Match'}
+        </button>
+        <button
+          class="ghost wide"
+          on:click={() => {
+            inArena = false
+            error = ''
+            notice = ''
+          }}
+          disabled={busy}
+        >
+          Back to Home
+        </button>
+        <button class="ghost wide" on:click={logout} disabled={busy}>Sign Out</button>
+      {/if}
 
       <div class="theme-switcher">
         <span>UI Theme</span>
@@ -439,8 +604,6 @@
         </div>
       </div>
 
-      <button class="primary" on:click={startMatch} disabled={busy}>Start Match</button>
-
       {#if notice}
         <p class="notice">{notice}</p>
       {/if}
@@ -450,7 +613,33 @@
     </section>
 
     <section class="panel arena">
-      {#if !match}
+      {#if !sessionUser}
+        <div class="home-state">
+          <h2>Landing</h2>
+          <p>
+            Create an account or sign in to unlock session-backed play. Your identity persists, ranked
+            checks use your real account, and you can launch matches from a clean home page.
+          </p>
+          <ul>
+            <li>Cookie-backed session auth</li>
+            <li>Account create + sign in flow</li>
+            <li>No guest checkbox dead-end</li>
+          </ul>
+        </div>
+      {:else if !inArena}
+        <div class="home-state">
+          <h2>Welcome, {sessionUser.name}</h2>
+          <p>
+            You are signed in and ready. Enter the arena from the left panel when you want to generate
+            a puzzle match.
+          </p>
+          <ul>
+            <li>Current ELO: {sessionUser.elo}</li>
+            <li>Ranked eligibility uses logged-in session</li>
+            <li>Theme and mode controls are in Match Setup</li>
+          </ul>
+        </div>
+      {:else if !match}
         <p class="empty">Start a match to load prompt, samples, and editor scaffold.</p>
       {:else}
         <header class="arena-head">
