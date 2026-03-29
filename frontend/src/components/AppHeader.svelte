@@ -23,11 +23,11 @@
   };
 
   export let activeView: View = "home";
-  export let appearanceMode: AppearanceMode = "dark";
+  export let appearanceMode: AppearanceMode = "light";
   export let themeStatusText = "";
   export let activeEditorThemeName = "";
-  export let themePref: UiTheme = "dark";
-  export let activeEditorTheme: BundledTheme = "catppuccin-mocha";
+  export let themePref: UiTheme = "light";
+  export let activeEditorTheme: BundledTheme = "everforest-light";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
   export let editorFontFamily: EditorFontFamily = "roboto-mono";
   export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];

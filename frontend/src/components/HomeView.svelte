@@ -26,7 +26,6 @@
   export let match: MatchPayload | null = null;
   export let timerText = "00:00";
   export let themes: string[] = [];
-  export let modeOptions: Mode[] = [];
   export let difficultyOptions: Difficulty[] = [];
   export let isPartyMode = false;
   export let isRankedMode = false;
@@ -52,11 +51,18 @@
   export let leaveRankedQueue: () => void | Promise<void> = () => {};
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
   export let resumeRace: () => void | Promise<void> = () => {};
+  export let forfeit: () => void | Promise<void> = () => {};
   export let logout: () => void | Promise<void> = () => {};
   export let normalizePartyCode: (raw: string) => string = (raw) => raw;
 
   $: resumableMatch = match && !match.finished && !match.locked ? match : null;
   $: showMatchSetupFields = !isPartyMode || !!party;
+  $: modeLabel =
+    mode === "zen"
+      ? "ZEN MODE"
+      : mode === "casual"
+        ? "CASUAL PARTY"
+        : "RANKED";
 </script>
 
 <main id="home-view">
@@ -84,8 +90,10 @@
       <button
         type="button"
         class="mode-card"
+        class:active={mode === "zen"}
         on:click={() => startRace("zen")}
         disabled={!sessionUser || busy}
+        aria-pressed={mode === "zen"}
       >
         <i class="fas fa-mountain" aria-hidden="true"></i>
         <h3>Zen Mode</h3>
@@ -95,8 +103,10 @@
       <button
         type="button"
         class="mode-card"
+        class:active={mode === "casual"}
         on:click={() => startRace("casual")}
         disabled={!sessionUser || busy}
+        aria-pressed={mode === "casual"}
       >
         <i class="fas fa-user-friends" aria-hidden="true"></i>
         <h3>Casual Party</h3>
@@ -106,8 +116,10 @@
       <button
         type="button"
         class="mode-card"
+        class:active={mode === "ranked"}
         on:click={() => startRace("ranked")}
         disabled={!sessionUser || busy}
+        aria-pressed={mode === "ranked"}
       >
         <i class="fas fa-trophy" aria-hidden="true"></i>
         <h3>Ranked</h3>
@@ -190,14 +202,10 @@
         >
           <div class="match-setup-panel">
             <div class="field-grid">
-              <label>
+              <div class="field-display">
                 <span>Mode</span>
-                <select bind:value={mode} disabled={!!party || !!rankedQueue || busy}>
-                  {#each modeOptions as option}
-                    <option value={option}>{option.toUpperCase()}</option>
-                  {/each}
-                </select>
-              </label>
+                <div class="field-readout">{modeLabel}</div>
+              </div>
 
               {#if !isRankedMode}
                 {#if showMatchSetupFields}
@@ -413,14 +421,25 @@
             {/if}
           </button>
 
-          <button
-            type="button"
-            class="btn resume"
-            on:click={resumeRace}
-            disabled={!resumableMatch || busy}
-          >
-            Resume Race
-          </button>
+          {#if resumableMatch}
+            <button
+              type="button"
+              class="btn resume"
+              on:click={resumeRace}
+              disabled={busy}
+            >
+              Resume Race
+            </button>
+
+            <button
+              type="button"
+              class="btn forfeit"
+              on:click={forfeit}
+              disabled={busy}
+            >
+              Forfeit Match
+            </button>
+          {/if}
 
           {#if party}
             <button

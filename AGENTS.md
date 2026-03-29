@@ -199,7 +199,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/app.css`
   - Entire app styling and design tokens.
   - Defines theme CSS variables and component layout styles.
-  - Base tokens align with the default global palettes: Catppuccin Mocha for dark and Everforest Light for light.
+  - Base tokens align with the default startup palette: Everforest Light for light mode, with Catppuccin Mocha applied for dark mode.
 
 ### Main SPA orchestrator
 
@@ -215,7 +215,7 @@ Defined in `backend/src/app.py`:
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
-    - appearance persistence with dark-mode startup default, explicit light fallback for system mode, and Catppuccin Mocha / Everforest Light as the default dark/light palettes
+    - appearance persistence with light-mode startup default, explicit light fallback for system mode, and Everforest Light / Catppuccin Mocha as the default light/dark palettes
     - routing between subviews (`home`, `arena`, `leaderboard`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 
@@ -226,8 +226,11 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
-  - Match setup fields are mode-aware: ranked shows only mode selection; casual pre-lobby setup shows mode + party limit; puzzle theme/difficulty/time appear after the lobby exists and are used for each started match.
-  - Ranked setup uses a compact two-column layout with the mode selector in a narrow left column and the queue card beside it.
+  - Mode selection is driven by the large top mode cards; the match setup panel no longer repeats mode selection with a dropdown.
+  - The setup panel still shows the current mode as a read-only field so the layout stays anchored after the dropdown removal.
+  - When an unfinished unlocked match exists, the home action row exposes both resume and forfeit actions so players can leave a match without re-entering the arena first.
+  - Match setup fields are mode-aware: ranked shows queue state only; casual pre-lobby setup shows party limit; puzzle theme/difficulty/time appear after the lobby exists and are used for each started match.
+  - Ranked setup uses a compact two-column layout with the setup panel in a narrow left column and the queue card beside it.
   - Ranked idle guidance is shown in the queue panel status badge instead of the bottom flash notice bar.
   - Casual party leaders get lobby management actions for member limit (match setup updates happen through match start payloads).
   - In casual party mode, setup fields and party lobby render in a two-column layout on desktop, with primary action buttons kept in the bottom action row.

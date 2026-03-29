@@ -78,7 +78,7 @@
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
-  const DEFAULT_APPEARANCE_MODE: AppearanceMode = "dark";
+  const DEFAULT_APPEARANCE_MODE: AppearanceMode = "light";
   const SYSTEM_APPEARANCE_FALLBACK: UiTheme = "light";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "everforest-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "catppuccin-mocha";
@@ -180,7 +180,6 @@
     hljs.registerLanguage("python", python);
   }
 
-  const modeOptions: Mode[] = ["zen", "casual", "ranked"];
   const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
   const AUTO_GENERATED_SHARED_SAMPLE_TEMPLATES = new Set<string>([
     "crypto-shift-inference-v2",
@@ -210,7 +209,7 @@
   let themeStatusText = "";
   let lightEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
   let darkEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
-  let activeEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
+  let activeEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
   let keybindMode: KeybindMode = "normal";
   let vimMode: VimMode = "insert";
   let vimPendingKey = "";
@@ -220,10 +219,10 @@
   let customShortcutError = "";
   let editorFontFamily: EditorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
   let editorFontSize: EditorFontSize = DEFAULT_EDITOR_FONT_SIZE;
-  let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
-    DEFAULT_DARK_EDITOR_THEME;
+  let activeEditorThemeName = themeInfoById.get(DEFAULT_LIGHT_EDITOR_THEME)?.displayName ??
+    DEFAULT_LIGHT_EDITOR_THEME;
   let availableEditorThemes = bundledThemesInfo.filter(
-    (theme) => theme.type === "dark",
+    (theme) => theme.type === "light",
   );
   let themeMenuOpen = false;
   let themeMenuEl: HTMLDivElement | null = null;
@@ -3885,7 +3884,6 @@
       {match}
       {timerText}
       {themes}
-      {modeOptions}
       {difficultyOptions}
       {isPartyMode}
       {isRankedMode}
@@ -3913,6 +3911,7 @@
       leaveRankedQueue={() => leaveRankedQueue(false)}
       {launchConfiguredMatch}
       {resumeRace}
+      {forfeit}
       {logout}
       {normalizePartyCode}
     />
