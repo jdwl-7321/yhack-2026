@@ -32,6 +32,7 @@ class RankedResult:
     hidden_passed: int
     best_score_at: float
     hint_level: int = 0
+    forfeited: bool = False
 
 
 def resolve_mode(requested_mode: Mode, has_guest: bool) -> Mode:
@@ -63,6 +64,8 @@ def ranked_matchmaking_window(wait_seconds: float) -> int:
 
 def order_ranked_results(results: list[RankedResult]) -> list[RankedResult]:
     def key(item: RankedResult) -> tuple[int, float, int, float]:
+        if item.forfeited:
+            return (2, 0.0, 0, 0.0)
         if item.solved_at is not None:
             return (0, item.solved_at, 0, 0.0)
         return (1, 0.0, -item.hidden_passed, item.best_score_at)
