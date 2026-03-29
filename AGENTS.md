@@ -91,7 +91,7 @@ Top-level layout:
 
 - `backend/src/constants.py`
   - Canonical theme catalog (`THEMES`) used by generation and mode logic.
-  - Current themes: `Cryptography`, `Algorithms`, `Numeric`.
+  - Current themes: `Cryptography`, `Algorithms`, `Numeric`, `AI`.
 
 - `backend/src/rating.py`
   - Mode resolution (`ranked` falls back to `casual` if guests exist).
@@ -112,7 +112,7 @@ Top-level layout:
   - `Algorithms` now contains classic algorithm/search/string/data-structure/greedy templates with explicit difficulty assignments covering easy/medium/hard/expert.
   - `Numeric` includes dedicated templates for GCD, LCM, prime checking, hard-mode two-digit number-plus-reversed-number summation, and expert templates for total factor-count summation plus linear `a*x + b` inference.
   - Produces `fingerprint` (template/params context) and `signature` (includes all tests) hashes.
-  - Renders hints with Jinja templates.
+  - Renders prompt and hints with Jinja templates.
   - Builds solution scaffold from contract.
   - Supports hidden-test replacement (`generate_additional_hidden_test`) for promoted failures.
   - Exposes hardcoded template seed metadata (`hardcoded_puzzle_templates`) and targeted generation (`generate_puzzle_from_template`) with prompt/hint values coming directly from puzzle module files.
@@ -123,6 +123,8 @@ Top-level layout:
     - metadata: `template_key`, `theme`, `difficulties`, `prompt`, `hint_level_1`, `hint_level_2`, `hint_level_3`, `contract`
     - runtime hooks: `variable_factory`, `case_factory`, `shared_input_factory`, `expected_output_for_primary_inputs`
   - `backend/src/puzzles/common.py` contains shared helper/validation functions used by puzzle modules.
+  - `backend/src/puzzles/ai_generated_common.py` powers the AI theme runtime: picks a random general subtheme (`Cryptography`/`Numeric`/`Algorithms`), uses a broader set of non-legacy operation families (instead of Caesar/monoalphabetic/LIS-style repeats), optionally calls NOUS (`NOUS_API_KEY`) for prompt/hint/operation copy, validates/falls back safely, and computes deterministic I/O generation for supported operations.
+  - AI theme templates are split per difficulty (`ai_generated_easy_v1_puzzle.py`, `ai_generated_medium_v1_puzzle.py`, `ai_generated_hard_v1_puzzle.py`, `ai_generated_expert_v1_puzzle.py`) and use dynamic typed contracts (`arg1`/return can be `str`, `int`, or `list[int]`) while keeping `solution(arg1, samples)` and auto-built visible sample pairs.
 
 - `backend/src/judge.py`
   - Sandbox-ish execution for user code using a child process per case (`multiprocessing`).
@@ -159,7 +161,8 @@ Top-level layout:
     - Store-layer admin operations are account/match focused; puzzle template source editing is handled through `puzzle.py` source helpers and app routes.
     - Admin user deletion auto-cancels that user's active matches, removes them from parties and ranked queue, and purges name-index/DB rows.
     - Custom sample edits validate argument arity against puzzle contract and recompute expected outputs from the active puzzle template; for templates with shared example inputs, clients may send either primary args only or full invocation args (shared suffix is immutable).
-    - Ranked theme rotation avoids repeats until all themes are used once.
+    - AI matches track per-user recent AI topic keys and retry generation so new AI prompts avoid recently seen topic families.
+    - Ranked theme rotation avoids repeats until all non-AI ranked themes are used once; `AI` is excluded from ranked matchmaking.
 
 ## Backend API Quick Reference
 
@@ -281,6 +284,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/components/AdminView.svelte`
   - Admin dashboard UI for account, puzzle-template, and live-match operations.
   - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match, create/delete puzzle templates, filter/search puzzle templates, collapse/expand template cards, and edit template Python source.
+  - New-template theme selector includes `AI` alongside existing themes.
   - Puzzle template cards keep prompt/hint metadata informational; source code is the only editable template input and uses an embedded CodeMirror Python editor.
 
 - `frontend/src/components/HomeView.svelte`
@@ -332,7 +336,7 @@ Defined in `backend/src/app.py`:
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
 
 - `backend/tests/test_puzzle.py`
-  - Puzzle schema validation, deterministic generation, cryptography template expectations, scaffold typing.
+  - Puzzle schema validation, deterministic generation, cryptography template expectations, scaffold typing, and AI-theme contract/output checks (with NOUS disabled in-test via env).
 
 - `backend/tests/test_rating.py`
   - Difficulty buckets, ranked matchmaking window growth, mode fallback, ordering ties (including forfeits), and hint penalties on rating gains.
@@ -380,6 +384,8 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 - Theme names are validated against `THEMES`; theme/template sync is enforced in `puzzle.py` module initialization.
 - Puzzle module source edits are validated by reloading all `backend/src/puzzles/*_puzzle.py` files; invalid edits fail and are rolled back.
 - Match generation depends entirely on puzzle modules present in `backend/src/puzzles/`; removing all templates for a theme+difficulty in code blocks new matches in that bucket.
+- AI theme match-start calls can include an outbound NOUS request; if `NOUS_API_KEY` is missing/unreachable/invalid payload, generation falls back to built-in AI-theme copy and still produces solvable deterministic cases.
+- AI generation enforces per-user recent-topic avoidance; if you shrink operation diversity too far for a difficulty, AI match start can fail with "Unable to generate a novel AI puzzle topic for these players".
 - Sample editor input in the frontend supports `argN = <json>` lines (and accepts raw JSON-array format); outputs are recomputed server-side from the active puzzle rule.
 - Judge security is constrained but still process-based Python execution; treat sandbox changes as security-sensitive.
 
