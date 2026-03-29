@@ -353,6 +353,17 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         )
         return jsonify({"ok": True})
 
+    @app.route("/api/auth/profile-image", methods=["POST"])
+    def auth_profile_image() -> Any:
+        payload = request.get_json(silent=True) or {}
+        user = data.update_profile_image(
+            user_id=session_user_id(),
+            profile_image_url=_optional_profile_image_url(
+                payload.get("profile_image_url")
+            ),
+        )
+        return jsonify({"user": _user_payload(user)})
+
     @app.route("/api/users", methods=["POST"])
     def create_user() -> Any:
         payload = request.get_json(silent=True) or {}
@@ -883,12 +894,29 @@ def _optional_int(value: object) -> int | None:
     raise ValueError("Expected an integer-like value")
 
 
+def _optional_profile_image_url(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("profile_image_url must be a string")
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 500_000:
+        raise ValueError("profile_image_url is too large")
+    if not normalized.startswith("data:image/") or ";base64," not in normalized:
+        raise ValueError("profile_image_url must be a base64 image data URL")
+    return normalized
+
+
 def _user_payload(user: User) -> dict[str, Any]:
     return {
         "id": user.id,
         "name": user.name,
         "guest": user.guest,
         "elo": user.elo,
+        "profile_image_url": user.profile_image_url,
     }
 
 

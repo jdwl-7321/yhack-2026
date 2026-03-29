@@ -82,7 +82,6 @@
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
-  const PROFILE_IMAGE_STORAGE_PREFIX = "yhack.profile-image";
   const DEFAULT_APPEARANCE_MODE: AppearanceMode = "light";
   const SYSTEM_APPEARANCE_FALLBACK: UiTheme = "light";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "everforest-light";
@@ -311,10 +310,6 @@
     return `${ACTIVE_PARTY_STORAGE_PREFIX}:${userId}`;
   }
 
-  function profileImageStorageKey(userId: string): string {
-    return `${PROFILE_IMAGE_STORAGE_PREFIX}:${userId}`;
-  }
-
   function storedPartyCodeForUser(userId: string): string {
     if (typeof window === "undefined") {
       return "";
@@ -340,11 +335,7 @@
   }
 
   function loadProfileImage(user: SessionUser): void {
-    if (typeof window === "undefined") {
-      profileImageUrl = "";
-      return;
-    }
-    profileImageUrl = localStorage.getItem(profileImageStorageKey(user.id)) ?? "";
+    profileImageUrl = user.profile_image_url ?? "";
   }
 
   function clearProfileImage(): void {
@@ -407,8 +398,13 @@
 
     try {
       const nextProfileImage = await normalizeProfileImage(file);
-      localStorage.setItem(profileImageStorageKey(sessionUser.id), nextProfileImage);
-      profileImageUrl = nextProfileImage;
+      const payload = await api<{ user: SessionUser }>("/api/auth/profile-image", {
+        method: "POST",
+        body: JSON.stringify({ profile_image_url: nextProfileImage }),
+      });
+      sessionUser = payload.user;
+      profileImageUrl = payload.user.profile_image_url ?? "";
+      await loadLeaderboard();
       error = "";
       notice = "Profile photo updated.";
     } catch (err) {
@@ -626,16 +622,6 @@
     }
   }
 
-  function leaderboardProfileImage(userId: string): string {
-    if (userId === sessionUser?.id) {
-      return profileImageUrl;
-    }
-    if (typeof window === "undefined") {
-      return "";
-    }
-    return localStorage.getItem(profileImageStorageKey(userId)) ?? "";
-  }
-
   function leaderboardProfilePreview(entry: LeaderboardEntry) {
     const stats = storedAccountStatsForUser(entry.user_id);
     const solveRate = stats && stats.matchesStarted > 0
@@ -643,7 +629,7 @@
       : "--";
 
     return {
-      imageUrl: leaderboardProfileImage(entry.user_id),
+      imageUrl: entry.profile_image_url ?? "",
       initials: accountInitials(entry.name),
       accountType: entry.guest ? "Guest session" : "Registered account",
       rankLabel: `#${entry.placement}`,
@@ -1997,6 +1983,9 @@
     error = "";
     notice = "";
     accountMenuOpen = false;
+    void loadLeaderboard().catch((err) => {
+      error = toErrorMessage(err);
+    });
   }
 
   function toggleThemeMenu(): void {

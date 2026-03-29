@@ -510,6 +510,44 @@ def test_authenticated_user_can_change_password() -> None:
     assert new_login.status_code == 200
 
 
+def test_profile_image_is_shared_through_session_and_leaderboard() -> None:
+    app = create_app(MemoryStore())
+    owner_client = app.test_client()
+    viewer_client = app.test_client()
+
+    owner_register = owner_client.post(
+        "/api/auth/register",
+        json={"name": "ImageOwner", "password": "secret123"},
+    )
+    viewer_register = viewer_client.post(
+        "/api/auth/register",
+        json={"name": "ImageViewer", "password": "secret123"},
+    )
+    assert owner_register.status_code == 200
+    assert viewer_register.status_code == 200
+
+    profile_image_url = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/"
+    updated = owner_client.post(
+        "/api/auth/profile-image",
+        json={"profile_image_url": profile_image_url},
+    )
+    assert updated.status_code == 200
+    updated_payload = updated.get_json()
+    assert updated_payload is not None
+    assert updated_payload["user"]["profile_image_url"] == profile_image_url
+
+    owner_session = owner_client.get("/api/auth/session").get_json()
+    assert owner_session is not None
+    assert owner_session["user"]["profile_image_url"] == profile_image_url
+
+    leaderboard = viewer_client.get("/api/leaderboard?limit=10").get_json()
+    assert leaderboard is not None
+    owner_entry = next(
+        entry for entry in leaderboard["leaderboard"] if entry["name"] == "ImageOwner"
+    )
+    assert owner_entry["profile_image_url"] == profile_image_url
+
+
 def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     db_path = tmp_path / "auth.sqlite3"
 
@@ -533,6 +571,37 @@ def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     assert session_payload is not None
     assert session_payload["authenticated"] is True
     assert session_payload["user"]["name"] == "PersistedUser"
+
+
+def test_sqlite_profile_image_persists_between_app_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "profile-image.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+    register = first_client.post(
+        "/api/auth/register",
+        json={"name": "AvatarPersist", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    profile_image_url = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/"
+    update_image = first_client.post(
+        "/api/auth/profile-image",
+        json={"profile_image_url": profile_image_url},
+    )
+    assert update_image.status_code == 200
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    login = second_client.post(
+        "/api/auth/login",
+        json={"name": "AvatarPersist", "password": "secret123"},
+    )
+    assert login.status_code == 200
+
+    session_payload = second_client.get("/api/auth/session").get_json()
+    assert session_payload is not None
+    assert session_payload["user"]["profile_image_url"] == profile_image_url
 
 
 def test_sqlite_changed_password_persists_between_app_instances(tmp_path: Path) -> None:

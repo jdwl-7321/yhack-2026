@@ -27,6 +27,7 @@ export type SessionUser = {
   name: string;
   guest: boolean;
   elo: number;
+  profile_image_url: string | null;
 };
 
 export type SessionPayload = {
@@ -58,6 +59,7 @@ export type LeaderboardEntry = {
   name: string;
   elo: number;
   guest: boolean;
+  profile_image_url: string | null;
 };
 
 export type LeaderboardPayload = {

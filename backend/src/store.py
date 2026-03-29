@@ -39,6 +39,7 @@ class User:
     guest: bool
     elo: int = 1000
     password_hash: str | None = None
+    profile_image_url: str | None = None
 
 
 @dataclass(slots=True)
@@ -175,6 +176,16 @@ class MemoryStore:
             raise ValueError("Password must be at least 6 characters")
 
         user.password_hash = generate_password_hash(new_password)
+        return user
+
+    def update_profile_image(
+        self,
+        *,
+        user_id: str,
+        profile_image_url: str | None,
+    ) -> User:
+        user = self._require_user(user_id)
+        user.profile_image_url = profile_image_url
         return user
 
     def create_party(
@@ -757,6 +768,7 @@ class MemoryStore:
                 "name": user.name,
                 "elo": user.elo,
                 "guest": user.guest,
+                "profile_image_url": user.profile_image_url,
             }
             if placement <= limit:
                 top_entries.append(entry)
@@ -1180,6 +1192,7 @@ class SqliteStore(MemoryStore):
         elo: int = 1000,
         password_hash: str | None = None,
         normalized_name: str | None = None,
+        profile_image_url: str | None = None,
     ) -> User:
         user = User(
             id=f"u_{uuid.uuid4().hex[:8]}",
@@ -1187,13 +1200,22 @@ class SqliteStore(MemoryStore):
             guest=guest,
             elo=elo,
             password_hash=password_hash,
+            profile_image_url=profile_image_url,
         )
 
         with self._conn:
             self._conn.execute(
                 """
-                INSERT INTO users (id, name, normalized_name, guest, elo, password_hash)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO users (
+                    id,
+                    name,
+                    normalized_name,
+                    guest,
+                    elo,
+                    password_hash,
+                    profile_image_url
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.id,
@@ -1202,6 +1224,7 @@ class SqliteStore(MemoryStore):
                     1 if guest else 0,
                     user.elo,
                     user.password_hash,
+                    user.profile_image_url,
                 ),
             )
 
@@ -1242,6 +1265,23 @@ class SqliteStore(MemoryStore):
             self._conn.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (user.password_hash, user.id),
+            )
+        return user
+
+    def update_profile_image(
+        self,
+        *,
+        user_id: str,
+        profile_image_url: str | None,
+    ) -> User:
+        user = super().update_profile_image(
+            user_id=user_id,
+            profile_image_url=profile_image_url,
+        )
+        with self._conn:
+            self._conn.execute(
+                "UPDATE users SET profile_image_url = ? WHERE id = ?",
+                (user.profile_image_url, user.id),
             )
         return user
 
@@ -1296,14 +1336,34 @@ class SqliteStore(MemoryStore):
                     normalized_name TEXT UNIQUE,
                     guest INTEGER NOT NULL CHECK (guest IN (0, 1)),
                     elo INTEGER NOT NULL,
-                    password_hash TEXT
+                    password_hash TEXT,
+                    profile_image_url TEXT
                 )
                 """
             )
 
+            columns = {
+                str(row["name"])
+                for row in self._conn.execute("PRAGMA table_info(users)").fetchall()
+            }
+            if "profile_image_url" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE users ADD COLUMN profile_image_url TEXT"
+                )
+
     def _load_users(self) -> None:
         rows = self._conn.execute(
-            "SELECT id, name, normalized_name, guest, elo, password_hash FROM users"
+            """
+            SELECT
+                id,
+                name,
+                normalized_name,
+                guest,
+                elo,
+                password_hash,
+                profile_image_url
+            FROM users
+            """
         ).fetchall()
 
         for row in rows:
@@ -1315,6 +1375,11 @@ class SqliteStore(MemoryStore):
                 password_hash=(
                     str(row["password_hash"])
                     if row["password_hash"] is not None
+                    else None
+                ),
+                profile_image_url=(
+                    str(row["profile_image_url"])
+                    if row["profile_image_url"] is not None
                     else None
                 ),
             )
