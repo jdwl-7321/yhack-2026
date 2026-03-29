@@ -120,7 +120,7 @@
   }
 
   function saveSampleOnBlur(index: number): void {
-    if (busy || !match) {
+    if (busy || actionLocked || !match) {
       return;
     }
 
@@ -134,7 +134,7 @@
   }
 
   async function commitNewSample(): Promise<void> {
-    if (committingNewSample || busy || !match) {
+    if (committingNewSample || busy || actionLocked || !match) {
       return;
     }
 
@@ -291,6 +291,7 @@
                             bind:value={sampleInputDrafts[index]}
                             bind:this={sampleInputEls[index]}
                             spellcheck="false"
+                            readonly={busy || actionLocked}
                             on:input={(event) =>
                               resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
                             on:blur={() => saveSampleOnBlur(index)}
@@ -304,7 +305,7 @@
                             type="button"
                             class="sample-delete-button"
                             on:click={() => void deleteSampleTest(index)}
-                            disabled={busy}
+                            disabled={busy || actionLocked}
                             title="Delete sample"
                           >
                             <i class="fas fa-trash" aria-hidden="true"></i>
@@ -322,6 +323,7 @@
                           bind:value={newSampleInputs}
                           bind:this={newSampleInputEl}
                           spellcheck="false"
+                          readonly={busy || actionLocked}
                           placeholder={newSampleInputPlaceholder}
                           on:input={(event) =>
                             resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
@@ -336,7 +338,7 @@
                           type="button"
                           class="btn sample-add-button"
                           on:click={() => void commitNewSample()}
-                          disabled={busy}
+                          disabled={busy || actionLocked}
                         >
                           Add
                         </button>
@@ -348,7 +350,11 @@
               {#if sharedSampleArgLocked}
                 <p class="sample-lock-note">
                   samples (arg2) is auto-generated from all visible sample input/output pairs.
-                  You can still add, edit, or delete sample rows by changing arg1.
+                  {#if actionLocked}
+                    This arena is read-only, so sample rows cannot be edited.
+                  {:else}
+                    You can still add, edit, or delete sample rows by changing arg1.
+                  {/if}
                 </p>
               {/if}
             </section>
