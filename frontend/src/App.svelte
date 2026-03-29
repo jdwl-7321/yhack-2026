@@ -1767,6 +1767,18 @@
     accountMenuOpen = false;
   }
 
+  function showResults(): void {
+    if (!postMatch) {
+      showHome();
+      return;
+    }
+    activeView = "postmatch";
+    error = "";
+    notice = "";
+    setLiveStatus("Post-match board ready", "ok");
+    accountMenuOpen = false;
+  }
+
   function showArena(): void {
     if (!sessionUser) {
       activeView = "home";
@@ -4019,6 +4031,7 @@
       {handleEditorKeydown}
       {syncEditorScroll}
       {formatRatingDelta}
+      {showResults}
     />
   {/if}
 
