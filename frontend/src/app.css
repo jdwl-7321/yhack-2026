@@ -2241,7 +2241,7 @@ select:focus {
   padding: 1rem;
   color: var(--editor-text);
   font-family: var(--editor-font-family);
-  font-size: 0.88rem;
+  font-size: var(--editor-font-size);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
