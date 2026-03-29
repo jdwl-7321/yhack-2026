@@ -88,9 +88,6 @@
     >
       <i class="fas fa-crown" aria-hidden="true"></i>
     </button>
-    <button type="button" class="nav-icon" title="Info">
-      <i class="fas fa-info" aria-hidden="true"></i>
-    </button>
     <button
       type="button"
       class="nav-icon"
