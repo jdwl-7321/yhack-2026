@@ -1983,6 +1983,10 @@ select:focus {
   text-transform: lowercase;
 }
 
+.leaderboard-table-head span:nth-child(3) {
+  text-align: center;
+}
+
 .leaderboard-table-body {
   display: grid;
   gap: 0.5rem;
@@ -2023,8 +2027,9 @@ select:focus {
 }
 
 .leaderboard-cell.score {
-  text-align: right;
+  text-align: center;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-sidebar {
