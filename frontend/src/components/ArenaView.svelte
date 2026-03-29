@@ -189,13 +189,11 @@
             </div>
 
           <div class="editor-actions">
-            <span class="editor-mode-badge">
-              {keybindMode === "vim"
-                ? "vim package"
-                : keybindMode === "custom"
-                  ? "custom shortcuts"
-                  : "normal shortcuts"}
-            </span>
+            {#if keybindMode === "custom"}
+              <span class="editor-mode-badge">
+                custom shortcuts
+              </span>
+            {/if}
             <button
               type="button"
               class="btn"

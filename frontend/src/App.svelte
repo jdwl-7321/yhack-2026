@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { basicSetup, EditorView } from "codemirror";
+  import { indentLess, insertTab } from "@codemirror/commands";
   import { keymap } from "@codemirror/view";
+  import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
   import { python as cmPython } from "@codemirror/lang-python";
-  import { vim } from "@replit/codemirror-vim";
+  import { tags } from "@lezer/highlight";
+  import { getCM, Vim, vim } from "@replit/codemirror-vim";
   import hljs from "highlight.js/lib/core";
   import python from "highlight.js/lib/languages/python";
   import {
@@ -77,6 +80,49 @@
   const themeInfoById = new Map(
     bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
   );
+  const vimHighlightStyle = HighlightStyle.define([
+    {
+      tag: [
+        tags.keyword,
+        tags.controlKeyword,
+        tags.definitionKeyword,
+        tags.modifier,
+        tags.operatorKeyword,
+      ],
+      color: "var(--editor-keyword)",
+    },
+    {
+      tag: [
+        tags.string,
+        tags.special(tags.string),
+        tags.regexp,
+        tags.character,
+      ],
+      color: "var(--editor-string)",
+    },
+    {
+      tag: [tags.comment, tags.lineComment, tags.blockComment],
+      color: "var(--editor-comment)",
+    },
+    {
+      tag: [
+        tags.number,
+        tags.integer,
+        tags.float,
+        tags.bool,
+        tags.null,
+      ],
+      color: "var(--editor-number)",
+    },
+    {
+      tag: [
+        tags.function(tags.variableName),
+        tags.function(tags.propertyName),
+        tags.labelName,
+      ],
+      color: "var(--editor-function)",
+    },
+  ]);
 
   if (!hljs.getLanguage("python")) {
     hljs.registerLanguage("python", python);
@@ -1724,6 +1770,34 @@
   function createVimActionKeymap() {
     return keymap.of([
       {
+        key: "Tab",
+        run: (view) => {
+          const cm = getCM(view);
+          if (cm?.state.vim?.insertMode) {
+            insertTab(view);
+            return true;
+          }
+          if (cm) {
+            Vim.handleKey(cm, "<Tab>", "user");
+          }
+          return true;
+        },
+      },
+      {
+        key: "Shift-Tab",
+        run: (view) => {
+          const cm = getCM(view);
+          if (cm?.state.vim?.insertMode) {
+            indentLess(view);
+            return true;
+          }
+          if (cm) {
+            Vim.handleKey(cm, "<S-Tab>", "user");
+          }
+          return true;
+        },
+      },
+      {
         key: "Ctrl-Enter",
         run: () => {
           void triggerEditorAction("submit");
@@ -1770,9 +1844,10 @@
     vimEditorView = new EditorView({
       doc: code,
       extensions: [
-        vim(),
+        vim({ status: true }),
         basicSetup,
         cmPython(),
+        syntaxHighlighting(vimHighlightStyle),
         createVimActionKeymap(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -1782,6 +1857,11 @@
       ],
       parent: vimEditorHostEl,
     });
+
+    const cm = getCM(vimEditorView);
+    if (cm) {
+      Vim.setOption("pcre", false, cm);
+    }
   }
 
   function syncVimEditorDoc(): void {
