@@ -402,6 +402,7 @@
     }
 
     postMatch = nextPostMatch;
+    match = null;
     standings = rows;
     clearTimer();
     setLiveStatus("Post-match board ready", "ok");
