@@ -64,6 +64,31 @@ def test_rank_order_tie_breaking() -> None:
     ]
 
 
+def test_forfeited_players_rank_below_non_forfeited() -> None:
+    ranked = order_ranked_results(
+        [
+            RankedResult(
+                "stayed",
+                1000,
+                solved_at=None,
+                hidden_passed=0,
+                best_score_at=15.0,
+                forfeited=False,
+            ),
+            RankedResult(
+                "quit",
+                1000,
+                solved_at=1.0,
+                hidden_passed=10,
+                best_score_at=1.0,
+                forfeited=True,
+            ),
+        ]
+    )
+
+    assert [player.user_id for player in ranked] == ["stayed", "quit"]
+
+
 def test_first_hint_has_no_positive_elo_penalty() -> None:
     baseline = elo_deltas(
         [

@@ -66,6 +66,7 @@
   const LEADERBOARD_LIMIT = 10;
   const PARTY_LIMIT_MIN = 2;
   const PARTY_LIMIT_MAX = 16;
+  const PARTY_TIME_EXTENSION_SECONDS = 300;
   const DEFAULT_PARTY_LIMIT = 4;
   const RANKED_QUEUE_POLL_MS = 3000;
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
@@ -626,6 +627,9 @@
     if (eventName === "settings_updated") {
       setLiveStatus("Host updated party setup", "ok");
     }
+    if (eventName === "time_extended") {
+      setLiveStatus("Host added time to the party", "ok");
+    }
 
     if (nextParty.active_match_id && (!match || match.match_id !== nextParty.active_match_id)) {
       setLiveStatus("Host started the match", "ok");
@@ -680,6 +684,10 @@
     }
     if (eventName === "forfeit") {
       setLiveStatus("A player forfeited", "warn");
+    }
+    if (eventName === "time_extended") {
+      startTimer(remainingSecondsForMatch(nextMatch));
+      setLiveStatus("Party timer extended", "ok");
     }
   }
 
@@ -793,6 +801,7 @@
   let isPartyMode = false;
   let isPartyLeader = false;
   let canEditPartySetup = true;
+  let canAddPartyTime = false;
   let liveStatusText = "Idle";
   let liveStatusTone: LiveStatusTone = "neutral";
 
@@ -2752,6 +2761,12 @@
       joinCodeInput = payload.join_code;
       setLiveStatus("Joined lobby. Waiting for host...", "neutral");
       syncLiveSocket();
+      if (payload.active_match_id) {
+        setLiveStatus("Match already live. Joining now...", "ok");
+        await openMatchFromLobby(payload.active_match_id);
+        notice = `Joined party ${payload.join_code}. Entered active match.`;
+        return;
+      }
       notice = `Joined party ${payload.join_code}.`;
     } catch (err) {
       error = toErrorMessage(err);
@@ -2827,6 +2842,37 @@
       applyParty(payload);
       setLiveStatus("Party setup updated", "ok");
       notice = "Party setup updated.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function addPartyTime(): Promise<void> {
+    if (
+      !party ||
+      !sessionUser ||
+      party.leader_id !== sessionUser.id ||
+      party.mode !== "casual"
+    ) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}/add-time`, {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: sessionUser.id,
+          add_seconds: PARTY_TIME_EXTENSION_SECONDS,
+        }),
+      });
+      applyParty(payload);
+      setLiveStatus("Added 5 minutes for the party", "ok");
+      notice = "Added 5 minutes to the party timer.";
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -3348,6 +3394,15 @@
   $: isRankedMode = mode === "ranked";
   $: isPartyLeader = !!party && !!sessionUser && party.leader_id === sessionUser.id;
   $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
+  $: canAddPartyTime =
+    !!match &&
+    !!party &&
+    !!sessionUser &&
+    !match.finished &&
+    !match.locked &&
+    match.mode === "casual" &&
+    party.mode === "casual" &&
+    party.leader_id === sessionUser.id;
   $: {
     sessionUser;
     party;
@@ -3757,6 +3812,8 @@
       {promoteFailedTest}
       {requestHint}
       {forfeit}
+      {addPartyTime}
+      {canAddPartyTime}
       {testSamples}
       {submit}
       {handleEditorInput}
