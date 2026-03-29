@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import random
 import sqlite3
@@ -40,6 +41,7 @@ class User:
     elo: int = 1000
     password_hash: str | None = None
     profile_image_url: str | None = None
+    recent_ai_topics: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -101,6 +103,7 @@ class RankedQueueEntry:
 
 class MemoryStore:
     _RANKED_QUEUE_STALE_SECONDS = 20.0
+    _AI_TOPIC_QUEUE_LIMIT = 6
 
     def __init__(self) -> None:
         self.users: dict[str, User] = {}
@@ -117,6 +120,7 @@ class MemoryStore:
         guest: bool,
         elo: int = 1000,
         password_hash: str | None = None,
+        recent_ai_topics: list[str] | None = None,
     ) -> User:
         user = User(
             id=f"u_{uuid.uuid4().hex[:8]}",
@@ -124,6 +128,7 @@ class MemoryStore:
             guest=guest,
             elo=elo,
             password_hash=password_hash,
+            recent_ai_topics=list(recent_ai_topics or []),
         )
         self.users[user.id] = user
         return user
@@ -439,6 +444,7 @@ class MemoryStore:
             theme=match_theme,
             difficulty=match_difficulty,
             seed=match_seed,
+            participant_user_ids=[member.id for member in members],
         )
 
         match = Match(
@@ -911,7 +917,12 @@ class MemoryStore:
             raise ValueError("time_limit_seconds must be positive")
 
     def _generate_match_puzzle(
-        self, *, theme: str, difficulty: Difficulty, seed: int
+        self,
+        *,
+        theme: str,
+        difficulty: Difficulty,
+        seed: int,
+        participant_user_ids: list[str] | None = None,
     ) -> PuzzleInstance:
         candidates = [
             template
@@ -924,22 +935,88 @@ class MemoryStore:
             )
 
         selected = random.Random(seed).choice(candidates)
-        return generate_puzzle_from_template(
-            template_key=selected.template_key,
-            theme=selected.theme,
-            difficulty=selected.difficulty,
-            seed=seed,
-            prompt=selected.prompt,
-            hint_level_1=selected.hint_level_1,
-            hint_level_2=selected.hint_level_2,
-            hint_level_3=selected.hint_level_3,
-        )
+
+        if theme != "AI":
+            return generate_puzzle_from_template(
+                template_key=selected.template_key,
+                theme=selected.theme,
+                difficulty=selected.difficulty,
+                seed=seed,
+                prompt=selected.prompt,
+                hint_level_1=selected.hint_level_1,
+                hint_level_2=selected.hint_level_2,
+                hint_level_3=selected.hint_level_3,
+            )
+
+        blocked_topics = self._blocked_ai_topics_for_users(participant_user_ids or [])
+        for attempt in range(20):
+            attempt_seed = seed + (attempt * 7907)
+            puzzle = generate_puzzle_from_template(
+                template_key=selected.template_key,
+                theme=selected.theme,
+                difficulty=selected.difficulty,
+                seed=attempt_seed,
+                prompt=selected.prompt,
+                hint_level_1=selected.hint_level_1,
+                hint_level_2=selected.hint_level_2,
+                hint_level_3=selected.hint_level_3,
+            )
+            topic_key = self._ai_topic_key(puzzle)
+            if topic_key in blocked_topics:
+                continue
+            self._record_ai_topic_for_users(
+                participant_user_ids or [],
+                topic_key=topic_key,
+            )
+            return puzzle
+
+        raise ValueError("Unable to generate a novel AI puzzle topic for these players")
+
+    def _blocked_ai_topics_for_users(self, user_ids: list[str]) -> set[str]:
+        blocked: set[str] = set()
+        for user_id in user_ids:
+            user = self.users.get(user_id)
+            if user is None:
+                continue
+            blocked.update(user.recent_ai_topics)
+        return blocked
+
+    @staticmethod
+    def _ai_topic_key(puzzle: PuzzleInstance) -> str:
+        candidate = puzzle.variables.get("topic_key")
+        if isinstance(candidate, str) and candidate:
+            return candidate
+        fallback = puzzle.variables.get("operation")
+        if isinstance(fallback, str) and fallback:
+            return f"AI:{fallback}"
+        return f"AI:{puzzle.template_key}"
+
+    def _record_ai_topic_for_users(
+        self, user_ids: list[str], *, topic_key: str
+    ) -> None:
+        if not topic_key:
+            return
+
+        for user_id in user_ids:
+            user = self.users.get(user_id)
+            if user is None:
+                continue
+
+            queue = [topic for topic in user.recent_ai_topics if topic != topic_key]
+            queue.append(topic_key)
+            user.recent_ai_topics = queue[-self._AI_TOPIC_QUEUE_LIMIT :]
 
     def _choose_next_ranked_theme(self, *, seed: int | None) -> str:
-        available = [theme for theme in THEMES if theme not in self._ranked_used_themes]
+        ranked_themes = [theme for theme in THEMES if theme != "AI"]
+        available = [
+            theme for theme in ranked_themes if theme not in self._ranked_used_themes
+        ]
         if not available:
             self._ranked_used_themes.clear()
-            available = list(THEMES)
+            available = ranked_themes
+
+        if not available:
+            raise ValueError("No ranked themes are configured")
 
         chooser = random.Random(seed) if seed is not None else random
         chosen = chooser.choice(available)
@@ -1035,6 +1112,7 @@ class MemoryStore:
             theme=theme,
             difficulty=difficulty,
             seed=match_seed,
+            participant_user_ids=[member.id for member in members],
         )
 
         match = Match(
@@ -1193,6 +1271,7 @@ class SqliteStore(MemoryStore):
         password_hash: str | None = None,
         normalized_name: str | None = None,
         profile_image_url: str | None = None,
+        recent_ai_topics: list[str] | None = None,
     ) -> User:
         user = User(
             id=f"u_{uuid.uuid4().hex[:8]}",
@@ -1201,6 +1280,7 @@ class SqliteStore(MemoryStore):
             elo=elo,
             password_hash=password_hash,
             profile_image_url=profile_image_url,
+            recent_ai_topics=list(recent_ai_topics or []),
         )
 
         with self._conn:
@@ -1213,9 +1293,10 @@ class SqliteStore(MemoryStore):
                     guest,
                     elo,
                     password_hash,
-                    profile_image_url
+                    profile_image_url,
+                    recent_ai_topics_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.id,
@@ -1225,6 +1306,7 @@ class SqliteStore(MemoryStore):
                     user.elo,
                     user.password_hash,
                     user.profile_image_url,
+                    json.dumps(user.recent_ai_topics, separators=(",", ":")),
                 ),
             )
 
@@ -1326,6 +1408,33 @@ class SqliteStore(MemoryStore):
             )
         return deltas
 
+    def _record_ai_topic_for_users(
+        self, user_ids: list[str], *, topic_key: str
+    ) -> None:
+        super()._record_ai_topic_for_users(user_ids, topic_key=topic_key)
+        if not user_ids:
+            return
+
+        updates: list[tuple[str, str]] = []
+        for user_id in user_ids:
+            user = self.users.get(user_id)
+            if user is None:
+                continue
+            updates.append(
+                (
+                    json.dumps(user.recent_ai_topics, separators=(",", ":")),
+                    user.id,
+                )
+            )
+        if not updates:
+            return
+
+        with self._conn:
+            self._conn.executemany(
+                "UPDATE users SET recent_ai_topics_json = ? WHERE id = ?",
+                updates,
+            )
+
     def _create_schema(self) -> None:
         with self._conn:
             self._conn.execute(
@@ -1337,7 +1446,8 @@ class SqliteStore(MemoryStore):
                     guest INTEGER NOT NULL CHECK (guest IN (0, 1)),
                     elo INTEGER NOT NULL,
                     password_hash TEXT,
-                    profile_image_url TEXT
+                    profile_image_url TEXT,
+                    recent_ai_topics_json TEXT NOT NULL DEFAULT '[]'
                 )
                 """
             )
@@ -1355,6 +1465,16 @@ class SqliteStore(MemoryStore):
                     if "duplicate column name" not in str(exc).casefold():
                         raise
 
+            if "recent_ai_topics_json" not in columns:
+                try:
+                    self._conn.execute(
+                        "ALTER TABLE users "
+                        "ADD COLUMN recent_ai_topics_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).casefold():
+                        raise
+
     def _load_users(self) -> None:
         rows = self._conn.execute(
             """
@@ -1365,7 +1485,8 @@ class SqliteStore(MemoryStore):
                 guest,
                 elo,
                 password_hash,
-                profile_image_url
+                profile_image_url,
+                recent_ai_topics_json
             FROM users
             """
         ).fetchall()
@@ -1386,9 +1507,34 @@ class SqliteStore(MemoryStore):
                     if row["profile_image_url"] is not None
                     else None
                 ),
+                recent_ai_topics=self._decode_recent_ai_topics(
+                    row["recent_ai_topics_json"]
+                ),
             )
             self.users[user.id] = user
 
             normalized_name = row["normalized_name"]
             if normalized_name is not None:
                 self.user_name_index[str(normalized_name)] = user.id
+
+    @staticmethod
+    def _decode_recent_ai_topics(raw: object) -> list[str]:
+        if not isinstance(raw, str) or not raw:
+            return []
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        topics: list[str] = []
+        for value in parsed:
+            if not isinstance(value, str):
+                continue
+            cleaned = value.strip()
+            if cleaned:
+                topics.append(cleaned)
+        return topics

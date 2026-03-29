@@ -4,6 +4,7 @@ from constants import THEMES
 from domain_types import Difficulty
 from puzzle import (
     PuzzleInstance,
+    expected_output_for_primary_inputs,
     format_value,
     generate_puzzle,
     parse_variable_specs,
@@ -217,8 +218,63 @@ def test_numeric_expert_includes_total_factor_and_linear_templates() -> None:
     }
 
 
+@pytest.mark.parametrize("difficulty", ["easy", "medium", "hard", "expert"])
+def test_ai_theme_covers_all_difficulties(
+    monkeypatch: pytest.MonkeyPatch, difficulty: Difficulty
+) -> None:
+    monkeypatch.delenv("NOUS_API_KEY", raising=False)
+    puzzle = generate_puzzle(theme="AI", difficulty=difficulty, seed=177)
+
+    assert puzzle.theme == "AI"
+    assert puzzle.contract.parameter_types == ("str", "list[tuple[str, str]]")
+    assert puzzle.contract.return_type == "str"
+    assert puzzle.contract.parameter_names == ("arg1", "samples")
+    assert len(puzzle.sample_tests) == 3
+    assert "{{" not in puzzle.prompt
+    assert "{{" not in puzzle.hint_level_1
+    assert "{{" not in puzzle.hint_level_2
+    assert "{{" not in puzzle.hint_level_3
+
+
+def test_ai_theme_case_outputs_match_expected_output_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOUS_API_KEY", raising=False)
+    puzzle = generate_puzzle(theme="AI", difficulty="medium", seed=2026)
+
+    for case in puzzle.sample_tests + puzzle.hidden_tests:
+        expected = expected_output_for_primary_inputs(
+            template_key=puzzle.template_key,
+            variables=puzzle.variables,
+            primary_inputs=list(case.inputs),
+        )
+        assert expected == case.output
+
+
+def test_ai_theme_avoids_legacy_repeated_topics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOUS_API_KEY", raising=False)
+    blocked = {
+        "caesar_shift",
+        "atbash_cipher",
+        "progressive_shift",
+        "longest_non_decreasing_run",
+    }
+
+    seen_operations: set[str] = set()
+    for seed in range(1, 40):
+        puzzle = generate_puzzle(theme="AI", difficulty="hard", seed=seed)
+        operation = puzzle.variables.get("operation")
+        assert isinstance(operation, str)
+        assert operation not in blocked
+        seen_operations.add(operation)
+
+    assert len(seen_operations) >= 3
+
+
 def test_requested_categories_exist_in_theme_catalog() -> None:
-    expected = {"Cryptography", "Algorithms", "Numeric"}
+    expected = {"Cryptography", "Algorithms", "Numeric", "AI"}
     assert expected.issubset(set(THEMES))
 
 

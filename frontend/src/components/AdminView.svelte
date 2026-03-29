@@ -473,6 +473,7 @@
                 <option value="Cryptography">Cryptography</option>
                 <option value="Algorithms">Algorithms</option>
                 <option value="Numeric">Numeric</option>
+                <option value="AI">AI</option>
               </select>
             </label>
             <label class="admin-filter-field">

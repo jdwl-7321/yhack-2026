@@ -347,12 +347,12 @@ def _build_puzzle_instance(
         id=uuid.uuid4().hex[:12],
         theme=theme,
         difficulty=difficulty,
-        prompt=prompt,
+        prompt=_render_text_template(prompt, params),
         sample_tests=sample_tests,
         hidden_tests=hidden_tests,
-        hint_level_1=_render_hint_template(hint_level_1, params),
-        hint_level_2=_render_hint_template(hint_level_2, params),
-        hint_level_3=_render_hint_template(hint_level_3, params),
+        hint_level_1=_render_text_template(hint_level_1, params),
+        hint_level_2=_render_text_template(hint_level_2, params),
+        hint_level_3=_render_text_template(hint_level_3, params),
         variables=params,
         contract=template.contract,
         template_key=template.key,
@@ -783,7 +783,7 @@ def expected_output_for_primary_inputs(
 '''
 
 
-def _render_hint_template(template: str, params: dict[str, JsonScalar]) -> str:
+def _render_text_template(template: str, params: dict[str, JsonScalar]) -> str:
     try:
         return _HINT_TEMPLATE_ENV.from_string(template).render(**params).strip()
     except TemplateError as exc:

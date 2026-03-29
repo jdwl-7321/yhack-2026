@@ -1736,6 +1736,7 @@ def test_caesar_and_substitution_samples_allow_row_edits_but_keep_shared_arg_loc
 
 def test_ranked_theme_rotation_uses_all_themes_before_repeat() -> None:
     data = MemoryStore()
+    ranked_themes = [theme for theme in THEMES if theme != "AI"]
     leader = data.create_user(name="CycleLeader", guest=False, elo=1000)
     party = data.create_party(
         leader_id=leader.id,
@@ -1746,20 +1747,45 @@ def test_ranked_theme_rotation_uses_all_themes_before_repeat() -> None:
     )
 
     seen: list[str] = []
-    for seed in range(1, len(THEMES) + 1):
+    for seed in range(1, len(ranked_themes) + 1):
         match = data.start_match(code=party.code, requester_id=leader.id, seed=seed)
         seen.append(match.theme)
         data.finish_match(match_id=match.id)
 
-    assert len(set(seen)) == len(THEMES)
-    assert set(seen) == set(THEMES)
+    assert len(set(seen)) == len(ranked_themes)
+    assert set(seen) == set(ranked_themes)
+    assert "AI" not in seen
 
     next_match = data.start_match(
         code=party.code,
         requester_id=leader.id,
-        seed=len(THEMES) + 10,
+        seed=len(ranked_themes) + 10,
     )
-    assert next_match.theme in THEMES
+    assert next_match.theme in ranked_themes
+
+
+def test_ai_theme_avoids_recent_topics_for_same_user() -> None:
+    data = MemoryStore()
+    user = data.create_user(name="AIPilot", guest=False, elo=1000)
+    party = data.create_party(
+        leader_id=user.id,
+        mode="zen",
+        theme="AI",
+        difficulty="hard",
+        time_limit_seconds=900,
+    )
+
+    seen_topics: list[str] = []
+    for _index in range(3):
+        match = data.start_match(code=party.code, requester_id=user.id, seed=17)
+        topic = match.puzzle.variables.get("topic_key")
+        assert isinstance(topic, str) and topic
+        assert topic not in seen_topics
+        seen_topics.append(topic)
+        data.finish_match(match_id=match.id)
+
+    refreshed_user = data.users[user.id]
+    assert refreshed_user.recent_ai_topics == seen_topics[-data._AI_TOPIC_QUEUE_LIMIT :]
 
 
 def test_ranked_submit_auto_finishes_and_updates_elo() -> None:
