@@ -424,7 +424,7 @@
                   )}
               />
               <label class="settings-font-size-input">
-                <span>Pixels</span>
+                <span>{editorFontSizeLabel()}</span>
                 <input
                   type="number"
                   min={editorFontSizeMin}
