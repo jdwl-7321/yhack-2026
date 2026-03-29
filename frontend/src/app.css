@@ -2184,6 +2184,8 @@ select:focus {
 
 .leaderboard-cell.player strong {
   display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2193,8 +2195,12 @@ select:focus {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 0.7rem;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  margin-left: -0.22rem;
   outline: none;
   border: 0;
   padding: 0;
@@ -2276,9 +2282,10 @@ select:focus {
 .leaderboard-profile-copy strong {
   color: var(--text-color);
   font-size: 1rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }
 
 .leaderboard-profile-copy small {
