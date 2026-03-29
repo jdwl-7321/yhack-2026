@@ -179,10 +179,18 @@ nav {
 .nav-mode-button {
   gap: 0.45rem;
   height: 2.25rem;
+  width: 6.35rem;
   padding: 0 0.72rem;
   text-transform: capitalize;
   font-family: var(--font-family);
   font-size: 0.8rem;
+  flex: 0 0 auto;
+}
+
+.nav-mode-button span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
 }
 
 .nav-theme-button {
