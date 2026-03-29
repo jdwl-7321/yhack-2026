@@ -6,6 +6,7 @@
     AppearanceMode,
     EditorFontFamily,
     EditorFontSize,
+    KeybindMode,
     SessionUser,
     UiTheme,
     View,
@@ -32,6 +33,7 @@
   export let editorFontFamily: EditorFontFamily = "roboto-mono";
   export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];
   export let editorFontSize: EditorFontSize = 14;
+  export let keybindMode: KeybindMode = "normal";
 
   export let sessionUser: SessionUser | null = null;
   export let accountStats: AccountStats = {
@@ -72,6 +74,7 @@
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
   export let setEditorFontFamily: (family: EditorFontFamily) => void = () => {};
   export let setEditorFontSize: (size: EditorFontSize) => void = () => {};
+  export let setKeybindMode: (mode: KeybindMode) => void = () => {};
   export let resetThemePreferences: () => void = () => {};
   export let accountInitials: (name: string) => string = () => "EN";
   export let formatActivityTime: (timestamp: string) => string = () => "";
@@ -260,6 +263,20 @@
       run: () => setEditorFontSize(size),
     }));
 
+    const editorModeActions: QuickSettingAction[] = [
+      {
+        id: "quick-keybind-vim-toggle",
+        label: keybindMode === "vim" ? "Disable Vim mode" : "Enable Vim mode",
+        description:
+          keybindMode === "vim"
+            ? "Currently using Vim keybinds. Switch back to normal typing."
+            : "Toggle Vim keybinds on for the editor.",
+        icon: "fa-keyboard",
+        keywords: `editor keybind vim modal normal custom ${keybindMode}`,
+        run: () => setKeybindMode(keybindMode === "vim" ? "normal" : "vim"),
+      },
+    ];
+
     const utilityActions: QuickSettingAction[] = [
       {
         id: "quick-reset-theme",
@@ -288,6 +305,7 @@
       ...themeActions,
       ...fontActions,
       ...fontSizeActions,
+      ...editorModeActions,
       ...utilityActions,
     ];
 

@@ -3856,8 +3856,10 @@
     {editorFontFamily}
     {editorFontFamilyOptions}
     {editorFontSize}
+    {keybindMode}
     {setEditorFontFamily}
     {setEditorFontSize}
+    {setKeybindMode}
     {resetThemePreferences}
     {accountInitials}
     {formatActivityTime}
