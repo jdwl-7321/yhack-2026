@@ -124,6 +124,7 @@ export type JudgePayload = {
   stdout: string;
   first_failed_hidden_test: FailedHiddenTest | null;
   sample_tests: Array<{ input: string; output: string }>;
+  finished?: boolean;
   standings: Standing[];
 };
 

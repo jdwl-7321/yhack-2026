@@ -105,7 +105,7 @@ Top-level layout:
   - Important behavior:
     - Parties and matches are in-memory only.
     - Users are persisted in SQLite only when using `SqliteStore`.
-    - Ranked matches auto-finish when all players are solved or forfeited.
+    - Matches in every mode auto-finish when all players are solved or forfeited.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
     - Ranked theme rotation avoids repeats until all themes are used once.
@@ -142,10 +142,10 @@ Defined in `backend/src/app.py`:
 - Match/gameplay:
   - `GET /api/matches/<match_id>`
   - `POST /api/matches/<match_id>/test` (sample tests only)
-  - `POST /api/matches/<match_id>/submit` (sample + hidden)
+  - `POST /api/matches/<match_id>/submit` (sample + hidden; includes `finished` in response)
   - `POST /api/matches/<match_id>/promote-failed-test`
   - `POST /api/matches/<match_id>/hint`
-  - `POST /api/matches/<match_id>/forfeit`
+  - `POST /api/matches/<match_id>/forfeit` (includes `finished` in response)
   - `POST /api/matches/<match_id>/finish`
 
 - WebSocket:

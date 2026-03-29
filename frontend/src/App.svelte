@@ -2627,6 +2627,9 @@
         recordCompletedMatch("solved", payload.standings);
         appendConsole("Match complete. Great run.", "success");
       }
+      if (payload.finished) {
+        showPostMatch("Match complete", payload.standings);
+      }
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Submission failed: ${toErrorMessage(err)}`, "error");
@@ -2747,7 +2750,7 @@
     busy = true;
     error = "";
     try {
-      const payload = await api<{ standings: Standing[] }>(
+      const payload = await api<{ finished: boolean; standings: Standing[] }>(
         `/api/matches/${match.match_id}/forfeit`,
         {
           method: "POST",
@@ -2758,6 +2761,9 @@
       syncSessionElo(payload.standings);
       recordCompletedMatch("forfeit", payload.standings);
       appendConsole("You forfeited the match.", "error");
+      if (payload.finished) {
+        showPostMatch("Match complete", payload.standings);
+      }
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Forfeit failed: ${toErrorMessage(err)}`, "error");

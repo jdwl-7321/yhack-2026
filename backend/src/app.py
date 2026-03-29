@@ -412,13 +412,13 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             user_id=payload_user_id(payload),
             code=str(payload.get("code", "")),
         )
-        publish_match_update(data.get_match(match_id=match_id), event="submission")
+        match = data.get_match(match_id=match_id)
+        publish_match_update(match, event="submission")
         return jsonify(
             {
                 **_judge_result_payload(result),
-                "sample_tests": _sample_tests_payload(
-                    data.get_match(match_id=match_id)
-                ),
+                "sample_tests": _sample_tests_payload(match),
+                "finished": match.finished,
                 "standings": data.standings(match_id=match_id),
             }
         )
@@ -472,8 +472,14 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def forfeit(match_id: str) -> Any:
         payload = request.get_json(silent=True) or {}
         data.forfeit(match_id=match_id, user_id=payload_user_id(payload))
-        publish_match_update(data.get_match(match_id=match_id), event="forfeit")
-        return jsonify({"standings": data.standings(match_id=match_id)})
+        match = data.get_match(match_id=match_id)
+        publish_match_update(match, event="forfeit")
+        return jsonify(
+            {
+                "finished": match.finished,
+                "standings": data.standings(match_id=match_id),
+            }
+        )
 
     @app.route("/api/matches/<match_id>/finish", methods=["POST"])
     def finish(match_id: str) -> Any:

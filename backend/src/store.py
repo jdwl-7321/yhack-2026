@@ -364,7 +364,7 @@ class MemoryStore:
             player.solved_at = now
 
         match.submissions.append(result)
-        self._auto_finish_ranked_match(match)
+        self._auto_finish_match(match)
         return result
 
     def test_samples(self, *, match_id: str, user_id: str, code: str) -> JudgeResult:
@@ -441,7 +441,7 @@ class MemoryStore:
         match = self._require_match(match_id)
         player = self._require_player(match, user_id)
         player.forfeited = True
-        self._auto_finish_ranked_match(match)
+        self._auto_finish_match(match)
 
     def finish_match(self, *, match_id: str) -> dict[str, int]:
         match = self._require_match(match_id)
@@ -580,8 +580,8 @@ class MemoryStore:
         if party.leader_id != leader_id:
             raise ValueError("Only the party leader can do that")
 
-    def _auto_finish_ranked_match(self, match: Match) -> None:
-        if match.finished or match.mode != "ranked":
+    def _auto_finish_match(self, match: Match) -> None:
+        if match.finished:
             return
 
         all_players_done = all(

@@ -65,6 +65,47 @@ def _sample_only_solution(sample_tests: list[dict[str, Any]]) -> str:
     )
 
 
+def _start_two_player_casual_match(
+    client: Any, *, seed: int = 3
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    leader = client.post(
+        "/api/users", json={"name": "LeaderOne", "guest": False}
+    ).get_json()
+    assert leader is not None
+
+    teammate = client.post(
+        "/api/users", json={"name": "TeammateTwo", "guest": False}
+    ).get_json()
+    assert teammate is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "member_limit": 2,
+            "seed": seed,
+        },
+    ).get_json()
+    assert party is not None
+
+    joined = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": teammate["id"]},
+    )
+    assert joined.status_code == 200
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"seed": seed, "user_id": leader["id"]},
+    ).get_json()
+    assert match is not None
+    return leader, teammate, party, match
+
+
 def test_auth_session_register_login_logout() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
@@ -632,6 +673,94 @@ def test_sample_test_endpoint_runs_samples_only_and_returns_stdout() -> None:
     assert submit_run is not None
     assert submit_run["verdict"] == "wrong_answer"
     assert submit_run["first_failed_hidden_test"] is not None
+
+
+def test_casual_match_auto_finishes_when_all_players_solve() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    leader, teammate, party, match = _start_two_player_casual_match(client, seed=31)
+
+    def _accepted_submission(
+        code: str,
+        sample_tests: Any,
+        hidden_tests: Any,
+        contract: Any,
+        shared_inputs: tuple[Any, ...] = (),
+        timeout_seconds: float = 1.0,
+        include_hidden_tests: bool = True,
+    ) -> JudgeResult:
+        hidden_total = len(hidden_tests) if include_hidden_tests else 0
+        return JudgeResult(
+            verdict="accepted",
+            sample_passed=len(sample_tests),
+            sample_total=len(sample_tests),
+            hidden_passed=hidden_total,
+            hidden_total=hidden_total,
+            runtime_ms=1,
+        )
+
+    original_judge_submission = store_module.judge_submission
+    store_module.judge_submission = cast(Any, _accepted_submission)
+    try:
+        first_submit = client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={
+                "user_id": leader["id"],
+                "code": "def solution(arg1):\n    return arg1\n",
+            },
+        ).get_json()
+        second_submit = client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={
+                "user_id": teammate["id"],
+                "code": "def solution(arg1):\n    return arg1\n",
+            },
+        ).get_json()
+    finally:
+        store_module.judge_submission = cast(Any, original_judge_submission)
+
+    assert first_submit is not None
+    assert second_submit is not None
+    assert first_submit["finished"] is False
+    assert second_submit["finished"] is True
+    assert all(row["rating_delta"] == 0 for row in second_submit["standings"])
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["finished"] is True
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}").get_json()
+    assert refreshed_party is not None
+    assert refreshed_party["active_match_finished"] is True
+
+
+def test_casual_match_auto_finishes_when_all_players_forfeit() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    leader, teammate, party, match = _start_two_player_casual_match(client, seed=32)
+
+    first_forfeit = client.post(
+        f"/api/matches/{match['match_id']}/forfeit",
+        json={"user_id": leader["id"]},
+    ).get_json()
+    second_forfeit = client.post(
+        f"/api/matches/{match['match_id']}/forfeit",
+        json={"user_id": teammate["id"]},
+    ).get_json()
+
+    assert first_forfeit is not None
+    assert second_forfeit is not None
+    assert first_forfeit["finished"] is False
+    assert second_forfeit["finished"] is True
+    assert all(row["forfeited"] is True for row in second_forfeit["standings"])
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["finished"] is True
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}").get_json()
+    assert refreshed_party is not None
+    assert refreshed_party["active_match_finished"] is True
 
 
 def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
