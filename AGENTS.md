@@ -59,7 +59,8 @@ Top-level layout:
   - Local dev runner: `uv run flask --app app run --port 5000 --debug`.
 
 - `backend/src/run-gunicorn.sh`
-  - Production-oriented local runner: starts Gunicorn (`gthread`) on `127.0.0.1:6767` by default with env overrides for host/port/workers/threads/timeout.
+  - Production-oriented local runner: starts Gunicorn (`gthread`) on `127.0.0.1:6767` by default with env overrides for host/port/threads/timeout.
+  - Enforces `YHACK_GUNICORN_WORKERS=1` because party/ranked/match state is process-local in memory.
 
 - `backend/src/app.py`
   - Main Flask app wiring (`create_app`, `main`).
@@ -139,6 +140,7 @@ Top-level layout:
   - Important behavior:
     - Parties and matches are in-memory only.
     - Ranked queue entries are in-memory only and expire if the client stops polling for ~20 seconds before a match is found.
+    - Because lobby/queue/match state is in-memory, Gunicorn must run with exactly one worker process.
     - Users (including `profile_image_url`) are persisted in SQLite only when using `SqliteStore`.
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
@@ -342,6 +344,7 @@ Defined in `backend/src/app.py`:
   - Parties, ranked queue entries, matches, submissions, hints, standings, event subscriptions, ranked-theme cycle memory.
 
 Implication: server restart drops active parties/matches but keeps user accounts and ELO if SQLite is used.
+Also, multiple backend worker processes do not share gameplay state, so production should run a single worker unless match/queue persistence is redesigned.
 
 ## Common Task Routing (Where to Edit)
 
@@ -370,6 +373,7 @@ Implication: server restart drops active parties/matches but keeps user accounts
 - `frontend/src/App.svelte` is very large; prefer extracting cohesive logic into utilities/components when editing substantial new behavior.
 - `frontend/public/engimga.html` is not part of active app flow; avoid changing it unless explicitly requested.
 - SPA hosting in Flask depends on `frontend/dist/index.html`; if the build is missing, `/` returns a 404 JSON error (`Frontend build not found`).
+- Multiplayer/ranked state is process-local memory; running Gunicorn with multiple workers causes queue/match desyncs and "Match not found" errors.
 - Theme names are validated against `THEMES`; theme/template sync is enforced in `puzzle.py` module initialization.
 - Puzzle module source edits are validated by reloading all `backend/src/puzzles/*_puzzle.py` files; invalid edits fail and are rolled back.
 - Match generation depends entirely on puzzle modules present in `backend/src/puzzles/`; removing all templates for a theme+difficulty in code blocks new matches in that bucket.
