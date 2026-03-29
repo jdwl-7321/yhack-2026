@@ -193,51 +193,49 @@
             </select>
           </label>
 
-          <label>
-            <span>Puzzle theme</span>
-            <select
-              bind:value={selectedTheme}
-              disabled={mode === "ranked" || !canEditPartySetup || busy}
-            >
-              {#each themes as theme}
-                <option value={theme}>{theme}</option>
-              {/each}
-            </select>
-          </label>
+          {#if !isRankedMode}
+            <label>
+              <span>Puzzle theme</span>
+              <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
+                {#each themes as theme}
+                  <option value={theme}>{theme}</option>
+                {/each}
+              </select>
+            </label>
 
-          <label>
-            <span>Difficulty</span>
-            <select
-              bind:value={difficulty}
-              disabled={mode === "ranked" || !canEditPartySetup || busy}
-            >
-              {#each difficultyOptions as option}
-                <option value={option}>{option.toUpperCase()}</option>
-              {/each}
-            </select>
-          </label>
+            <label>
+              <span>Difficulty</span>
+              <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
+                {#each difficultyOptions as option}
+                  <option value={option}>{option.toUpperCase()}</option>
+                {/each}
+              </select>
+            </label>
 
-          <label>
-            <span>Time (seconds)</span>
-            <input
-              type="number"
-              bind:value={timeLimitSeconds}
-              min="60"
-              max="7200"
-              disabled={mode === "ranked" || !canEditPartySetup || busy}
-            />
-          </label>
+            <label>
+              <span>Time (seconds)</span>
+              <input
+                type="number"
+                bind:value={timeLimitSeconds}
+                min="60"
+                max="7200"
+                disabled={!canEditPartySetup || busy}
+              />
+            </label>
 
-          <label>
-            <span>Party limit</span>
-            <input
-              type="number"
-              bind:value={partyLimit}
-              min={isPartyMode ? partyLimitMin : 1}
-              max={isPartyMode ? partyLimitMax : 1}
-              disabled={!isPartyMode || (!isPartyLeader && !!party) || busy}
-            />
-          </label>
+            {#if isPartyMode}
+              <label>
+                <span>Party limit</span>
+                <input
+                  type="number"
+                  bind:value={partyLimit}
+                  min={partyLimitMin}
+                  max={partyLimitMax}
+                  disabled={(!isPartyLeader && !!party) || busy}
+                />
+              </label>
+            {/if}
+          {/if}
 
         </div>
 

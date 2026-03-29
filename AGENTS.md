@@ -204,6 +204,7 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
+  - Match setup fields are mode-aware: ranked shows only mode selection, and party limit appears only in casual party mode.
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples, hints, failed hidden case promotion, editor, console, standings.
