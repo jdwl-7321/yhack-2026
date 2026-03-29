@@ -31,6 +31,7 @@
     AdminMatch,
     AdminPuzzleTemplate,
     AccountOutcome,
+    AccountPreferences,
     AccountRecentRun,
     AccountStats,
     AppearanceMode,
@@ -73,14 +74,14 @@
   const PARTY_TIME_EXTENSION_SECONDS = 300;
   const DEFAULT_PARTY_LIMIT = 4;
   const RANKED_QUEUE_POLL_MS = 3000;
-  const APPEARANCE_STORAGE_KEY = "yhack.appearance";
-  const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
-  const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
-  const KEYBIND_MODE_STORAGE_KEY = "yhack.keybind-mode";
-  const CUSTOM_SHORTCUTS_STORAGE_KEY = "yhack.custom-shortcuts";
-  const EDITOR_FONT_FAMILY_STORAGE_KEY = "yhack.editor-font-family";
-  const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
-  const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
+  const LEGACY_APPEARANCE_STORAGE_KEY = "yhack.appearance";
+  const LEGACY_LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
+  const LEGACY_DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
+  const LEGACY_KEYBIND_MODE_STORAGE_KEY = "yhack.keybind-mode";
+  const LEGACY_CUSTOM_SHORTCUTS_STORAGE_KEY = "yhack.custom-shortcuts";
+  const LEGACY_EDITOR_FONT_FAMILY_STORAGE_KEY = "yhack.editor-font-family";
+  const LEGACY_EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
+  const LEGACY_ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
   const DEFAULT_APPEARANCE_MODE: AppearanceMode = "light";
   const SYSTEM_APPEARANCE_FALLBACK: UiTheme = "light";
@@ -270,6 +271,10 @@
   let consoleEl: HTMLDivElement | null = null;
   let highlightEl: HTMLPreElement | null = null;
   let accountStats: AccountStats = emptyAccountStats();
+  let accountStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let accountPreferencesDirty = false;
+  let accountStatsDirty = false;
+  let accountStateSyncInFlight = false;
   let accountLeaderboardEntry: LeaderboardEntry | null = null;
   let accountSolveRate: number | null = null;
   let accountRankLabel = "Unranked";
@@ -302,12 +307,24 @@
     };
   }
 
-  function accountStatsStorageKey(userId: string): string {
-    return `${ACCOUNT_STATS_STORAGE_PREFIX}:${userId}`;
+  function emptyAccountPreferences(): AccountPreferences {
+    return {
+      appearanceMode: DEFAULT_APPEARANCE_MODE,
+      lightEditorTheme: DEFAULT_LIGHT_EDITOR_THEME,
+      darkEditorTheme: DEFAULT_DARK_EDITOR_THEME,
+      keybindMode: "normal",
+      customShortcuts: { ...DEFAULT_CUSTOM_SHORTCUTS },
+      editorFontFamily: DEFAULT_EDITOR_FONT_FAMILY,
+      editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
+    };
   }
 
   function activePartyStorageKey(userId: string): string {
     return `${ACTIVE_PARTY_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function legacyAccountStatsStorageKey(userId: string): string {
+    return `${LEGACY_ACCOUNT_STATS_STORAGE_PREFIX}:${userId}`;
   }
 
   function storedPartyCodeForUser(userId: string): string {
@@ -332,6 +349,83 @@
       return;
     }
     localStorage.removeItem(activePartyStorageKey(userId));
+  }
+
+  function isDefaultAccountPreferences(preferences: AccountPreferences): boolean {
+    return JSON.stringify(preferences) === JSON.stringify(emptyAccountPreferences());
+  }
+
+  function isDefaultAccountStats(stats: AccountStats): boolean {
+    return JSON.stringify(stats) === JSON.stringify(emptyAccountStats());
+  }
+
+  function readLegacyAccountPreferencesFromStorage(): AccountPreferences | null {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const rawCustomShortcuts = localStorage.getItem(
+      LEGACY_CUSTOM_SHORTCUTS_STORAGE_KEY,
+    );
+    let customShortcuts: Record<EditorAction, string> = { ...DEFAULT_CUSTOM_SHORTCUTS };
+    if (rawCustomShortcuts) {
+      try {
+        const parsed = JSON.parse(rawCustomShortcuts) as Partial<
+          Record<EditorAction, string>
+        >;
+        customShortcuts = {
+          submit: normalizeShortcutKey(
+            parsed.submit ?? DEFAULT_CUSTOM_SHORTCUTS.submit,
+          ) || DEFAULT_CUSTOM_SHORTCUTS.submit,
+          test: normalizeShortcutKey(parsed.test ?? DEFAULT_CUSTOM_SHORTCUTS.test) ||
+            DEFAULT_CUSTOM_SHORTCUTS.test,
+          hint: normalizeShortcutKey(parsed.hint ?? DEFAULT_CUSTOM_SHORTCUTS.hint) ||
+            DEFAULT_CUSTOM_SHORTCUTS.hint,
+          forfeit: normalizeShortcutKey(
+            parsed.forfeit ?? DEFAULT_CUSTOM_SHORTCUTS.forfeit,
+          ) || DEFAULT_CUSTOM_SHORTCUTS.forfeit,
+        };
+      } catch {
+        customShortcuts = { ...DEFAULT_CUSTOM_SHORTCUTS };
+      }
+    }
+
+    const rawEditorFontSize = localStorage.getItem(
+      LEGACY_EDITOR_FONT_SIZE_STORAGE_KEY,
+    );
+
+    const legacy = normalizeAccountPreferences({
+      appearanceMode: localStorage.getItem(LEGACY_APPEARANCE_STORAGE_KEY),
+      lightEditorTheme: localStorage.getItem(LEGACY_LIGHT_THEME_STORAGE_KEY),
+      darkEditorTheme: localStorage.getItem(LEGACY_DARK_THEME_STORAGE_KEY),
+      keybindMode: localStorage.getItem(LEGACY_KEYBIND_MODE_STORAGE_KEY),
+      customShortcuts,
+      editorFontFamily: localStorage.getItem(LEGACY_EDITOR_FONT_FAMILY_STORAGE_KEY),
+      editorFontSize: rawEditorFontSize !== null ? Number(rawEditorFontSize) : undefined,
+    });
+
+    if (isDefaultAccountPreferences(legacy)) {
+      return null;
+    }
+    return legacy;
+  }
+
+  function readLegacyAccountStatsFromStorage(userId: string): AccountStats | null {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const saved = localStorage.getItem(legacyAccountStatsStorageKey(userId));
+    if (!saved) {
+      return null;
+    }
+
+    try {
+      const stats = normalizeAccountStats(JSON.parse(saved));
+      return isDefaultAccountStats(stats) ? null : stats;
+    } catch {
+      return null;
+    }
   }
 
   function loadProfileImage(user: SessionUser): void {
@@ -476,28 +570,212 @@
     };
   }
 
-  function loadAccountStats(user: SessionUser): void {
-    const saved = localStorage.getItem(accountStatsStorageKey(user.id));
-    if (!saved) {
-      accountStats = emptyAccountStats();
-      return;
+  function normalizeAccountPreferences(raw: unknown): AccountPreferences {
+    const fallback = emptyAccountPreferences();
+    if (!raw || typeof raw !== "object") {
+      return fallback;
     }
 
-    try {
-      accountStats = normalizeAccountStats(JSON.parse(saved));
-    } catch {
-      accountStats = emptyAccountStats();
+    const source = raw as Partial<AccountPreferences>;
+    const lightTheme =
+      typeof source.lightEditorTheme === "string" &&
+        themeInfoById.get(source.lightEditorTheme as BundledTheme)?.type === "light"
+        ? source.lightEditorTheme as BundledTheme
+        : fallback.lightEditorTheme;
+    const darkTheme =
+      typeof source.darkEditorTheme === "string" &&
+        themeInfoById.get(source.darkEditorTheme as BundledTheme)?.type === "dark"
+        ? source.darkEditorTheme as BundledTheme
+        : fallback.darkEditorTheme;
+
+    const keybindMode =
+      source.keybindMode === "normal" ||
+        source.keybindMode === "vim" ||
+        source.keybindMode === "custom"
+        ? source.keybindMode
+        : fallback.keybindMode;
+
+    const rawShortcuts = source.customShortcuts;
+    const normalizedShortcuts = {
+      submit: normalizeShortcutKey(rawShortcuts?.submit ?? fallback.customShortcuts.submit) ||
+        fallback.customShortcuts.submit,
+      test: normalizeShortcutKey(rawShortcuts?.test ?? fallback.customShortcuts.test) ||
+        fallback.customShortcuts.test,
+      hint: normalizeShortcutKey(rawShortcuts?.hint ?? fallback.customShortcuts.hint) ||
+        fallback.customShortcuts.hint,
+      forfeit: normalizeShortcutKey(
+        rawShortcuts?.forfeit ?? fallback.customShortcuts.forfeit,
+      ) || fallback.customShortcuts.forfeit,
+    };
+    if (new Set(Object.values(normalizedShortcuts)).size !== 4) {
+      normalizedShortcuts.submit = fallback.customShortcuts.submit;
+      normalizedShortcuts.test = fallback.customShortcuts.test;
+      normalizedShortcuts.hint = fallback.customShortcuts.hint;
+      normalizedShortcuts.forfeit = fallback.customShortcuts.forfeit;
+    }
+
+    return {
+      appearanceMode:
+        source.appearanceMode === "light" ||
+          source.appearanceMode === "dark" ||
+          source.appearanceMode === "system"
+          ? source.appearanceMode
+          : fallback.appearanceMode,
+      lightEditorTheme: lightTheme,
+      darkEditorTheme: darkTheme,
+      keybindMode,
+      customShortcuts: normalizedShortcuts,
+      editorFontFamily:
+        source.editorFontFamily === "roboto-mono" ||
+          source.editorFontFamily === "fira-code" ||
+          source.editorFontFamily === "jetbrains-mono" ||
+          source.editorFontFamily === "source-code-pro" ||
+          source.editorFontFamily === "ibm-plex-mono"
+          ? source.editorFontFamily
+          : fallback.editorFontFamily,
+      editorFontSize:
+        typeof source.editorFontSize === "number"
+          ? clampEditorFontSize(source.editorFontSize)
+          : fallback.editorFontSize,
+    };
+  }
+
+  function accountPreferencesPayload(): AccountPreferences {
+    return {
+      appearanceMode,
+      lightEditorTheme,
+      darkEditorTheme,
+      keybindMode,
+      customShortcuts: { ...customShortcuts },
+      editorFontFamily,
+      editorFontSize: clampEditorFontSize(editorFontSize),
+    };
+  }
+
+  function applyAccountPreferences(preferences: AccountPreferences): void {
+    appearanceMode = preferences.appearanceMode;
+    lightEditorTheme = preferences.lightEditorTheme as BundledTheme;
+    darkEditorTheme = preferences.darkEditorTheme as BundledTheme;
+    keybindMode = preferences.keybindMode;
+    customShortcuts = { ...preferences.customShortcuts };
+    customShortcutError = "";
+    editorFontFamily = preferences.editorFontFamily;
+    editorFontSize = clampEditorFontSize(preferences.editorFontSize);
+    applyEditorTypography();
+    syncThemeState();
+  }
+
+  function loadAccountState(user: SessionUser): void {
+    let nextPreferences = normalizeAccountPreferences(user.account_preferences);
+    let nextStats = normalizeAccountStats(user.account_stats);
+
+    const legacyPreferences = readLegacyAccountPreferencesFromStorage();
+    const legacyStats = readLegacyAccountStatsFromStorage(user.id);
+    const shouldMigratePreferences =
+      !!legacyPreferences && isDefaultAccountPreferences(nextPreferences);
+    const shouldMigrateStats = !!legacyStats && isDefaultAccountStats(nextStats);
+
+    if (shouldMigratePreferences && legacyPreferences) {
+      nextPreferences = legacyPreferences;
+    }
+    if (shouldMigrateStats && legacyStats) {
+      nextStats = legacyStats;
+    }
+
+    applyAccountPreferences(nextPreferences);
+    accountStats = nextStats;
+    accountPreferencesDirty = false;
+    accountStatsDirty = false;
+
+    if (shouldMigratePreferences || shouldMigrateStats) {
+      queueAccountStateSave({
+        preferences: shouldMigratePreferences,
+        stats: shouldMigrateStats,
+      });
     }
   }
 
-  function persistAccountStats(): void {
+  function queueAccountStateSave(options: {
+    preferences?: boolean;
+    stats?: boolean;
+  }): void {
     if (!sessionUser) {
       return;
     }
-    localStorage.setItem(
-      accountStatsStorageKey(sessionUser.id),
-      JSON.stringify(accountStats),
-    );
+
+    accountPreferencesDirty = accountPreferencesDirty || !!options.preferences;
+    accountStatsDirty = accountStatsDirty || !!options.stats;
+
+    if (accountStateSaveTimer || accountStateSyncInFlight) {
+      return;
+    }
+
+    accountStateSaveTimer = setTimeout(() => {
+      accountStateSaveTimer = null;
+      void flushAccountState();
+    }, 180);
+  }
+
+  async function flushAccountState(): Promise<void> {
+    if (!sessionUser || accountStateSyncInFlight) {
+      return;
+    }
+
+    const persistPreferences = accountPreferencesDirty;
+    const persistStats = accountStatsDirty;
+    if (!persistPreferences && !persistStats) {
+      return;
+    }
+
+    accountStateSyncInFlight = true;
+    try {
+      const sentPreferences = persistPreferences
+        ? accountPreferencesPayload()
+        : null;
+      const sentStats = persistStats
+        ? normalizeAccountStats(accountStats)
+        : null;
+      const payload: {
+        account_preferences?: AccountPreferences;
+        account_stats?: AccountStats;
+      } = {};
+      if (sentPreferences) {
+        payload.account_preferences = sentPreferences;
+      }
+      if (sentStats) {
+        payload.account_stats = sentStats;
+      }
+
+      const response = await api<{ user: SessionUser }>("/api/auth/account", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      sessionUser = response.user;
+
+      if (
+        sentPreferences &&
+        JSON.stringify(accountPreferencesPayload()) === JSON.stringify(sentPreferences)
+      ) {
+        applyAccountPreferences(
+          normalizeAccountPreferences(response.user.account_preferences),
+        );
+        accountPreferencesDirty = false;
+      }
+      if (sentStats && JSON.stringify(accountStats) === JSON.stringify(sentStats)) {
+        accountStats = normalizeAccountStats(response.user.account_stats);
+        accountStatsDirty = false;
+      }
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      accountStateSyncInFlight = false;
+      if ((accountPreferencesDirty || accountStatsDirty) && !accountStateSaveTimer) {
+        accountStateSaveTimer = setTimeout(() => {
+          accountStateSaveTimer = null;
+          void flushAccountState();
+        }, 300);
+      }
+    }
   }
 
   function updateAccountStats(mutator: (current: AccountStats) => AccountStats): void {
@@ -505,7 +783,7 @@
       return;
     }
     accountStats = normalizeAccountStats(mutator(accountStats));
-    persistAccountStats();
+    queueAccountStateSave({ stats: true });
   }
 
   function currentStanding(rows: Standing[]): Standing | null {
@@ -606,20 +884,11 @@
     if (userId === sessionUser?.id) {
       return accountStats;
     }
-    if (typeof window === "undefined") {
+    const entry = leaderboard.find((item) => item.user_id === userId);
+    if (!entry) {
       return null;
     }
-
-    const saved = localStorage.getItem(accountStatsStorageKey(userId));
-    if (!saved) {
-      return null;
-    }
-
-    try {
-      return normalizeAccountStats(JSON.parse(saved));
-    } catch {
-      return null;
-    }
+    return normalizeAccountStats(entry.account_stats);
   }
 
   function leaderboardProfilePreview(entry: LeaderboardEntry) {
@@ -2327,8 +2596,8 @@
 
   function setAppearanceMode(mode: AppearanceMode): void {
     appearanceMode = mode;
-    localStorage.setItem(APPEARANCE_STORAGE_KEY, mode);
     syncThemeState();
+    queueAccountStateSave({ preferences: true });
   }
 
   function setEditorTheme(themeId: BundledTheme): void {
@@ -2339,30 +2608,22 @@
 
     if (themeInfo.type === "light") {
       lightEditorTheme = themeId;
-      localStorage.setItem(LIGHT_THEME_STORAGE_KEY, themeId);
     } else {
       darkEditorTheme = themeId;
-      localStorage.setItem(DARK_THEME_STORAGE_KEY, themeId);
     }
 
     syncThemeState();
+    queueAccountStateSave({ preferences: true });
   }
 
   function setKeybindMode(mode: KeybindMode): void {
     keybindMode = mode;
-    localStorage.setItem(KEYBIND_MODE_STORAGE_KEY, mode);
+    queueAccountStateSave({ preferences: true });
   }
 
   function normalizeShortcutKey(raw: string): string {
     const normalized = raw.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
     return normalized.slice(-1);
-  }
-
-  function persistCustomShortcuts(): void {
-    localStorage.setItem(
-      CUSTOM_SHORTCUTS_STORAGE_KEY,
-      JSON.stringify(customShortcuts),
-    );
   }
 
   function setCustomShortcut(action: EditorAction, rawValue: string): void {
@@ -2385,7 +2646,7 @@
       ...customShortcuts,
       [action]: normalized,
     };
-    persistCustomShortcuts();
+    queueAccountStateSave({ preferences: true });
   }
 
   function clampEditorFontSize(value: number): number {
@@ -2422,17 +2683,14 @@
       return;
     }
     editorFontFamily = family;
-    localStorage.setItem(EDITOR_FONT_FAMILY_STORAGE_KEY, family);
     applyEditorTypography();
+    queueAccountStateSave({ preferences: true });
   }
 
   function setEditorFontSize(size: EditorFontSize): void {
     editorFontSize = clampEditorFontSize(size);
-    localStorage.setItem(
-      EDITOR_FONT_SIZE_STORAGE_KEY,
-      String(editorFontSize),
-    );
     applyEditorTypography();
+    queueAccountStateSave({ preferences: true });
   }
 
   function editorFontSizeLabel(size: EditorFontSize = editorFontSize): string {
@@ -2451,17 +2709,15 @@
     appearanceMode = DEFAULT_APPEARANCE_MODE;
     lightEditorTheme = DEFAULT_LIGHT_EDITOR_THEME;
     darkEditorTheme = DEFAULT_DARK_EDITOR_THEME;
+    keybindMode = "normal";
+    customShortcuts = { ...DEFAULT_CUSTOM_SHORTCUTS };
+    customShortcutError = "";
     editorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
     editorFontSize = DEFAULT_EDITOR_FONT_SIZE;
 
-    localStorage.setItem(APPEARANCE_STORAGE_KEY, appearanceMode);
-    localStorage.setItem(LIGHT_THEME_STORAGE_KEY, lightEditorTheme);
-    localStorage.setItem(DARK_THEME_STORAGE_KEY, darkEditorTheme);
-    localStorage.setItem(EDITOR_FONT_FAMILY_STORAGE_KEY, editorFontFamily);
-    localStorage.setItem(EDITOR_FONT_SIZE_STORAGE_KEY, String(editorFontSize));
-
     applyEditorTypography();
     syncThemeState();
+    queueAccountStateSave({ preferences: true });
   }
 
   function customShortcutLabel(action: EditorAction): string {
@@ -3024,10 +3280,18 @@
     const previousUserId = sessionUser?.id;
     const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
+      if (accountStateSaveTimer) {
+        clearTimeout(accountStateSaveTimer);
+        accountStateSaveTimer = null;
+      }
+      accountStateSyncInFlight = false;
       forgetPartyCode(previousUserId);
       sessionUser = null;
       isAdmin = false;
       accountStats = emptyAccountStats();
+      applyAccountPreferences(emptyAccountPreferences());
+      accountPreferencesDirty = false;
+      accountStatsDirty = false;
       clearProfileImage();
       clearAdminState();
       accountMenuOpen = false;
@@ -3049,7 +3313,7 @@
         activeView = "home";
       }
     }
-    loadAccountStats(payload.user);
+    loadAccountState(payload.user);
     loadProfileImage(payload.user);
     await loadLeaderboard();
     await refreshRankedQueue(true);
@@ -3135,7 +3399,7 @@
       });
       sessionUser = payload.user;
       isAdmin = payload.is_admin;
-      loadAccountStats(payload.user);
+      loadAccountState(payload.user);
       loadProfileImage(payload.user);
       authPassword = "";
       notice =
@@ -3157,11 +3421,20 @@
     error = "";
     notice = "";
     try {
+      if (accountStateSaveTimer) {
+        clearTimeout(accountStateSaveTimer);
+        accountStateSaveTimer = null;
+      }
+      await flushAccountState();
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+      accountStateSyncInFlight = false;
       forgetPartyCode(previousUserId);
       sessionUser = null;
       isAdmin = false;
       accountStats = emptyAccountStats();
+      applyAccountPreferences(emptyAccountPreferences());
+      accountPreferencesDirty = false;
+      accountStatsDirty = false;
       clearProfileImage();
       clearAdminState();
       accountMenuOpen = false;
@@ -4077,83 +4350,6 @@
   }
 
   onMount(() => {
-    const savedAppearance = localStorage.getItem(APPEARANCE_STORAGE_KEY);
-    if (
-      savedAppearance === "light" ||
-      savedAppearance === "dark" ||
-      savedAppearance === "system"
-    ) {
-      appearanceMode = savedAppearance;
-    }
-
-    const savedLightTheme = localStorage.getItem(LIGHT_THEME_STORAGE_KEY);
-    if (
-      savedLightTheme &&
-      themeInfoById.get(savedLightTheme as BundledTheme)?.type === "light"
-    ) {
-      lightEditorTheme = savedLightTheme as BundledTheme;
-    }
-
-    const savedDarkTheme = localStorage.getItem(DARK_THEME_STORAGE_KEY);
-    if (
-      savedDarkTheme &&
-      themeInfoById.get(savedDarkTheme as BundledTheme)?.type === "dark"
-    ) {
-      darkEditorTheme = savedDarkTheme as BundledTheme;
-    }
-
-    const savedKeybindMode = localStorage.getItem(KEYBIND_MODE_STORAGE_KEY);
-    if (
-      savedKeybindMode === "normal" ||
-      savedKeybindMode === "vim" ||
-      savedKeybindMode === "custom"
-    ) {
-      keybindMode = savedKeybindMode;
-    }
-
-    const savedCustomShortcuts = localStorage.getItem(CUSTOM_SHORTCUTS_STORAGE_KEY);
-    if (savedCustomShortcuts) {
-      try {
-        const parsed = JSON.parse(savedCustomShortcuts) as Partial<
-          Record<EditorAction, string>
-        >;
-        customShortcuts = {
-          submit: normalizeShortcutKey(
-            parsed.submit ?? DEFAULT_CUSTOM_SHORTCUTS.submit,
-          ) || DEFAULT_CUSTOM_SHORTCUTS.submit,
-          test: normalizeShortcutKey(parsed.test ?? DEFAULT_CUSTOM_SHORTCUTS.test) ||
-            DEFAULT_CUSTOM_SHORTCUTS.test,
-          hint: normalizeShortcutKey(parsed.hint ?? DEFAULT_CUSTOM_SHORTCUTS.hint) ||
-            DEFAULT_CUSTOM_SHORTCUTS.hint,
-          forfeit: normalizeShortcutKey(
-            parsed.forfeit ?? DEFAULT_CUSTOM_SHORTCUTS.forfeit,
-          ) || DEFAULT_CUSTOM_SHORTCUTS.forfeit,
-        };
-      } catch {
-        customShortcuts = { ...DEFAULT_CUSTOM_SHORTCUTS };
-      }
-    }
-
-    const savedEditorFontFamily = localStorage.getItem(
-      EDITOR_FONT_FAMILY_STORAGE_KEY,
-    );
-    if (
-      savedEditorFontFamily === "roboto-mono" ||
-      savedEditorFontFamily === "fira-code" ||
-      savedEditorFontFamily === "jetbrains-mono" ||
-      savedEditorFontFamily === "source-code-pro" ||
-      savedEditorFontFamily === "ibm-plex-mono"
-    ) {
-      editorFontFamily = savedEditorFontFamily;
-    }
-
-    const savedEditorFontSize = localStorage.getItem(
-      EDITOR_FONT_SIZE_STORAGE_KEY,
-    );
-    if (savedEditorFontSize) {
-      editorFontSize = clampEditorFontSize(Number(savedEditorFontSize));
-    }
-
     applyEditorTypography();
 
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
@@ -4209,6 +4405,10 @@
 
     return () => {
       clearTimer();
+      if (accountStateSaveTimer) {
+        clearTimeout(accountStateSaveTimer);
+        accountStateSaveTimer = null;
+      }
       disconnectLiveSocket();
       stopRankedQueuePolling();
       destroyVimEditor();

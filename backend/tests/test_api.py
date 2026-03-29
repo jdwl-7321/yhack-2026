@@ -548,6 +548,93 @@ def test_profile_image_is_shared_through_session_and_leaderboard() -> None:
     assert owner_entry["profile_image_url"] == profile_image_url
 
 
+def test_auth_account_endpoint_updates_preferences_and_stats() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "AccountStateUser", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    update = client.post(
+        "/api/auth/account",
+        json={
+            "account_preferences": {
+                "appearanceMode": "dark",
+                "lightEditorTheme": "everforest-light",
+                "darkEditorTheme": "catppuccin-mocha",
+                "keybindMode": "custom",
+                "customShortcuts": {
+                    "submit": "q",
+                    "test": "w",
+                    "hint": "e",
+                    "forfeit": "r",
+                },
+                "editorFontFamily": "jetbrains-mono",
+                "editorFontSize": 18,
+            },
+            "account_stats": {
+                "matchesStarted": 4,
+                "matchesSolved": 3,
+                "rankedFinished": 2,
+                "rankedWins": 1,
+                "hintsUsed": 5,
+                "sampleRuns": 9,
+                "submissions": 6,
+                "forfeits": 1,
+                "bestHiddenPassed": 12,
+                "recentRuns": [
+                    {
+                        "match_id": "m_demo",
+                        "mode": "ranked",
+                        "theme": THEMES[0],
+                        "difficulty": "medium",
+                        "outcome": "solved",
+                        "hidden_passed": 12,
+                        "rating_delta": 18,
+                        "at": "2026-03-28T12:34:56.000Z",
+                    }
+                ],
+                "recordedMatchIds": ["m_demo"],
+            },
+        },
+    )
+    assert update.status_code == 200
+    update_payload = update.get_json()
+    assert update_payload is not None
+    assert update_payload["user"]["account_preferences"]["appearanceMode"] == "dark"
+    assert update_payload["user"]["account_preferences"]["keybindMode"] == "custom"
+    assert update_payload["user"]["account_preferences"]["customShortcuts"] == {
+        "submit": "q",
+        "test": "w",
+        "hint": "e",
+        "forfeit": "r",
+    }
+    assert update_payload["user"]["account_preferences"]["editorFontFamily"] == (
+        "jetbrains-mono"
+    )
+    assert update_payload["user"]["account_preferences"]["editorFontSize"] == 18
+    assert update_payload["user"]["account_stats"]["sampleRuns"] == 9
+    assert update_payload["user"]["account_stats"]["recentRuns"][0]["match_id"] == (
+        "m_demo"
+    )
+
+    account_read = client.get("/api/auth/account")
+    assert account_read.status_code == 200
+    read_payload = account_read.get_json()
+    assert read_payload is not None
+    assert read_payload["user"]["account_preferences"]["appearanceMode"] == "dark"
+    assert read_payload["user"]["account_stats"]["sampleRuns"] == 9
+
+    leaderboard = client.get("/api/leaderboard?limit=10")
+    assert leaderboard.status_code == 200
+    leaderboard_payload = leaderboard.get_json()
+    assert leaderboard_payload is not None
+    assert leaderboard_payload["current_user"]["account_stats"]["sampleRuns"] == 9
+
+
 def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     db_path = tmp_path / "auth.sqlite3"
 
@@ -602,6 +689,75 @@ def test_sqlite_profile_image_persists_between_app_instances(tmp_path: Path) -> 
     session_payload = second_client.get("/api/auth/session").get_json()
     assert session_payload is not None
     assert session_payload["user"]["profile_image_url"] == profile_image_url
+
+
+def test_sqlite_account_state_persists_between_app_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "account-state.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+    register = first_client.post(
+        "/api/auth/register",
+        json={"name": "StatePersist", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    updated = first_client.post(
+        "/api/auth/account",
+        json={
+            "account_preferences": {
+                "appearanceMode": "system",
+                "lightEditorTheme": "everforest-light",
+                "darkEditorTheme": "catppuccin-mocha",
+                "keybindMode": "vim",
+                "customShortcuts": {
+                    "submit": "s",
+                    "test": "r",
+                    "hint": "h",
+                    "forfeit": "f",
+                },
+                "editorFontFamily": "ibm-plex-mono",
+                "editorFontSize": 16,
+            },
+            "account_stats": {
+                "matchesStarted": 7,
+                "matchesSolved": 5,
+                "rankedFinished": 4,
+                "rankedWins": 3,
+                "hintsUsed": 8,
+                "sampleRuns": 11,
+                "submissions": 9,
+                "forfeits": 2,
+                "bestHiddenPassed": 14,
+                "recentRuns": [],
+                "recordedMatchIds": ["m_one", "m_two"],
+            },
+        },
+    )
+    assert updated.status_code == 200
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    login = second_client.post(
+        "/api/auth/login",
+        json={"name": "StatePersist", "password": "secret123"},
+    )
+    assert login.status_code == 200
+
+    account_payload = second_client.get("/api/auth/account").get_json()
+    assert account_payload is not None
+    assert account_payload["user"]["account_preferences"]["appearanceMode"] == "system"
+    assert account_payload["user"]["account_preferences"]["keybindMode"] == "vim"
+    assert account_payload["user"]["account_preferences"]["editorFontFamily"] == (
+        "ibm-plex-mono"
+    )
+    assert account_payload["user"]["account_preferences"]["editorFontSize"] == 16
+    assert account_payload["user"]["account_stats"]["matchesStarted"] == 7
+    assert account_payload["user"]["account_stats"]["sampleRuns"] == 11
+    assert account_payload["user"]["account_stats"]["recordedMatchIds"] == [
+        "m_one",
+        "m_two",
+    ]
 
 
 def test_sqlite_changed_password_persists_between_app_instances(tmp_path: Path) -> None:
