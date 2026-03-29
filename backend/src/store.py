@@ -1347,9 +1347,13 @@ class SqliteStore(MemoryStore):
                 for row in self._conn.execute("PRAGMA table_info(users)").fetchall()
             }
             if "profile_image_url" not in columns:
-                self._conn.execute(
-                    "ALTER TABLE users ADD COLUMN profile_image_url TEXT"
-                )
+                try:
+                    self._conn.execute(
+                        "ALTER TABLE users ADD COLUMN profile_image_url TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).casefold():
+                        raise
 
     def _load_users(self) -> None:
         rows = self._conn.execute(
