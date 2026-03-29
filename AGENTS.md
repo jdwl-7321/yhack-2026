@@ -230,9 +230,9 @@ Defined in `backend/src/app.py`:
   - Shows a casual-party leader `+5 min` timer extension action next to the live match timer.
   - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
   - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
-  - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args used by locked cipher templates.
+  - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args (for shared-input ciphers this means users edit only `arg1`).
   - Submit failure UI surfaces a direct "Add first failed test to samples" action (in the failure card and near submit result status) that triggers hidden-test promotion, and a submit-status action for sample failures that duplicates the first failed sample into the sample list.
-  - Caesar/substitution cryptography templates keep sample inputs read-only because shared example inputs are auto-generated.
+  - Caesar/substitution cryptography templates allow add/edit/delete for sample rows; only `samples` (`arg2`) stays locked because it is auto-generated from visible input/output pairs.
 
 - `frontend/src/components/LeaderboardView.svelte`
   - Ranked leaderboard display and refresh.
