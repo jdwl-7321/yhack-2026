@@ -1000,6 +1000,7 @@ select:focus {
 
 .sample-index {
   display: block;
+  box-sizing: border-box;
   color: var(--sub-color);
   font-size: 0.8rem;
   line-height: 1.4;
@@ -1012,6 +1013,7 @@ select:focus {
 .sample-cell {
   display: block;
   margin: 0;
+  box-sizing: border-box;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--main-color);
@@ -1026,8 +1028,9 @@ select:focus {
   width: 100%;
   box-sizing: border-box;
   background: transparent;
-  border-top: none;
-  border-right: none;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
   resize: none;
   min-height: calc(1.4em + 0.2rem);
   overflow: hidden;
@@ -1036,7 +1039,7 @@ select:focus {
   line-height: 1.4;
   font-family: var(--font-family);
   outline: none;
-  padding: 0;
+  padding: 0.7rem;
   white-space: pre-wrap;
 }
 
@@ -1443,6 +1446,10 @@ select:focus {
 .result-pill.error {
   color: var(--error-color);
   background: color-mix(in srgb, var(--error-color) 14%, transparent);
+}
+
+.result-followup {
+  margin-top: 0.35rem;
 }
 
 .standings-card {

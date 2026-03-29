@@ -42,6 +42,7 @@
     inputsText: string,
   ) => void | Promise<void> = () => {};
   export let deleteSampleTest: (index: number) => void | Promise<void> = () => {};
+  export let addFirstFailedSampleTest: () => void | Promise<void> = () => {};
   export let promoteFailedTest: () => void | Promise<void> = () => {};
   export let requestHint: () => void | Promise<void> = () => {};
   export let forfeit: () => void | Promise<void> = () => {};
@@ -327,7 +328,7 @@
 
           {#if submitResult?.first_failed_hidden_test}
             <div class="failed-case">
-              <h3>First failed hidden test</h3>
+              <h3>First failed test on submit</h3>
               <p>Input</p>
               <pre>{submitResult.first_failed_hidden_test.input_str}</pre>
               <p>Expected output</p>
@@ -342,7 +343,7 @@
                 on:click={promoteFailedTest}
                 disabled={busy}
               >
-                Use as sample test
+                Add first failed test to samples
               </button>
             </div>
           {/if}
@@ -460,6 +461,26 @@
             | hidden {submitResult.hidden_passed}/{submitResult.hidden_total}
             | {submitResult.runtime_ms}ms
           </p>
+          {#if samplesAreEditable && submitResult.verdict === "sample_failed"}
+            <button
+              type="button"
+              class="btn result-followup"
+              on:click={addFirstFailedSampleTest}
+              disabled={busy}
+            >
+              Add first failed sample to samples
+            </button>
+          {/if}
+          {#if submitResult.first_failed_hidden_test}
+            <button
+              type="button"
+              class="btn result-followup"
+              on:click={promoteFailedTest}
+              disabled={busy}
+            >
+              Add first failed test to samples
+            </button>
+          {/if}
         {/if}
       </section>
     </div>

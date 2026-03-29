@@ -1901,6 +1901,17 @@
       .slice(0, 6);
   }
 
+  function asJsonText(value: unknown): string {
+    const rendered = JSON.stringify(value);
+    return rendered ?? "null";
+  }
+
+  function formatInputDraft(values: unknown[]): string {
+    return values
+      .map((value, index) => `arg${index + 1} = ${asJsonText(value)}`)
+      .join("\n");
+  }
+
   function parseSampleInputs(raw: string): unknown[] {
     const trimmed = raw.trim();
     if (trimmed.length === 0) {
@@ -1957,6 +1968,21 @@
       ordered.push(indexedValues.get(argIndex));
     }
     return ordered;
+  }
+
+  async function addFirstFailedSampleTest(): Promise<void> {
+    if (!match || !sessionUser || !submitResult || submitResult.verdict !== "sample_failed") {
+      return;
+    }
+
+    const failedSampleIndex = submitResult.sample_passed;
+    const failedSample = submitResult.sample_tests[failedSampleIndex];
+    if (!failedSample) {
+      error = "Failed sample details are unavailable for this submission.";
+      return;
+    }
+
+    await addSampleTest(formatInputDraft(failedSample.primary_inputs));
   }
 
   function applyParty(partyPayload: PartyPayload): void {
@@ -3135,6 +3161,7 @@
       {addSampleTest}
       {updateSampleTest}
       {deleteSampleTest}
+      {addFirstFailedSampleTest}
       {promoteFailedTest}
       {requestHint}
       {forfeit}

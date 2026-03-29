@@ -210,6 +210,7 @@ Defined in `backend/src/app.py`:
   - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
   - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
   - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args used by locked cipher templates.
+  - Submit failure UI surfaces a direct "Add first failed test to samples" action (in the failure card and near submit result status) that triggers hidden-test promotion, and a submit-status action for sample failures that duplicates the first failed sample into the sample list.
   - Caesar/substitution cryptography templates keep sample inputs read-only because shared example inputs are auto-generated.
 
 - `frontend/src/components/LeaderboardView.svelte`
