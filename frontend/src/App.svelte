@@ -10,7 +10,9 @@
 
   type UiTheme = "light" | "dark";
   type AppearanceMode = UiTheme | "system";
-  type View = "home" | "arena" | "leaderboard" | "postmatch";
+  type View = "home" | "arena" | "leaderboard" | "settings";
+  type KeybindMode = "normal" | "vim" | "custom";
+  type QuickActionKey = "off" | "tab" | "esc" | "enter";
   type AuthMode = "register" | "login";
   type Mode = "zen" | "casual" | "ranked";
   type Difficulty = "easy" | "medium" | "hard" | "expert";
@@ -199,6 +201,8 @@
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
+  const KEYBIND_MODE_STORAGE_KEY = "yhack.keybind-mode";
+  const QUICK_ACTION_KEY_STORAGE_KEY = "yhack.quick-action-key";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
@@ -239,6 +243,8 @@
   let lightEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
   let darkEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
   let activeEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
+  let keybindMode: KeybindMode = "normal";
+  let quickActionKey: QuickActionKey = "off";
   let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
     DEFAULT_DARK_EDITOR_THEME;
   let availableEditorThemes = bundledThemesInfo.filter(
@@ -744,6 +750,9 @@
   let lineNumbers = "1";
   let editorScrollLeft = 0;
 
+  function userInitial(name: string | undefined): string {
+    return name?.trim().charAt(0).toUpperCase() || "?";
+  }
   let isPartyMode = false;
   let isPartyLeader = false;
   let canEditPartySetup = true;
@@ -1016,6 +1025,20 @@
     }
   }
 
+  function showSettings(): void {
+    activeView = "settings";
+    error = "";
+    notice = "";
+  }
+
+  function showPlayView(): void {
+    if (match && sessionUser) {
+      showArena();
+      return;
+    }
+    showHome();
+  }
+
   function resolveSystemTheme(): UiTheme {
     return systemMatcher?.matches ? "dark" : "light";
   }
@@ -1285,6 +1308,16 @@
     }
 
     syncThemeState();
+  }
+
+  function setKeybindMode(mode: KeybindMode): void {
+    keybindMode = mode;
+    localStorage.setItem(KEYBIND_MODE_STORAGE_KEY, mode);
+  }
+
+  function setQuickActionKey(key: QuickActionKey): void {
+    quickActionKey = key;
+    localStorage.setItem(QUICK_ACTION_KEY_STORAGE_KEY, key);
   }
 
   function toErrorMessage(value: unknown): string {
@@ -2055,6 +2088,25 @@
       darkEditorTheme = savedDarkTheme as BundledTheme;
     }
 
+    const savedKeybindMode = localStorage.getItem(KEYBIND_MODE_STORAGE_KEY);
+    if (
+      savedKeybindMode === "normal" ||
+      savedKeybindMode === "vim" ||
+      savedKeybindMode === "custom"
+    ) {
+      keybindMode = savedKeybindMode;
+    }
+
+    const savedQuickActionKey = localStorage.getItem(QUICK_ACTION_KEY_STORAGE_KEY);
+    if (
+      savedQuickActionKey === "off" ||
+      savedQuickActionKey === "tab" ||
+      savedQuickActionKey === "esc" ||
+      savedQuickActionKey === "enter"
+    ) {
+      quickActionKey = savedQuickActionKey;
+    }
+
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
     syncThemeState();
 
@@ -2128,8 +2180,8 @@
       <button
         type="button"
         class="nav-icon"
-        class:active={activeView !== "leaderboard"}
-        on:click={showHome}
+        class:active={activeView === "home" || activeView === "arena"}
+        on:click={showPlayView}
         title="Play"
       >
         <i class="fas fa-keyboard" aria-hidden="true"></i>
@@ -2145,6 +2197,15 @@
       </button>
       <button type="button" class="nav-icon" title="Info">
         <i class="fas fa-info" aria-hidden="true"></i>
+      </button>
+      <button
+        type="button"
+        class="nav-icon"
+        class:active={activeView === "settings"}
+        on:click={showSettings}
+        title="Settings"
+      >
+        <i class="fas fa-gear" aria-hidden="true"></i>
       </button>
       <button
         type="button"
@@ -2808,6 +2869,268 @@
             </div>
           </div>
         {/if}
+      </section>
+    </main>
+  {:else if activeView === "settings"}
+    <main id="settings-view">
+      <aside class="settings-sidebar">
+        <section class="settings-nav-card">
+          <p class="eyebrow">Workspace</p>
+          <h1>Settings</h1>
+          <p class="settings-sidebar-copy">
+            Tune the arena, editor, and account surface so the app matches your
+            workflow.
+          </p>
+
+          <div class="settings-summary-list">
+            <div class="settings-summary-item">
+              <span>Session</span>
+              <strong>{sessionUser ? sessionUser.name : "Guest mode"}</strong>
+            </div>
+            <div class="settings-summary-item">
+              <span>Appearance</span>
+              <strong>{themeStatusText}</strong>
+            </div>
+            <div class="settings-summary-item">
+              <span>Editor theme</span>
+              <strong>{activeEditorThemeName}</strong>
+            </div>
+          </div>
+
+          <nav class="settings-section-nav" aria-label="Settings sections">
+            <a href="#settings-profile" class="settings-section-link">
+              <i class="fas fa-id-badge" aria-hidden="true"></i>
+              <span>Profile</span>
+            </a>
+            <a href="#settings-behavior" class="settings-section-link">
+              <i class="fas fa-keyboard" aria-hidden="true"></i>
+              <span>Behavior</span>
+            </a>
+            <a href="#settings-editor" class="settings-section-link">
+              <i class="fas fa-palette" aria-hidden="true"></i>
+              <span>Editor Theme</span>
+            </a>
+          </nav>
+
+          <button type="button" class="btn primary wide" on:click={showPlayView}>
+            Back to Play
+          </button>
+        </section>
+      </aside>
+
+      <section class="settings-main">
+        <div class="settings-title-row">
+          <div>
+            <p class="eyebrow">Configuration</p>
+          </div>
+          <span class="leaderboard-badge">Local settings</span>
+        </div>
+
+        <section id="settings-profile" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">Profile</p>
+              <h3>Pilot Identity</h3>
+            </div>
+            <span class="settings-panel-note">
+              {sessionUser ? "Connected account" : "Offline preview"}
+            </span>
+          </div>
+
+          <div class="settings-profile-grid">
+            <article class="settings-identity-card">
+              <div class="settings-avatar" aria-hidden="true">
+                {userInitial(sessionUser?.name)}
+              </div>
+              <div class="settings-identity-copy">
+                <strong>{sessionUser?.name ?? "Guest challenger"}</strong>
+                <span>
+                  {sessionUser
+                    ? `Current ladder rating: ${sessionUser.elo} ELO`
+                    : "Sign in to persist ranked progress and match history."}
+                </span>
+              </div>
+            </article>
+
+            <div class="settings-stat-grid">
+              <div class="settings-stat-card">
+                <span>Leaderboard rank</span>
+                <strong>
+                  {leaderboardCurrentUser
+                    ? `#${leaderboardCurrentUser.placement}`
+                    : "Unranked"}
+                </strong>
+              </div>
+              <div class="settings-stat-card">
+                <span>Active match</span>
+                <strong>{match ? match.mode.toUpperCase() : "None"}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-action-row">
+            {#if sessionUser}
+              <button type="button" class="btn" on:click={logout} disabled={busy}>
+                <i class="fas fa-right-from-bracket" aria-hidden="true"></i>
+                Sign Out
+              </button>
+            {/if}
+            <button
+              type="button"
+              class="btn"
+              on:click={() => void refreshSession()}
+              disabled={busy}
+            >
+              <i class="fas fa-arrows-rotate" aria-hidden="true"></i>
+              Refresh Session
+            </button>
+          </div>
+        </section>
+
+        <section id="settings-behavior" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">Behavior</p>
+              <h3>Keybind Preferences</h3>
+            </div>
+            <span class="settings-panel-note">Editor movement and shortcuts</span>
+          </div>
+
+          <div class="settings-behavior-list">
+            <article class="settings-behavior-row">
+              <div class="settings-behavior-copy">
+                <div class="settings-behavior-label">
+                  <i class="fas fa-star" aria-hidden="true"></i>
+                  <span>Keybind profile</span>
+                </div>
+                <p>
+                  Normal keeps the default editor controls. Vim enables modal
+                  movement. Custom is a flexible profile for team-specific
+                  shortcuts.
+                </p>
+              </div>
+              <div
+                class="settings-toggle-group"
+                role="group"
+                aria-label="Keybind profile"
+              >
+                {#each ["normal", "vim", "custom"] as option}
+                  <button
+                    type="button"
+                    class="settings-toggle-pill"
+                    class:active={keybindMode === option}
+                    on:click={() => setKeybindMode(option as KeybindMode)}
+                  >
+                    {option}
+                  </button>
+                {/each}
+              </div>
+            </article>
+
+            <article class="settings-behavior-row">
+              <div class="settings-behavior-copy">
+                <div class="settings-behavior-label">
+                  <i class="fas fa-rotate-right" aria-hidden="true"></i>
+                  <span>Quick command key</span>
+                </div>
+                <p>
+                  Choose a fast shortcut for opening your quick action flow
+                  without crowding the rest of the interface.
+                </p>
+              </div>
+              <div
+                class="settings-toggle-group"
+                role="group"
+                aria-label="Quick command shortcut"
+              >
+                {#each ["off", "tab", "esc", "enter"] as option}
+                  <button
+                    type="button"
+                    class="settings-toggle-pill"
+                    class:active={quickActionKey === option}
+                    on:click={() => setQuickActionKey(option as QuickActionKey)}
+                  >
+                    {option}
+                  </button>
+                {/each}
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="settings-editor" class="settings-panel">
+          <div class="settings-panel-heading">
+            <div>
+              <p class="eyebrow">Editor</p>
+              <h3>Appearance & Theme</h3>
+            </div>
+            <span class="settings-panel-note">{themePref} mode live preview</span>
+          </div>
+
+          <div class="settings-editor-grid">
+            <article class="settings-control-card">
+              <div class="settings-control-group">
+                <span class="eyebrow">Appearance mode</span>
+                <div class="segmented">
+                  {#each APPEARANCE_MODE_ORDER as option}
+                    <button
+                      type="button"
+                      class:active={appearanceMode === option}
+                      on:click={() => setAppearanceMode(option)}
+                    >
+                      {option}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <label>
+                <span>{themePref} theme palette</span>
+                <select
+                  value={activeEditorTheme}
+                  on:change={(event) => {
+                    setEditorTheme(
+                      (event.currentTarget as HTMLSelectElement)
+                        .value as BundledTheme,
+                    );
+                  }}
+                >
+                  {#each availableEditorThemes as themeOption}
+                    <option value={themeOption.id}>{themeOption.displayName}</option>
+                  {/each}
+                </select>
+              </label>
+
+              <div class="settings-action-row">
+                <button type="button" class="btn" on:click={cycleAppearanceMode}>
+                  <i class="fas fa-circle-half-stroke" aria-hidden="true"></i>
+                  Cycle Appearance
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  on:click={() => {
+                    themeMenuOpen = true;
+                  }}
+                >
+                  <i class="fas fa-swatchbook" aria-hidden="true"></i>
+                  Open Header Palette
+                </button>
+              </div>
+            </article>
+
+            <article class="settings-preview-card">
+              <div class="settings-preview-labels">
+                <span>{themeStatusText}</span>
+                <strong>{activeEditorThemeName}</strong>
+              </div>
+              <div class="settings-code-preview" aria-hidden="true">
+                <pre><span class="preview-keyword">def</span> <span class="preview-function">solve</span>(line):
+    <span class="preview-keyword">return</span> <span class="preview-string">line</span>.strip()[::<span class="preview-number">-1</span>]  <span class="preview-comment"># hidden-rule ready</span></pre>
+              </div>
+            </article>
+          </div>
+        </section>
       </section>
     </main>
   {:else if activeView === "postmatch"}
