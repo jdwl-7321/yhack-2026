@@ -120,7 +120,7 @@
   }
 
   function saveSampleOnBlur(index: number): void {
-    if (busy || !match) {
+    if (busy || actionLocked || !match) {
       return;
     }
 
@@ -134,7 +134,7 @@
   }
 
   async function commitNewSample(): Promise<void> {
-    if (committingNewSample || busy || !match) {
+    if (committingNewSample || busy || actionLocked || !match) {
       return;
     }
 
@@ -191,7 +191,7 @@
       });
     }
   }
-  $: actionLocked = !!match?.locked;
+  $: actionLocked = !!match && (match.locked || match.finished);
 </script>
 
 <main id="race-view">
@@ -258,7 +258,9 @@
 
     {#if actionLocked}
       <p class="flash notice">
-        Lobby closed by leader. Timer stopped and submissions are disabled.
+        {match.finished
+          ? "Review mode. This completed match is read-only and submissions are disabled."
+          : "Lobby closed by leader. Timer stopped and submissions are disabled."}
       </p>
     {/if}
 
@@ -269,65 +271,90 @@
             <section class="samples-panel">
               <p class="samples-title">Samples</p>
               <div class="samples-scroll">
-                <div class="samples-grid">
-                  <span class="sample-head index-head">#</span>
-                  <span class="sample-head">Input</span>
-                  <span class="sample-head">Output</span>
-                  {#each match.sample_tests as sample, index}
-                    <span class="sample-index">{index + 1}</span>
-                    <textarea
-                      class="sample-cell sample-input-edit"
-                      rows="1"
-                      bind:value={sampleInputDrafts[index]}
-                      bind:this={sampleInputEls[index]}
-                      spellcheck="false"
-                      on:input={(event) =>
-                        resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
-                      on:blur={() => saveSampleOnBlur(index)}
-                    ></textarea>
-                    <div class="sample-cell sample-output-cell">
-                      <pre>{sample.output}</pre>
-                      <button
-                        type="button"
-                        class="sample-delete-button"
-                        on:click={() => void deleteSampleTest(index)}
-                        disabled={busy}
-                        title="Delete sample"
-                      >
-                        <i class="fas fa-trash" aria-hidden="true"></i>
-                      </button>
-                    </div>
-                  {/each}
+                <table class="samples-table">
+                  <thead>
+                    <tr>
+                      <th class="sample-head sample-col-index">#</th>
+                      <th class="sample-head">Input</th>
+                      <th class="sample-head">Output</th>
+                      <th class="sample-head sample-col-action">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each match.sample_tests as sample, index}
+                      <tr>
+                        <td class="sample-index">{index + 1}</td>
+                        <td class="sample-cell sample-input-cell">
+                          <textarea
+                            class="sample-input-edit"
+                            rows="1"
+                            bind:value={sampleInputDrafts[index]}
+                            bind:this={sampleInputEls[index]}
+                            spellcheck="false"
+                            readonly={busy || actionLocked}
+                            on:input={(event) =>
+                              resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
+                            on:blur={() => saveSampleOnBlur(index)}
+                          ></textarea>
+                        </td>
+                        <td class="sample-cell sample-output-cell">
+                          <pre>{sample.output}</pre>
+                        </td>
+                        <td class="sample-cell sample-action-cell">
+                          <button
+                            type="button"
+                            class="sample-delete-button"
+                            on:click={() => void deleteSampleTest(index)}
+                            disabled={busy || actionLocked}
+                            title="Delete sample"
+                          >
+                            <i class="fas fa-trash" aria-hidden="true"></i>
+                          </button>
+                        </td>
+                      </tr>
+                    {/each}
 
-                  <span class="sample-index sample-index-add">+</span>
-                  <textarea
-                    class="sample-cell sample-input-edit"
-                    rows="1"
-                    bind:value={newSampleInputs}
-                    bind:this={newSampleInputEl}
-                    spellcheck="false"
-                    placeholder={newSampleInputPlaceholder}
-                    on:input={(event) =>
-                      resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
-                    on:blur={() => void commitNewSample()}
-                  ></textarea>
-                  <div class="sample-cell sample-output-hint">
-                    <span>Output auto-generated on add</span>
-                    <button
-                      type="button"
-                      class="btn"
-                      on:click={() => void commitNewSample()}
-                      disabled={busy}
-                    >
-                      Add
-                    </button>
-                  </div>
-                </div>
+                    <tr>
+                      <td class="sample-index sample-index-add">+</td>
+                      <td class="sample-cell sample-input-cell">
+                        <textarea
+                          class="sample-input-edit"
+                          rows="1"
+                          bind:value={newSampleInputs}
+                          bind:this={newSampleInputEl}
+                          spellcheck="false"
+                          readonly={busy || actionLocked}
+                          placeholder={newSampleInputPlaceholder}
+                          on:input={(event) =>
+                            resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
+                          on:blur={() => void commitNewSample()}
+                        ></textarea>
+                      </td>
+                      <td class="sample-cell sample-output-hint">
+                        <span>Output auto-generated on add</span>
+                      </td>
+                      <td class="sample-cell sample-action-cell">
+                        <button
+                          type="button"
+                          class="btn sample-add-button"
+                          on:click={() => void commitNewSample()}
+                          disabled={busy || actionLocked}
+                        >
+                          Add
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
               {#if sharedSampleArgLocked}
                 <p class="sample-lock-note">
                   samples (arg2) is auto-generated from all visible sample input/output pairs.
-                  You can still add, edit, or delete sample rows by changing arg1.
+                  {#if actionLocked}
+                    This arena is read-only, so sample rows cannot be edited.
+                  {:else}
+                    You can still add, edit, or delete sample rows by changing arg1.
+                  {/if}
                 </p>
               {/if}
             </section>
@@ -373,7 +400,7 @@
             style={`--editor-font-size: ${editorFontSize}px;`}
           >
             <div class="editor-stack">
-              {#if keybindMode === "vim"}
+              {#if keybindMode === "vim" && !actionLocked}
                 <div class="vim-editor-host" bind:this={vimEditorHostEl}></div>
               {:else}
                 <pre
@@ -392,6 +419,7 @@
                   spellcheck="false"
                   autocomplete="off"
                   wrap="off"
+                  readonly={actionLocked}
                   on:input={handleEditorInput}
                   on:keydown={handleEditorKeydown}
                   on:scroll={syncEditorScroll}
@@ -479,7 +507,7 @@
               type="button"
               class="btn result-followup"
               on:click={addFirstFailedSampleTest}
-              disabled={busy}
+              disabled={busy || actionLocked}
             >
               Add first failed sample to samples
             </button>
@@ -489,7 +517,7 @@
               type="button"
               class="btn result-followup"
               on:click={promoteFailedTest}
-              disabled={busy}
+              disabled={busy || actionLocked}
             >
               Add first failed test to samples
             </button>

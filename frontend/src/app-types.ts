@@ -118,6 +118,7 @@ export type PartyPayload = {
 };
 
 export type PostMatchState = {
+  match_id: string;
   reason: string;
   mode: Mode;
   theme: string;

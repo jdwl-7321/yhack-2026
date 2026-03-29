@@ -300,8 +300,8 @@ class MemoryStore:
         party = self._require_party(code)
         self._require_party_leader(party, leader_id)
 
-        if party.mode != "casual":
-            raise ValueError("Time can only be added in casual parties")
+        if party.mode not in {"casual", "zen"}:
+            raise ValueError("Time can only be added in casual or zen parties")
         if add_seconds <= 0:
             raise ValueError("add_seconds must be positive")
 

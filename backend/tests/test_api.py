@@ -652,7 +652,7 @@ def test_party_leader_can_add_time_to_casual_lobby_and_active_match() -> None:
     assert refreshed_match["time_limit_seconds"] == 1020
 
 
-def test_add_time_requires_casual_party_mode() -> None:
+def test_add_time_rejects_ranked_party_mode() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
 
@@ -680,7 +680,29 @@ def test_add_time_requires_casual_party_mode() -> None:
         json={"user_id": leader["id"], "add_seconds": 120},
     )
     assert invalid.status_code == 400
-    assert invalid.get_json() == {"error": "Time can only be added in casual parties"}
+    assert invalid.get_json() == {
+        "error": "Time can only be added in casual or zen parties"
+    }
+
+
+def test_party_leader_can_add_time_to_zen_active_match() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    user, match = _start_single_player_match(client, seed=78)
+
+    extended = client.post(
+        f"/api/parties/{match['party_code']}/add-time",
+        json={"user_id": user["id"], "add_seconds": 120},
+    )
+    assert extended.status_code == 200
+    extended_payload = extended.get_json()
+    assert extended_payload is not None
+    assert extended_payload["settings"]["time_limit_seconds"] == 1020
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["time_limit_seconds"] == 1020
 
 
 def test_only_party_leader_can_start_match() -> None:
