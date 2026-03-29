@@ -31,6 +31,32 @@ npm run dev
 
 The Vite dev server runs on `http://localhost:5173` and proxies `/api` to Flask.
 
+## Production deploy (single host)
+
+1) Build the frontend:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+2) Install backend deps and run Gunicorn on local port `6767`:
+
+```bash
+cd backend
+uv sync
+YHACK_SECRET_KEY="replace-me" ./src/run-gunicorn.sh
+```
+
+Notes:
+- The backend serves the built frontend from `frontend/dist` by default.
+- Override frontend build location with `YHACK_FRONTEND_DIST=/absolute/path/to/dist`.
+- `run-gunicorn.sh` binds to `127.0.0.1:6767` by default (overrides: `YHACK_GUNICORN_HOST`, `YHACK_GUNICORN_PORT`, `YHACK_GUNICORN_WORKERS`, `YHACK_GUNICORN_THREADS`).
+
+3) Nginx TLS reverse proxy config lives at `deploy/nginx/play-enigma.xyz.conf`.
+   Copy/symlink it into your Nginx site config directory and reload Nginx.
+
 ## Python quality checks
 
 ```bash

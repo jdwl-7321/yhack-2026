@@ -8,7 +8,7 @@ import threading
 from time import time
 from typing import Any, cast
 
-from flask import Flask, jsonify, request, session
+from flask import Flask, jsonify, request, send_from_directory, session
 from flask_sock import Sock
 
 from config import ADMIN_USERNAME, is_admin_username
@@ -41,6 +41,7 @@ from store import (
 from domain_types import Difficulty, Mode
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
+DEFAULT_FRONTEND_DIST_PATH = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 class EventHub:
@@ -130,6 +131,9 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     event_hub = EventHub()
     data = store or SqliteStore(os.environ.get("YHACK_DB_PATH", str(DEFAULT_DB_PATH)))
     app.config["store"] = data
+    app.config["FRONTEND_DIST_PATH"] = Path(
+        os.environ.get("YHACK_FRONTEND_DIST", str(DEFAULT_FRONTEND_DIST_PATH))
+    ).resolve()
 
     def publish_party_update(party: Party, *, event: str) -> None:
         event_hub.publish(
@@ -829,6 +833,26 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         return jsonify(
             {"rating_deltas": deltas, "standings": data.standings(match_id=match_id)}
         )
+
+    @app.route("/", defaults={"path": ""})
+    @app.route("/<path:path>")
+    def serve_frontend(path: str) -> Any:
+        if path in {"api", "ws"} or path.startswith(("api/", "ws/")):
+            return jsonify({"error": "Not found"}), 404
+
+        frontend_dist = Path(app.config["FRONTEND_DIST_PATH"])
+        index_file = frontend_dist / "index.html"
+        if not index_file.is_file():
+            return jsonify({"error": "Frontend build not found"}), 404
+
+        if path:
+            asset_path = frontend_dist / path
+            if asset_path.is_file():
+                return send_from_directory(frontend_dist, path)
+            if Path(path).suffix:
+                return jsonify({"error": "Not found"}), 404
+
+        return send_from_directory(frontend_dist, "index.html")
 
     return app
 

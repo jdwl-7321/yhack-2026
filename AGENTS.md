@@ -41,6 +41,7 @@ Full-stack prototype for a competitive puzzle platform:
 Top-level layout:
 - `backend/` Python API, game domain, judge, persistence, tests
 - `frontend/` Svelte client app
+- `deploy/nginx/` Nginx TLS reverse-proxy config templates
 - `README.md` runbook
 - `PLAN.md` product/architecture plan and locked decisions
 - `DESIGN.md` visual design direction
@@ -51,15 +52,19 @@ Top-level layout:
 
 - `backend/pyproject.toml`
   - Package name `yhack-backend`, script entry `yhack-backend = "app:main"`.
-  - Runtime deps: `flask`, `flask-sock`.
+  - Runtime deps: `flask`, `flask-sock`, `gunicorn`.
   - Test config points to `backend/tests`.
 
 - `backend/src/run.sh`
   - Local dev runner: `uv run flask --app app run --port 5000 --debug`.
 
+- `backend/src/run-gunicorn.sh`
+  - Production-oriented local runner: starts Gunicorn (`gthread`) on `127.0.0.1:6767` by default with env overrides for host/port/workers/threads/timeout.
+
 - `backend/src/app.py`
   - Main Flask app wiring (`create_app`, `main`).
   - Defines all REST endpoints and WebSocket endpoint (`/ws/events`).
+  - Serves built SPA assets from `frontend/dist` (or `YHACK_FRONTEND_DIST`) via a catch-all route, while excluding `/api` and `/ws` prefixes from SPA fallback.
   - `POST /api/parties` accepts minimal lobby creation payloads (mode + optional member limit) and fills default match settings (`theme=THEMES[0]`, `difficulty=easy`, `time_limit_seconds=900`) when omitted.
   - `POST /api/parties/<code>/start` accepts optional non-ranked match settings (`theme`, `difficulty`, `time_limit_seconds`) so casual lobbies can set puzzle config at match start.
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
@@ -222,6 +227,9 @@ Defined in `backend/src/app.py`:
 - `frontend/vite.config.ts`
   - Proxies `/api` to `http://localhost:5000` and `/ws` to backend websocket.
 
+- `deploy/nginx/play-enigma.xyz.conf`
+  - TLS reverse proxy for `play-enigma.xyz` that terminates HTTPS (LetsEncrypt cert/key), redirects HTTP->HTTPS, forwards app traffic to `127.0.0.1:6767`, and supports websocket upgrade under `/ws/`.
+
 - `frontend/src/main.ts`
   - App mount entry.
 
@@ -342,18 +350,22 @@ Implication: server restart drops active parties/matches but keeps user accounts
 - Update client flow/state orchestration: `frontend/src/App.svelte`
 - Update visual structure by view: corresponding `frontend/src/components/*.svelte`
 - Update styling/tokens/layout: `frontend/src/app.css`
+- Update deployment and reverse-proxy setup: `backend/src/run-gunicorn.sh`, `deploy/nginx/play-enigma.xyz.conf`, `README.md`
 
 ## Run and Verify
 
 - Backend dev: `cd backend && uv sync && uv run yhack-backend`
+- Backend gunicorn: `cd backend && uv sync && ./src/run-gunicorn.sh`
 - Backend tests: `cd backend && uv run pytest`
 - Frontend dev: `cd frontend && npm install && npm run dev`
+- Frontend production build: `cd frontend && npm install && npm run build`
 - Frontend type checks: `cd frontend && npm run check`
 
 ## Known Sharp Edges
 
 - `frontend/src/App.svelte` is very large; prefer extracting cohesive logic into utilities/components when editing substantial new behavior.
 - `frontend/public/engimga.html` is not part of active app flow; avoid changing it unless explicitly requested.
+- SPA hosting in Flask depends on `frontend/dist/index.html`; if the build is missing, `/` returns a 404 JSON error (`Frontend build not found`).
 - Theme names are validated against `THEMES`; theme/template sync is enforced in `puzzle.py` module initialization.
 - Puzzle module source edits are validated by reloading all `backend/src/puzzles/*_puzzle.py` files; invalid edits fail and are rolled back.
 - Match generation depends entirely on puzzle modules present in `backend/src/puzzles/`; removing all templates for a theme+difficulty in code blocks new matches in that bucket.
