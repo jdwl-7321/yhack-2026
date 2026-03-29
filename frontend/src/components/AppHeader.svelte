@@ -1,12 +1,26 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import type { BundledTheme } from "shiki/bundle/web";
   import type {
     AccountStats,
     AppearanceMode,
+    EditorFontFamily,
+    EditorFontSize,
     SessionUser,
     UiTheme,
     View,
   } from "../app-types";
+
+  type QuickSettingAction = {
+    id: string;
+    label: string;
+    description: string;
+    icon: string;
+    keywords: string;
+    shortcut?: string;
+    disabled?: boolean;
+    run: () => void;
+  };
 
   export let activeView: View = "home";
   export let appearanceMode: AppearanceMode = "system";
@@ -15,6 +29,9 @@
   export let themePref: UiTheme = "dark";
   export let activeEditorTheme: BundledTheme = "github-dark-default";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
+  export let editorFontFamily: EditorFontFamily = "roboto-mono";
+  export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];
+  export let editorFontSize: EditorFontSize = 14;
 
   export let sessionUser: SessionUser | null = null;
   export let accountStats: AccountStats = {
@@ -48,16 +65,252 @@
   export let showPlayView: () => void = () => {};
   export let toggleLeaderboardView: () => void = () => {};
   export let showSettings: () => void = () => {};
+  export let setAppearanceMode: (mode: AppearanceMode) => void = () => {};
   export let cycleAppearanceMode: () => void = () => {};
   export let toggleThemeMenu: () => void = () => {};
   export let toggleAccountMenu: () => void = () => {};
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
+  export let setEditorFontFamily: (family: EditorFontFamily) => void = () => {};
+  export let setEditorFontSize: (size: EditorFontSize) => void = () => {};
+  export let resetThemePreferences: () => void = () => {};
   export let accountInitials: (name: string) => string = () => "EN";
   export let formatActivityTime: (timestamp: string) => string = () => "";
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
   export let showArena: () => void = () => {};
   export let logout: () => void | Promise<void> = () => {};
+
+  const quickFontSizeOptions: EditorFontSize[] = [12, 14, 16, 18];
+  const quickAppearanceModes: AppearanceMode[] = ["system", "light", "dark"];
+
+  let quickSettingsOpen = false;
+  let quickSettingsQuery = "";
+  let quickSettingsIndex = 0;
+  let quickSettingsInputEl: HTMLInputElement | null = null;
+  let quickSettingsActions: QuickSettingAction[] = [];
+
+  function closeQuickSettings(): void {
+    quickSettingsOpen = false;
+    quickSettingsQuery = "";
+    quickSettingsIndex = 0;
+  }
+
+  function openQuickSettings(): void {
+    quickSettingsOpen = true;
+    themeMenuOpen = false;
+    accountMenuOpen = false;
+    quickSettingsQuery = "";
+    quickSettingsIndex = 0;
+    void tick().then(() => {
+      quickSettingsInputEl?.focus();
+      quickSettingsInputEl?.select();
+    });
+  }
+
+  function runQuickSetting(action: QuickSettingAction): void {
+    action.run();
+    closeQuickSettings();
+  }
+
+  function quickAppearanceLabel(mode: AppearanceMode): string {
+    if (mode === "system") {
+      return "Follow system appearance";
+    }
+    return `Use ${mode} appearance`;
+  }
+
+  function handleQuickSettingsKeydown(event: KeyboardEvent): void {
+    const usesCommandShortcut =
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      event.key.toLowerCase() === "k";
+
+    if (usesCommandShortcut) {
+      event.preventDefault();
+      if (quickSettingsOpen) {
+        closeQuickSettings();
+      } else {
+        openQuickSettings();
+      }
+      return;
+    }
+
+    if (!quickSettingsOpen) {
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeQuickSettings();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      quickSettingsIndex = quickSettingsActions.length === 0
+        ? 0
+        : (quickSettingsIndex + 1) % quickSettingsActions.length;
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      quickSettingsIndex = quickSettingsActions.length === 0
+        ? 0
+        : (quickSettingsIndex - 1 + quickSettingsActions.length) %
+          quickSettingsActions.length;
+      return;
+    }
+
+    if (event.key === "Enter" && quickSettingsActions[quickSettingsIndex]) {
+      event.preventDefault();
+      runQuickSetting(quickSettingsActions[quickSettingsIndex]);
+    }
+  }
+
+  $: {
+    const navigationActions: QuickSettingAction[] = [
+      {
+        id: "quick-play",
+        label: "Go to play",
+        description: hasActiveMatch ? "Return to the live arena or play home" : "Open the play view",
+        icon: "fa-gamepad",
+        keywords: "play arena home game",
+        shortcut: "Ctrl/Cmd+K",
+        run: showPlayView,
+      },
+      {
+        id: "quick-leaderboard",
+        label: "Open leaderboard",
+        description: "Jump to the ranked ladder",
+        icon: "fa-crown",
+        keywords: "leaderboard ladder ranked crown",
+        run: () => {
+          if (activeView !== "leaderboard") {
+            toggleLeaderboardView();
+          } else {
+            showPlayView();
+          }
+        },
+      },
+      {
+        id: "quick-settings-view",
+        label: "Open full settings",
+        description: "Jump to the full settings workspace",
+        icon: "fa-gear",
+        keywords: "settings preferences workspace config",
+        run: showSettings,
+      },
+      {
+        id: "quick-resume",
+        label: "Resume live match",
+        description: matchSummaryLabel,
+        icon: "fa-play",
+        keywords: "resume active live match arena",
+        disabled: !hasActiveMatch,
+        run: showArena,
+      },
+    ];
+
+    const appearanceActions = quickAppearanceModes.map((mode) => ({
+      id: `quick-appearance-${mode}`,
+      label: quickAppearanceLabel(mode),
+      description:
+        appearanceMode === mode
+          ? "Currently active"
+          : "Switch the full app appearance",
+      icon:
+        mode === "system"
+          ? "fa-desktop"
+          : mode === "light"
+            ? "fa-sun"
+            : "fa-moon",
+      keywords: `appearance theme color mode ${mode}`,
+      run: () => setAppearanceMode(mode),
+    }));
+
+    const themeActions: QuickSettingAction[] = availableEditorThemes.map((themeOption) => ({
+      id: `quick-theme-${themeOption.id}`,
+      label: `Theme: ${themeOption.displayName}`,
+      description:
+        activeEditorTheme === themeOption.id
+          ? `Active ${themePref} palette`
+          : `Apply this ${themePref} palette`,
+      icon: "fa-palette",
+      keywords: `theme palette ${themePref} ${themeOption.displayName}`,
+      run: () => setEditorTheme(themeOption.id as BundledTheme),
+    }));
+
+    const fontActions: QuickSettingAction[] = editorFontFamilyOptions.map((fontOption) => ({
+      id: `quick-font-${fontOption.id}`,
+      label: `Font: ${fontOption.label}`,
+      description:
+        editorFontFamily === fontOption.id
+          ? "Currently active across the app"
+          : "Apply this font across the UI and editor",
+      icon: "fa-font",
+      keywords: `font typography editor ${fontOption.label}`,
+      run: () => setEditorFontFamily(fontOption.id),
+    }));
+
+    const fontSizeActions: QuickSettingAction[] = quickFontSizeOptions.map((size) => ({
+      id: `quick-font-size-${size}`,
+      label: `Font size: ${size}px`,
+      description:
+        editorFontSize === size
+          ? "Currently active"
+          : "Update the editor scale",
+      icon: "fa-text-height",
+      keywords: `font size text scale ${size}`,
+      run: () => setEditorFontSize(size),
+    }));
+
+    const utilityActions: QuickSettingAction[] = [
+      {
+        id: "quick-reset-theme",
+        label: "Reset theme defaults",
+        description: "Restore appearance, theme palette, and typography defaults",
+        icon: "fa-rotate-left",
+        keywords: "reset defaults theme appearance font typography",
+        run: resetThemePreferences,
+      },
+      {
+        id: "quick-sign-out",
+        label: "Sign out",
+        description: sessionUser ? `End session for ${sessionUser.name}` : "No active session",
+        icon: "fa-right-from-bracket",
+        keywords: "logout sign out account session",
+        disabled: !sessionUser,
+        run: () => {
+          void logout();
+        },
+      },
+    ];
+
+    const allActions = [
+      ...navigationActions,
+      ...appearanceActions,
+      ...themeActions,
+      ...fontActions,
+      ...fontSizeActions,
+      ...utilityActions,
+    ];
+
+    const searchNeedle = quickSettingsQuery.trim().toLowerCase();
+    quickSettingsActions = searchNeedle.length === 0
+      ? allActions
+      : allActions.filter((action) => {
+          const haystack = `${action.label} ${action.description} ${action.keywords}`
+            .toLowerCase();
+          return searchNeedle.split(/\s+/).every((term) => haystack.includes(term));
+        });
+
+    if (quickSettingsIndex >= quickSettingsActions.length) {
+      quickSettingsIndex = Math.max(0, quickSettingsActions.length - 1);
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleQuickSettingsKeydown} />
 
 <header>
   <button type="button" class="logo" on:click={showHome}>
@@ -316,3 +569,56 @@
     </div>
   </nav>
 </header>
+
+{#if quickSettingsOpen}
+  <button
+    type="button"
+    class="quick-settings-backdrop"
+    aria-label="Close quick settings"
+    on:click={closeQuickSettings}
+  ></button>
+  <div class="quick-settings-panel" role="dialog" aria-modal="true" aria-label="Quick settings">
+    <div class="quick-settings-search">
+      <i class="fas fa-angle-right" aria-hidden="true"></i>
+      <input
+        bind:this={quickSettingsInputEl}
+        bind:value={quickSettingsQuery}
+        type="text"
+        placeholder="Search settings, theme, font, or view"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <span class="quick-settings-hint">esc</span>
+    </div>
+
+    <div class="quick-settings-results">
+      {#if quickSettingsActions.length === 0}
+        <p class="quick-settings-empty">No quick settings matched that search.</p>
+      {:else}
+        {#each quickSettingsActions as action, index (action.id)}
+          <button
+            type="button"
+            class="quick-settings-item"
+            class:active={index === quickSettingsIndex}
+            on:mouseenter={() => {
+              quickSettingsIndex = index;
+            }}
+            on:click={() => runQuickSetting(action)}
+            disabled={action.disabled}
+          >
+            <span class="quick-settings-item-copy">
+              <span class="quick-settings-item-label">
+                <i class={`fas ${action.icon}`} aria-hidden="true"></i>
+                <strong>{action.label}</strong>
+              </span>
+              <small>{action.description}</small>
+            </span>
+            {#if action.shortcut}
+              <span class="quick-settings-item-shortcut">{action.shortcut}</span>
+            {/if}
+          </button>
+        {/each}
+      {/if}
+    </div>
+  </div>
+{/if}

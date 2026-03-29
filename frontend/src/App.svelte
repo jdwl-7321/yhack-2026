@@ -3001,10 +3001,17 @@
     {showPlayView}
     {toggleLeaderboardView}
     {showSettings}
+    {setAppearanceMode}
     {cycleAppearanceMode}
     {toggleThemeMenu}
     {toggleAccountMenu}
     {setEditorTheme}
+    {editorFontFamily}
+    {editorFontFamilyOptions}
+    {editorFontSize}
+    {setEditorFontFamily}
+    {setEditorFontSize}
+    {resetThemePreferences}
     {accountInitials}
     {formatActivityTime}
     {formatRatingDelta}
