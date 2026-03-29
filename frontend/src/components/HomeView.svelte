@@ -42,7 +42,6 @@
   export let clearFlash: () => void = () => {};
   export let startRace: (nextMode: Mode) => void | Promise<void> = () => {};
   export let authenticate: (nextMode: AuthMode) => void | Promise<void> = () => {};
-  export let updatePartySetup: () => void | Promise<void> = () => {};
   export let updatePartyLimit: () => void | Promise<void> = () => {};
   export let copyPartyInvite: () => void | Promise<void> = () => {};
   export let refreshPartyLobby: () => void | Promise<void> = () => {};
@@ -57,6 +56,7 @@
   export let normalizePartyCode: (raw: string) => string = (raw) => raw;
 
   $: resumableMatch = match && !match.finished && !match.locked ? match : null;
+  $: showMatchSetupFields = !isPartyMode || !!party;
 </script>
 
 <main id="home-view">
@@ -196,34 +196,36 @@
               </label>
 
               {#if !isRankedMode}
-                <label>
-                  <span>Puzzle theme</span>
-                  <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
-                    {#each themes as theme}
-                      <option value={theme}>{theme}</option>
-                    {/each}
-                  </select>
-                </label>
+                {#if showMatchSetupFields}
+                  <label>
+                    <span>Puzzle theme</span>
+                    <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
+                      {#each themes as theme}
+                        <option value={theme}>{theme}</option>
+                      {/each}
+                    </select>
+                  </label>
 
-                <label>
-                  <span>Difficulty</span>
-                  <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
-                    {#each difficultyOptions as option}
-                      <option value={option}>{option.toUpperCase()}</option>
-                    {/each}
-                  </select>
-                </label>
+                  <label>
+                    <span>Difficulty</span>
+                    <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
+                      {#each difficultyOptions as option}
+                        <option value={option}>{option.toUpperCase()}</option>
+                      {/each}
+                    </select>
+                  </label>
 
-                <label>
-                  <span>Time (seconds)</span>
-                  <input
-                    type="number"
-                    bind:value={timeLimitSeconds}
-                    min="60"
-                    max="7200"
-                    disabled={!canEditPartySetup || busy}
-                  />
-                </label>
+                  <label>
+                    <span>Time (seconds)</span>
+                    <input
+                      type="number"
+                      bind:value={timeLimitSeconds}
+                      min="60"
+                      max="7200"
+                      disabled={!canEditPartySetup || busy}
+                    />
+                  </label>
+                {/if}
 
                 {#if isPartyMode}
                   <label>
@@ -282,16 +284,6 @@
                       {party.members.length}/{party.member_limit} members
                     </span>
                     <div class="party-leader-actions">
-                      {#if party.mode === "casual"}
-                        <button
-                          type="button"
-                          class="btn"
-                          on:click={updatePartySetup}
-                          disabled={busy}
-                        >
-                          Update setup
-                        </button>
-                      {/if}
                       <button
                         type="button"
                         class="btn"
@@ -409,7 +401,7 @@
             {:else if isRankedMode && rankedQueue}
               Searching Matchmaking
             {:else if !party}
-              {isRankedMode ? "Join Ranked Queue" : "Create Party"}
+              {isRankedMode ? "Join Ranked Queue" : "Create Party Lobby"}
             {:else if !isPartyLeader}
               Waiting for Leader
             {:else}

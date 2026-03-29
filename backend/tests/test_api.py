@@ -625,6 +625,89 @@ def test_party_leader_can_update_party_settings() -> None:
     assert payload["settings"]["seed"] == 222
 
 
+def test_create_party_defaults_to_basic_match_setup() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "PartyLeader", "guest": False, "elo": 1200},
+    ).get_json()
+    assert leader is not None
+
+    created = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "member_limit": 4,
+        },
+    )
+    assert created.status_code == 200
+
+    payload = created.get_json()
+    assert payload is not None
+    assert payload["settings"]["theme"] == THEMES[0]
+    assert payload["settings"]["difficulty"] == "easy"
+    assert payload["settings"]["time_limit_seconds"] == 900
+
+
+def test_party_match_start_uses_per_match_settings_payload() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    member = client.post(
+        "/api/users",
+        json={"name": "Member", "guest": False, "elo": 1180},
+    ).get_json()
+    assert leader is not None and member is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "member_limit": 4,
+        },
+    ).get_json()
+    assert party is not None
+
+    joined = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": member["id"]},
+    )
+    assert joined.status_code == 200
+
+    selected_theme = THEMES[1] if len(THEMES) > 1 else THEMES[0]
+    started = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={
+            "user_id": leader["id"],
+            "theme": selected_theme,
+            "difficulty": "easy",
+            "time_limit_seconds": 1200,
+            "seed": 77,
+        },
+    )
+    assert started.status_code == 200
+
+    match_payload = started.get_json()
+    assert match_payload is not None
+    assert match_payload["theme"] == selected_theme
+    assert match_payload["difficulty"] == "easy"
+    assert match_payload["time_limit_seconds"] == 1200
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}").get_json()
+    assert refreshed_party is not None
+    assert refreshed_party["settings"]["theme"] == selected_theme
+    assert refreshed_party["settings"]["difficulty"] == "easy"
+    assert refreshed_party["settings"]["time_limit_seconds"] == 1200
+
+
 def test_party_leader_can_add_time_to_casual_lobby_and_active_match() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()

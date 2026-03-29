@@ -188,12 +188,11 @@ class MemoryStore:
     ) -> Party:
         if leader_id not in self.users:
             raise ValueError("Leader user does not exist")
-        if theme not in THEMES:
-            raise ValueError("Theme must be from the hardcoded catalog")
-        if difficulty not in {"easy", "medium", "hard", "expert"}:
-            raise ValueError("Invalid difficulty")
-        if time_limit_seconds <= 0:
-            raise ValueError("time_limit_seconds must be positive")
+        self._validate_party_settings(
+            theme=theme,
+            difficulty=difficulty,
+            time_limit_seconds=time_limit_seconds,
+        )
 
         resolved_member_limit = self._resolve_party_limit(
             mode=mode,
@@ -277,12 +276,11 @@ class MemoryStore:
         party = self._require_party(code)
         self._require_party_leader(party, leader_id)
 
-        if theme not in THEMES:
-            raise ValueError("Theme must be from the hardcoded catalog")
-        if difficulty not in {"easy", "medium", "hard", "expert"}:
-            raise ValueError("Invalid difficulty")
-        if time_limit_seconds <= 0:
-            raise ValueError("time_limit_seconds must be positive")
+        self._validate_party_settings(
+            theme=theme,
+            difficulty=difficulty,
+            time_limit_seconds=time_limit_seconds,
+        )
 
         party.settings.theme = theme
         party.settings.difficulty = difficulty
@@ -373,6 +371,9 @@ class MemoryStore:
         code: str,
         requester_id: str | None = None,
         seed: int | None = None,
+        theme: str | None = None,
+        difficulty: Difficulty | None = None,
+        time_limit_seconds: int | None = None,
     ) -> Match:
         party = self._require_party(code)
         if requester_id is not None and requester_id != party.leader_id:
@@ -391,19 +392,39 @@ class MemoryStore:
         )
 
         if effective_mode == "ranked":
+            if (
+                theme is not None
+                or difficulty is not None
+                or time_limit_seconds is not None
+            ):
+                raise ValueError("Ranked matches do not support custom settings")
             avg_elo = sum(member.elo for member in members) / max(1, len(members))
-            difficulty = assign_ranked_difficulty(avg_elo)
-            theme = self._choose_next_ranked_theme(seed=seed)
-            time_limit_seconds = 3600
+            match_difficulty = assign_ranked_difficulty(avg_elo)
+            match_theme = self._choose_next_ranked_theme(seed=seed)
+            match_time_limit_seconds = 3600
         else:
-            difficulty = party.settings.difficulty
-            theme = party.settings.theme
-            time_limit_seconds = party.settings.time_limit_seconds
+            match_theme = theme if theme is not None else party.settings.theme
+            match_difficulty = (
+                difficulty if difficulty is not None else party.settings.difficulty
+            )
+            match_time_limit_seconds = (
+                time_limit_seconds
+                if time_limit_seconds is not None
+                else party.settings.time_limit_seconds
+            )
+            self._validate_party_settings(
+                theme=match_theme,
+                difficulty=match_difficulty,
+                time_limit_seconds=match_time_limit_seconds,
+            )
+            party.settings.theme = match_theme
+            party.settings.difficulty = match_difficulty
+            party.settings.time_limit_seconds = match_time_limit_seconds
 
         match_seed = seed if seed is not None else random.randint(1, 10**9)
         puzzle = generate_puzzle(
-            theme=theme,
-            difficulty=difficulty,
+            theme=match_theme,
+            difficulty=match_difficulty,
             seed=match_seed,
         )
 
@@ -411,9 +432,9 @@ class MemoryStore:
             id=f"m_{uuid.uuid4().hex[:10]}",
             party_code=code,
             mode=effective_mode,
-            theme=theme,
-            difficulty=difficulty,
-            time_limit_seconds=time_limit_seconds,
+            theme=match_theme,
+            difficulty=match_difficulty,
+            time_limit_seconds=match_time_limit_seconds,
             puzzle=puzzle,
             created_at=time(),
             players={
@@ -766,6 +787,20 @@ class MemoryStore:
         if member_limit > 16:
             raise ValueError("Party limit cannot exceed 16")
         return member_limit
+
+    @staticmethod
+    def _validate_party_settings(
+        *,
+        theme: str,
+        difficulty: Difficulty,
+        time_limit_seconds: int,
+    ) -> None:
+        if theme not in THEMES:
+            raise ValueError("Theme must be from the hardcoded catalog")
+        if difficulty not in {"easy", "medium", "hard", "expert"}:
+            raise ValueError("Invalid difficulty")
+        if time_limit_seconds <= 0:
+            raise ValueError("time_limit_seconds must be positive")
 
     def _choose_next_ranked_theme(self, *, seed: int | None) -> str:
         available = [theme for theme in THEMES if theme not in self._ranked_used_themes]
