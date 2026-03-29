@@ -77,7 +77,7 @@
       on:click={showPlayView}
       title="Play"
     >
-      <i class="fas fa-keyboard" aria-hidden="true"></i>
+      <i class="fas fa-gamepad" aria-hidden="true"></i>
     </button>
     <button
       type="button"
