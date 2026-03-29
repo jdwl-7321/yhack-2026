@@ -78,8 +78,10 @@
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
-  const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
-  const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
+  const DEFAULT_APPEARANCE_MODE: AppearanceMode = "dark";
+  const SYSTEM_APPEARANCE_FALLBACK: UiTheme = "light";
+  const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "everforest-light";
+  const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "catppuccin-mocha";
   const DEFAULT_EDITOR_FONT_FAMILY: EditorFontFamily = "roboto-mono";
   const DEFAULT_EDITOR_FONT_SIZE = 14;
   const MIN_EDITOR_FONT_SIZE = 12;
@@ -201,8 +203,8 @@
   let party: PartyPayload | null = null;
   let rankedQueue: RankedQueuePayload | null = null;
 
-  let themePref: UiTheme = "dark";
-  let appearanceMode: AppearanceMode = "system";
+  let themePref: UiTheme = DEFAULT_APPEARANCE_MODE;
+  let appearanceMode: AppearanceMode = DEFAULT_APPEARANCE_MODE;
   let systemMatcher: MediaQueryList | null = null;
   let mediaListener: (() => void) | null = null;
   let themeStatusText = "";
@@ -1886,7 +1888,7 @@
   }
 
   function resolveSystemTheme(): UiTheme {
-    return systemMatcher?.matches ? "dark" : "light";
+    return systemMatcher?.matches ? "dark" : SYSTEM_APPEARANCE_FALLBACK;
   }
 
   function cycleAppearanceMode(): void {
@@ -2256,7 +2258,7 @@
   }
 
   function resetThemePreferences(): void {
-    appearanceMode = "system";
+    appearanceMode = DEFAULT_APPEARANCE_MODE;
     lightEditorTheme = DEFAULT_LIGHT_EDITOR_THEME;
     darkEditorTheme = DEFAULT_DARK_EDITOR_THEME;
     editorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;

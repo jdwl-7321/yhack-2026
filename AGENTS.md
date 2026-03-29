@@ -199,6 +199,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/app.css`
   - Entire app styling and design tokens.
   - Defines theme CSS variables and component layout styles.
+  - Base tokens align with the default global palettes: Catppuccin Mocha for dark and Everforest Light for light.
 
 ### Main SPA orchestrator
 
@@ -214,6 +215,7 @@ Defined in `backend/src/app.py`:
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
+    - appearance persistence with dark-mode startup default, explicit light fallback for system mode, and Catppuccin Mocha / Everforest Light as the default dark/light palettes
     - routing between subviews (`home`, `arena`, `leaderboard`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 

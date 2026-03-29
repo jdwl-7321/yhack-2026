@@ -36,11 +36,11 @@
   export let customShortcutError = "";
   export let setCustomShortcut: (action: EditorAction, rawValue: string) => void = () => {};
 
-  export let appearanceMode: AppearanceMode = "system";
+  export let appearanceMode: AppearanceMode = "dark";
   export let appearanceModeOrder: AppearanceMode[] = ["system", "light", "dark"];
   export let setAppearanceMode: (mode: AppearanceMode) => void = () => {};
   export let themePref: UiTheme = "dark";
-  export let activeEditorTheme: BundledTheme = "github-dark-default";
+  export let activeEditorTheme: BundledTheme = "catppuccin-mocha";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
   export let resetThemePreferences: () => void = () => {};
