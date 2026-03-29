@@ -81,10 +81,6 @@
     <section class="settings-nav-card">
       <p class="eyebrow">Workspace</p>
       <h1>Settings</h1>
-      <p class="settings-sidebar-copy">
-        Tune the arena, editor, and account surface so the app matches your
-        workflow.
-      </p>
 
       <div class="settings-summary-list">
         <div class="settings-summary-item">
@@ -184,9 +180,6 @@
                 ? `Current ladder rating: ${sessionUser.elo} ELO`
                 : "Sign in to persist ranked progress and match history."}
             </span>
-            {#if sessionUser}
-              <span class="settings-identity-note">Profile photo is stored on this browser.</span>
-            {/if}
           </div>
         </article>
 
@@ -242,10 +235,7 @@
               <span>Keybind profile</span>
             </div>
             <p>
-              Normal keeps the default editor controls. Vim now uses a real
-              CodeMirror Vim package instead of custom in-app motion logic.
-              Custom lets users keep normal typing but tailor action
-              shortcuts.
+              Choose between normal, Vim, or custom shortcuts.
             </p>
           </div>
           <div
@@ -274,12 +264,9 @@
             </div>
             <p>
               {#if keybindMode === "custom"}
-                Custom mode uses `Alt` plus the letter you choose for each
-                action below.
+                Use `Alt` plus your chosen key for each action below.
               {:else}
-                Built-in shortcuts stay simple: `Ctrl+Enter` submits,
-                `Ctrl+Shift+Enter` runs samples, `Alt+H` asks for a hint,
-                and `Alt+F` forfeits.
+                Default shortcuts are shown on the right.
               {/if}
             </p>
           </div>
@@ -481,10 +468,6 @@
                 />
               </label>
             </div>
-            <p class="settings-helper-copy">
-              Pick the code font and point size that feels best across the
-              editor, settings, and match UI.
-            </p>
           </div>
 
           <div class="settings-action-row settings-theme-actions">
@@ -517,7 +500,6 @@
           <p class="eyebrow">Security</p>
           <h3>Password</h3>
         </div>
-        <span class="settings-panel-note">Classic password change flow</span>
       </div>
 
       {#if !sessionUser || sessionUser.guest}

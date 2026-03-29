@@ -86,7 +86,7 @@
     </div>
 
     <div class="leaderboard-meta">
-      <span>Showing the top ranked players by ELO.</span>
+      <span>Showing the top players ranked by ELO.</span>
       <button type="button" class="btn" on:click={() => void loadLeaderboard()}>
         Refresh
       </button>
