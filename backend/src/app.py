@@ -113,6 +113,16 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         session.pop("user_id", None)
         return jsonify({"ok": True})
 
+    @app.route("/api/auth/password", methods=["POST"])
+    def auth_change_password() -> Any:
+        payload = request.get_json(silent=True) or {}
+        data.change_password(
+            user_id=session_user_id(),
+            current_password=str(payload.get("current_password", "")),
+            new_password=str(payload.get("new_password", "")),
+        )
+        return jsonify({"ok": True})
+
     @app.route("/api/users", methods=["POST"])
     def create_user() -> Any:
         payload = request.get_json(silent=True) or {}

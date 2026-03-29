@@ -82,6 +82,39 @@ def test_auth_session_register_login_logout() -> None:
     assert client.get("/api/auth/session").get_json()["authenticated"] is True
 
 
+def test_authenticated_user_can_change_password() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "Ada", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    change = client.post(
+        "/api/auth/password",
+        json={"current_password": "secret123", "new_password": "newsecret456"},
+    )
+    assert change.status_code == 200
+    assert change.get_json() == {"ok": True}
+
+    client.post("/api/auth/logout")
+
+    old_login = client.post(
+        "/api/auth/login",
+        json={"name": "Ada", "password": "secret123"},
+    )
+    assert old_login.status_code == 400
+    assert old_login.get_json() == {"error": "Invalid credentials"}
+
+    new_login = client.post(
+        "/api/auth/login",
+        json={"name": "Ada", "password": "newsecret456"},
+    )
+    assert new_login.status_code == 200
+
+
 def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     db_path = tmp_path / "auth.sqlite3"
 
@@ -105,6 +138,38 @@ def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     assert session_payload is not None
     assert session_payload["authenticated"] is True
     assert session_payload["user"]["name"] == "PersistedUser"
+
+
+def test_sqlite_changed_password_persists_between_app_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth-password.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+    register = first_client.post(
+        "/api/auth/register",
+        json={"name": "ResetUser", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    changed = first_client.post(
+        "/api/auth/password",
+        json={"current_password": "secret123", "new_password": "reset456"},
+    )
+    assert changed.status_code == 200
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    failed_old = second_client.post(
+        "/api/auth/login",
+        json={"name": "ResetUser", "password": "secret123"},
+    )
+    assert failed_old.status_code == 400
+
+    login = second_client.post(
+        "/api/auth/login",
+        json={"name": "ResetUser", "password": "reset456"},
+    )
+    assert login.status_code == 200
 
 
 def test_create_party_uses_authenticated_session_user() -> None:

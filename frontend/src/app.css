@@ -16,6 +16,7 @@
   --console-bg: #1e1e1e;
   --editor-bg: #323437;
   --editor-text: #d1d0c5;
+  --editor-font-size: 0.9rem;
   --editor-selection: rgba(226, 183, 20, 0.34);
   --editor-keyword: #f7768e;
   --editor-string: #9ece6a;
@@ -41,6 +42,7 @@
   --console-bg: #1f2329;
   --editor-bg: #f3f4f6;
   --editor-text: #1f2329;
+  --editor-font-size: 0.9rem;
   --editor-selection: rgba(168, 109, 0, 0.22);
   --editor-keyword: #b42318;
   --editor-string: #2f8f4e;
@@ -969,6 +971,52 @@ select:focus {
   border-radius: 0.45rem;
 }
 
+.vim-editor-host {
+  height: 100%;
+  min-height: 220px;
+}
+
+.vim-editor-host .cm-editor {
+  height: 100%;
+  min-height: 220px;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  border-radius: 0.45rem;
+  font-family: var(--font-family);
+  font-size: var(--editor-font-size);
+}
+
+.vim-editor-host .cm-scroller {
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.vim-editor-host .cm-content,
+.vim-editor-host .cm-gutter {
+  font-family: inherit;
+  font-size: var(--editor-font-size);
+}
+
+.vim-editor-host .cm-gutters {
+  background: var(--editor-bg);
+  color: var(--sub-color);
+  border-right: 1px solid color-mix(in srgb, var(--sub-color) 35%, transparent);
+}
+
+.vim-editor-host .cm-activeLineGutter,
+.vim-editor-host .cm-activeLine {
+  background: color-mix(in srgb, var(--main-color) 8%, transparent);
+}
+
+.vim-editor-host .cm-cursor {
+  border-left-color: var(--theme-accent);
+}
+
+.vim-editor-host .cm-selectionBackground,
+.vim-editor-host .cm-content ::selection {
+  background: var(--editor-selection);
+}
+
 .line-numbers {
   position: absolute;
   inset: 0 auto 0 0;
@@ -980,7 +1028,7 @@ select:focus {
   border-radius: 0.45rem 0 0 0.45rem;
   color: var(--sub-color);
   font-family: var(--font-family);
-  font-size: 0.9rem;
+  font-size: var(--editor-font-size);
   line-height: 1.5;
   text-align: right;
   white-space: pre;
@@ -1005,7 +1053,7 @@ select:focus {
   border-radius: 0.45rem;
   background: var(--editor-bg);
   font-family: var(--font-family);
-  font-size: 0.9rem;
+  font-size: var(--editor-font-size);
   line-height: 1.5;
   white-space: pre;
   overflow: auto;
@@ -1045,7 +1093,7 @@ select:focus {
   color: transparent;
   -webkit-text-fill-color: transparent;
   font-family: var(--font-family);
-  font-size: 0.9rem;
+  font-size: var(--editor-font-size);
   resize: vertical;
   outline: none;
   line-height: 1.5;
@@ -1104,6 +1152,17 @@ select:focus {
   justify-content: space-between;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+.editor-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--main-color) 12%, transparent);
+  color: var(--main-color);
+  font-size: 0.78rem;
+  text-transform: lowercase;
 }
 
 .action-group {
@@ -1626,6 +1685,85 @@ select:focus {
   gap: 0.55rem;
 }
 
+.settings-shortcut-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.settings-shortcut-chip {
+  display: grid;
+  gap: 0.22rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--bg-color) 76%, var(--sub-alt-color) 24%);
+  color: var(--sub-color);
+  font-size: 0.78rem;
+}
+
+.settings-shortcut-chip strong {
+  color: var(--text-color);
+  font-size: 0.88rem;
+}
+
+.settings-shortcut-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--bg-color) 62%, var(--sub-alt-color) 38%);
+}
+
+.settings-shortcut-card-copy {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.settings-shortcut-card-copy p {
+  margin: 0;
+  color: var(--sub-color);
+  line-height: 1.5;
+}
+
+.settings-shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.settings-shortcut-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.settings-shortcut-input-shell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 0.8rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--sub-alt-color);
+  border: 1px solid var(--panel-border);
+}
+
+.settings-shortcut-input-shell span {
+  color: var(--sub-color);
+  font-size: 0.8rem;
+}
+
+.settings-shortcut-input-shell input {
+  max-width: 3.2rem;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.settings-password-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.8rem;
+}
+
 .settings-behavior-row {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
@@ -1886,7 +2024,9 @@ footer a:hover {
   }
 
   .settings-stat-grid,
-  .settings-system-grid {
+  .settings-system-grid,
+  .settings-shortcut-grid,
+  .settings-shortcut-summary {
     grid-template-columns: 1fr;
   }
 

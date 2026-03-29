@@ -139,6 +139,24 @@ class MemoryStore:
             raise ValueError("Invalid credentials")
         return user
 
+    def change_password(
+        self,
+        *,
+        user_id: str,
+        current_password: str,
+        new_password: str,
+    ) -> User:
+        user = self._require_user(user_id)
+        if user.guest or user.password_hash is None:
+            raise ValueError("Password changes are only available for registered accounts")
+        if not check_password_hash(user.password_hash, current_password):
+            raise ValueError("Current password is incorrect")
+        if len(new_password) < 6:
+            raise ValueError("Password must be at least 6 characters")
+
+        user.password_hash = generate_password_hash(new_password)
+        return user
+
     def create_party(
         self,
         *,
@@ -651,6 +669,25 @@ class SqliteStore(MemoryStore):
             )
         except sqlite3.IntegrityError:
             raise ValueError("Display name is already registered") from None
+
+    def change_password(
+        self,
+        *,
+        user_id: str,
+        current_password: str,
+        new_password: str,
+    ) -> User:
+        user = super().change_password(
+            user_id=user_id,
+            current_password=current_password,
+            new_password=new_password,
+        )
+        with self._conn:
+            self._conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (user.password_hash, user.id),
+            )
+        return user
 
     def finish_match(self, *, match_id: str) -> dict[str, int]:
         deltas = super().finish_match(match_id=match_id)
