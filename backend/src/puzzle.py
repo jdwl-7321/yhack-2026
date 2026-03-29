@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from pprint import pformat
 import random
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Sequence, cast
@@ -392,6 +393,54 @@ def template_source(template_key: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def create_template_source(
+    *, template_key: str, theme: str, difficulty: Difficulty
+) -> None:
+    normalized_key = _normalize_template_key(template_key)
+    normalized_theme = _normalize_theme(theme)
+    if difficulty not in {"easy", "medium", "hard", "expert"}:
+        raise ValueError("Invalid difficulty")
+    if normalized_key in _TEMPLATE_BY_KEY:
+        raise ValueError("Puzzle template already exists")
+
+    path = _candidate_template_source_path(normalized_key)
+    if path.exists():
+        raise ValueError("Puzzle template file already exists")
+
+    source_code = _template_source_boilerplate(
+        template_key=normalized_key,
+        theme=normalized_theme,
+        difficulty=difficulty,
+    )
+    path.write_text(source_code, encoding="utf-8")
+    try:
+        _refresh_template_registry()
+        _template_for_key(normalized_key)
+    except Exception as exc:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        _refresh_template_registry()
+        raise ValueError(f"Invalid puzzle source: {exc}") from None
+
+
+def delete_template_source(*, template_key: str) -> None:
+    template = _template_for_key(template_key)
+    path = Path(template.source_path)
+    previous_source = path.read_text(encoding="utf-8")
+
+    path.unlink()
+    try:
+        _refresh_template_registry()
+        if template_key in _TEMPLATE_BY_KEY:
+            raise ValueError("Template delete did not remove registry entry")
+    except Exception as exc:
+        path.write_text(previous_source, encoding="utf-8")
+        _refresh_template_registry()
+        raise ValueError(f"Unable to delete puzzle template: {exc}") from None
+
+
 def update_template_source(*, template_key: str, source_code: str) -> None:
     template = _template_for_key(template_key)
     path = Path(template.source_path)
@@ -657,6 +706,81 @@ def _template_for_key(template_key: str) -> _Template:
     if template is None:
         raise ValueError("Unknown puzzle template")
     return template
+
+
+def _normalize_template_key(template_key: str) -> str:
+    normalized = template_key.strip()
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", normalized):
+        raise ValueError(
+            "template_key must be lowercase letters/numbers separated by hyphens"
+        )
+    return normalized
+
+
+def _candidate_template_source_path(template_key: str) -> Path:
+    file_name = f"{template_key.replace('-', '_')}{_PUZZLE_MODULE_SUFFIX}"
+    return _PUZZLE_MODULE_DIR / file_name
+
+
+def _template_source_boilerplate(
+    *, template_key: str, theme: str, difficulty: Difficulty
+) -> str:
+    return f'''from __future__ import annotations
+
+import random
+from typing import Any, Sequence
+
+from domain_types import Difficulty, JsonScalar
+from puzzle import FunctionContract, TestCase
+from puzzles.common import require_arity, require_int_value
+
+template_key = "{template_key}"
+theme = "{theme}"
+difficulties: tuple[Difficulty, ...] = ("{difficulty}",)
+prompt = (
+    "Given an integer value and hidden match variable `offset`, "
+    "return value + offset."
+)
+hint_level_1 = "The input is a single integer argument."
+hint_level_2 = "The offset remains the same for every test in this match."
+hint_level_3 = "Use the visible examples to infer offset and add it to value."
+contract = FunctionContract(
+    parameter_types=("int",),
+    return_type="int",
+    parameter_names=("value",),
+)
+
+
+def variable_factory(
+    rng: random.Random, _difficulty: Difficulty
+) -> dict[str, JsonScalar]:
+    return {{"offset": rng.randint(1, 20)}}
+
+
+def case_factory(
+    rng: random.Random, _difficulty: Difficulty, params: dict[str, JsonScalar]
+) -> TestCase:
+    value = rng.randint(-50, 50)
+    offset = int(params["offset"])
+    return TestCase(inputs=(value,), output=value + offset)
+
+
+def shared_input_factory(
+    _params: dict[str, JsonScalar], _sample_tests: list[TestCase]
+) -> tuple[Any, ...]:
+    return ()
+
+
+def expected_output_for_primary_inputs(
+    *,
+    variables: dict[str, JsonScalar],
+    primary_inputs: Sequence[Any],
+) -> Any:
+    require_arity(primary_inputs, expected=1)
+    value = require_int_value(primary_inputs[0], label="value")
+    offset = int(variables["offset"])
+    return value + offset
+'''
 
 
 def _render_hint_template(template: str, params: dict[str, JsonScalar]) -> str:

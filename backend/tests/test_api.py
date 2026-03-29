@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 from app import create_app
 from config import ADMIN_USERNAME
@@ -432,19 +433,48 @@ def test_admin_can_update_puzzle_template_source() -> None:
         assert restore.status_code == 200
 
 
-def test_admin_puzzle_restore_and_delete_endpoints_are_not_available() -> None:
+def test_admin_can_create_and_delete_puzzle_templates_from_files() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
     _register_admin(client)
 
+    template_key = f"admin-temp-{uuid4().hex[:8]}-v1"
+
     create_response = client.post(
         "/api/admin/puzzles",
-        json={"template_key": "crypto-xor-byte-inference-v1"},
+        json={
+            "template_key": template_key,
+            "theme": "Algorithms",
+            "difficulty": "medium",
+        },
     )
-    assert create_response.status_code == 404
+    assert create_response.status_code == 200
+    create_payload = create_response.get_json()
+    assert create_payload is not None
+    assert create_payload["puzzle_template"]["template_key"] == template_key
+    source_path = Path(create_payload["puzzle_template"]["source_path"])
 
-    delete_response = client.delete("/api/admin/puzzles/crypto-xor-byte-inference-v1")
-    assert delete_response.status_code == 405
+    try:
+        dashboard = client.get("/api/admin/dashboard").get_json()
+        assert dashboard is not None
+        assert any(
+            template["template_key"] == template_key
+            for template in dashboard["puzzle_templates"]
+        )
+
+        delete_response = client.delete(f"/api/admin/puzzles/{template_key}")
+        assert delete_response.status_code == 200
+        assert not source_path.exists()
+
+        dashboard_after_delete = client.get("/api/admin/dashboard").get_json()
+        assert dashboard_after_delete is not None
+        assert not any(
+            template["template_key"] == template_key
+            for template in dashboard_after_delete["puzzle_templates"]
+        )
+    finally:
+        if source_path.exists():
+            client.delete(f"/api/admin/puzzles/{template_key}")
 
 
 def test_authenticated_user_can_change_password() -> None:

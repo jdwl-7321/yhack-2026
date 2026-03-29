@@ -1445,11 +1445,43 @@ select:focus {
   background: color-mix(in srgb, var(--bg-color) 62%, var(--sub-alt-color) 38%);
 }
 
+.admin-save-btn {
+  color: var(--bg-color);
+  background: color-mix(in srgb, var(--main-color) 86%, var(--text-color) 14%);
+}
+
+.admin-save-btn:hover:not(:disabled) {
+  color: var(--bg-color);
+  background: color-mix(in srgb, var(--main-color) 70%, var(--text-color) 30%);
+}
+
+.admin-delete-btn {
+  color: #fff;
+  background: color-mix(in srgb, var(--error-color) 88%, #000 12%);
+}
+
+.admin-delete-btn:hover:not(:disabled) {
+  color: #fff;
+  background: color-mix(in srgb, var(--error-color) 74%, #000 26%);
+}
+
 .admin-puzzle-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 0.6fr));
   gap: 0.6rem;
   margin-bottom: 0.75rem;
+}
+
+.admin-puzzle-create {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 0.8fr) auto;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  border-radius: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--main-color) 24%, var(--panel-border) 76%);
+  background: color-mix(in srgb, var(--bg-color) 70%, var(--sub-alt-color) 30%);
+  align-items: end;
 }
 
 .admin-filter-field {
@@ -1583,11 +1615,23 @@ select:focus {
   resize: vertical;
 }
 
-.admin-puzzle-form .admin-puzzle-source {
-  min-height: 16rem;
-  font-family: "IBM Plex Mono", "Roboto Mono", "Fira Code", monospace;
+.admin-source-editor {
+  height: min(56vh, 23rem);
+  border-radius: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--main-color) 26%, var(--panel-border) 74%);
+  overflow: hidden;
+}
+
+.admin-source-field {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--sub-color);
   font-size: 0.78rem;
-  line-height: 1.45;
+}
+
+.admin-source-editor:focus-within {
+  border-color: color-mix(in srgb, var(--main-color) 56%, var(--text-color) 44%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--main-color) 40%, transparent);
 }
 
 .admin-puzzle-actions {
@@ -3370,6 +3414,7 @@ footer a:hover {
   }
 
   .admin-puzzle-toolbar,
+  .admin-puzzle-create,
   .admin-puzzle-meta-grid,
   .admin-puzzle-grid,
   .admin-puzzle-hints {

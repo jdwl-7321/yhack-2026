@@ -68,8 +68,8 @@ Top-level layout:
   - Also exposes ranked queue payloads via `_ranked_queue_payload`.
   - Match payloads include `template_key` so the client can apply template-specific UI behavior.
   - Auth session payload includes `is_admin` (resolved by configured admin username).
-  - Provides admin endpoints for dashboard listing, resetting all ELOs, setting per-user ELO, deleting users, canceling active matches, and CRUD management of puzzle templates.
-  - Admin puzzle payloads include editable module source (`source_path`, `source_code`) and `POST /api/admin/puzzles/<template_key>` accepts `source_code` updates.
+  - Provides admin endpoints for dashboard listing, resetting all ELOs, setting per-user ELO, deleting users, canceling active matches, and file-backed puzzle-template create/update/delete.
+  - Admin puzzle payloads include editable module source (`source_path`, `source_code`); `POST /api/admin/puzzles` creates template files, `POST /api/admin/puzzles/<template_key>` updates source, and `DELETE /api/admin/puzzles/<template_key>` removes template files.
   - Enables permissive CORS headers for local frontend dev.
   - Defaults to `SqliteStore` using `backend/data/yhack.sqlite3` unless `YHACK_DB_PATH` is set.
 
@@ -109,7 +109,7 @@ Top-level layout:
   - Builds solution scaffold from contract.
   - Supports hidden-test replacement (`generate_additional_hidden_test`) for promoted failures.
   - Exposes hardcoded template seed metadata (`hardcoded_puzzle_templates`) and targeted generation (`generate_puzzle_from_template`) with prompt/hint values coming directly from puzzle module files.
-  - Exposes template source helpers (`template_source_path`, `template_source`, `update_template_source`) used by admin source editing.
+  - Exposes template source helpers (`template_source_path`, `template_source`, `create_template_source`, `update_template_source`, `delete_template_source`) used by admin source editing.
 
 - `backend/src/puzzles/`
   - One Python file per puzzle template (`*_puzzle.py`), each exporting consistent names for metadata and factories:
@@ -178,7 +178,9 @@ Defined in `backend/src/app.py`:
   - `POST /api/admin/users/<user_id>/elo`
   - `DELETE /api/admin/users/<user_id>`
   - `POST /api/admin/matches/<match_id>/cancel`
+  - `POST /api/admin/puzzles`
   - `POST /api/admin/puzzles/<template_key>`
+  - `DELETE /api/admin/puzzles/<template_key>`
 
 - Party/lobby:
   - `POST /api/parties`
@@ -249,7 +251,7 @@ Defined in `backend/src/app.py`:
     - syntax highlighting/theming via highlight.js + Shiki
     - appearance persistence with light-mode startup default, explicit light fallback for system mode, and Everforest Light / Catppuccin Mocha as the default light/dark palettes
     - local per-user profile photo persistence in browser storage, including client-side square crop/compression before save
-    - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match, save puzzle template source code)
+    - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match, create/delete puzzle templates, save puzzle template source code)
     - routing between subviews (`home`, `arena`, `leaderboard`, `admin`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 
@@ -261,7 +263,8 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/AdminView.svelte`
   - Admin dashboard UI for account, puzzle-template, and live-match operations.
-  - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match, filter/search puzzle templates, collapse/expand template cards, and edit template Python source.
+  - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match, create/delete puzzle templates, filter/search puzzle templates, collapse/expand template cards, and edit template Python source.
+  - Puzzle template cards keep prompt/hint metadata informational; source code is the only editable template input and uses an embedded CodeMirror Python editor.
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
@@ -306,7 +309,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and removal of puzzle restore/delete endpoints.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and admin puzzle create/delete file operations.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.

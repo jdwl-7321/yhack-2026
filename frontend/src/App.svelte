@@ -2914,6 +2914,36 @@
     }
   }
 
+  async function createPuzzleTemplate(
+    templateKey: string,
+    theme: string,
+    difficulty: Difficulty,
+  ): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await api<{ puzzle_template: AdminPuzzleTemplate }>("/api/admin/puzzles", {
+        method: "POST",
+        body: JSON.stringify({
+          template_key: templateKey,
+          theme,
+          difficulty,
+        }),
+      });
+      await loadAdminDashboard(true);
+      notice = `Created puzzle template ${templateKey}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function updatePuzzleTemplate(template: AdminPuzzleTemplate): Promise<void> {
     if (!sessionUser || !isAdmin) {
       return;
@@ -2934,6 +2964,27 @@
       );
       await loadAdminDashboard(true);
       notice = `Saved source for ${template.template_key}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function deletePuzzleTemplate(templateKey: string): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await api<{ deleted: AdminPuzzleTemplate }>(`/api/admin/puzzles/${templateKey}`, {
+        method: "DELETE",
+      });
+      await loadAdminDashboard(true);
+      notice = `Deleted puzzle template ${templateKey}.`;
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -4308,7 +4359,9 @@
       {updateUserElo}
       {deleteUserAccount}
       {cancelActiveMatch}
+      {createPuzzleTemplate}
       {updatePuzzleTemplate}
+      {deletePuzzleTemplate}
     />
   {:else if activeView === "settings"}
     <SettingsView

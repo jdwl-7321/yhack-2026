@@ -17,6 +17,8 @@ from judge import JudgeResult
 from puzzle import (
     HardcodedPuzzleTemplate,
     TestCase,
+    create_template_source,
+    delete_template_source,
     format_case_input,
     format_value,
     generator_schema,
@@ -457,6 +459,53 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         if template is None:
             raise ValueError("Puzzle template not found")
         return jsonify({"puzzle_template": _admin_puzzle_template_payload(template)})
+
+    @app.route("/api/admin/puzzles", methods=["POST"])
+    def admin_create_puzzle_template() -> Any:
+        require_admin_user()
+        payload = request.get_json(silent=True) or {}
+        template_key = str(payload.get("template_key", "")).strip()
+        if not template_key:
+            raise ValueError("template_key is required")
+        if "theme" not in payload:
+            raise ValueError("theme is required")
+        if "difficulty" not in payload:
+            raise ValueError("difficulty is required")
+
+        create_template_source(
+            template_key=template_key,
+            theme=str(payload["theme"]),
+            difficulty=_parse_difficulty(payload["difficulty"]),
+        )
+
+        template = next(
+            (
+                item
+                for item in data.admin_list_puzzle_templates()
+                if item.template_key == template_key
+            ),
+            None,
+        )
+        if template is None:
+            raise ValueError("Puzzle template not found")
+        return jsonify({"puzzle_template": _admin_puzzle_template_payload(template)})
+
+    @app.route("/api/admin/puzzles/<template_key>", methods=["DELETE"])
+    def admin_delete_puzzle_template(template_key: str) -> Any:
+        require_admin_user()
+        template = next(
+            (
+                item
+                for item in data.admin_list_puzzle_templates()
+                if item.template_key == template_key
+            ),
+            None,
+        )
+        if template is None:
+            raise ValueError("Puzzle template not found")
+        deleted_payload = _admin_puzzle_template_payload(template)
+        delete_template_source(template_key=template_key)
+        return jsonify({"deleted": deleted_payload})
 
     @app.route("/api/parties", methods=["POST"])
     def create_party() -> Any:

@@ -1,4 +1,12 @@
 <script lang="ts">
+  import { basicSetup, EditorView } from "codemirror";
+  import { EditorState } from "@codemirror/state";
+  import { python as cmPython } from "@codemirror/lang-python";
+  import {
+    HighlightStyle,
+    syntaxHighlighting,
+  } from "@codemirror/language";
+  import { tags } from "@lezer/highlight";
   import type {
     AdminMatch,
     AdminPuzzleTemplate,
@@ -24,9 +32,15 @@
   ) => void | Promise<void> = () => {};
   export let deleteUserAccount: (userId: string) => void | Promise<void> = () => {};
   export let cancelActiveMatch: (matchId: string) => void | Promise<void> = () => {};
+  export let createPuzzleTemplate: (
+    templateKey: string,
+    theme: string,
+    difficulty: Difficulty,
+  ) => void | Promise<void> = () => {};
   export let updatePuzzleTemplate: (
     template: AdminPuzzleTemplate,
   ) => void | Promise<void> = () => {};
+  export let deletePuzzleTemplate: (templateKey: string) => void | Promise<void> = () => {};
 
   type TemplateDifficultyFilter = "all" | Difficulty;
 
@@ -35,7 +49,91 @@
   let puzzleFilterQuery = "";
   let puzzleFilterTheme = "all";
   let puzzleFilterDifficulty: TemplateDifficultyFilter = "all";
+  let newTemplateKey = "";
+  let newTemplateTheme = "Algorithms";
+  let newTemplateDifficulty: Difficulty = "easy";
   let openTemplateKeys = new Set<string>();
+  const sourceEditorViews = new Map<string, EditorView>();
+
+  const sourceHighlightStyle = HighlightStyle.define([
+    {
+      tag: [
+        tags.keyword,
+        tags.controlKeyword,
+        tags.definitionKeyword,
+        tags.modifier,
+        tags.operatorKeyword,
+      ],
+      color: "var(--editor-keyword)",
+    },
+    {
+      tag: [
+        tags.string,
+        tags.special(tags.string),
+        tags.regexp,
+        tags.character,
+      ],
+      color: "var(--editor-string)",
+    },
+    {
+      tag: [tags.comment, tags.lineComment, tags.blockComment],
+      color: "var(--editor-comment)",
+    },
+    {
+      tag: [
+        tags.number,
+        tags.integer,
+        tags.float,
+        tags.bool,
+        tags.null,
+      ],
+      color: "var(--editor-number)",
+    },
+    {
+      tag: [
+        tags.function(tags.variableName),
+        tags.function(tags.propertyName),
+        tags.labelName,
+      ],
+      color: "var(--editor-function)",
+    },
+  ]);
+
+  const sourceEditorTheme = EditorView.theme({
+    "&": {
+      height: "100%",
+      backgroundColor: "var(--editor-bg)",
+      color: "var(--editor-text)",
+    },
+    ".cm-scroller": {
+      fontFamily: "var(--editor-font-family)",
+      fontSize: "var(--editor-font-size)",
+      lineHeight: "1.5",
+      overflow: "auto",
+    },
+    ".cm-gutters": {
+      backgroundColor: "var(--editor-bg)",
+      color: "var(--sub-color)",
+      borderRight: "1px solid color-mix(in srgb, var(--sub-color) 35%, transparent)",
+    },
+    ".cm-activeLineGutter, .cm-activeLine": {
+      backgroundColor: "color-mix(in srgb, var(--main-color) 8%, transparent)",
+    },
+    ".cm-cursor": {
+      borderLeftColor: "var(--theme-accent)",
+    },
+    ".cm-selectionBackground, .cm-content ::selection": {
+      backgroundColor: "var(--editor-selection)",
+    },
+    ".cm-focused": {
+      outline: "none",
+    },
+  });
+
+  type SourceEditorBinding = {
+    templateKey: string;
+    sourceCode: string;
+  };
 
   $: availableTemplateThemes = Array.from(
     new Set(adminPuzzleTemplates.map((template) => template.theme)),
@@ -61,21 +159,78 @@
       template.template_key,
       template.theme,
       template.difficulty,
-      template.prompt,
-      template.hint_level_1,
-      template.hint_level_2,
-      template.hint_level_3,
       template.source_path,
+      template.source_code,
     ]
       .join("\n")
       .toLowerCase();
     return searchableText.includes(query);
   });
 
+  function sourceEditorHost(node: HTMLDivElement, binding: SourceEditorBinding) {
+    let current = binding;
+
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: binding.sourceCode,
+        extensions: [
+          basicSetup,
+          cmPython(),
+          syntaxHighlighting(sourceHighlightStyle),
+          sourceEditorTheme,
+        ],
+      }),
+      parent: node,
+    });
+    sourceEditorViews.set(binding.templateKey, view);
+
+    return {
+      update(next: SourceEditorBinding) {
+        if (next.templateKey !== current.templateKey) {
+          sourceEditorViews.delete(current.templateKey);
+          sourceEditorViews.set(next.templateKey, view);
+        }
+
+        const currentDoc = view.state.doc.toString();
+        if (next.sourceCode !== currentDoc) {
+          view.dispatch({
+            changes: {
+              from: 0,
+              to: currentDoc.length,
+              insert: next.sourceCode,
+            },
+          });
+        }
+        current = next;
+      },
+      destroy() {
+        sourceEditorViews.delete(current.templateKey);
+        view.destroy();
+      },
+    };
+  }
+
   function resetPuzzleFilters(): void {
     puzzleFilterQuery = "";
     puzzleFilterTheme = "all";
     puzzleFilterDifficulty = "all";
+  }
+
+  async function submitCreatePuzzleTemplate(): Promise<void> {
+    const templateKey = newTemplateKey
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+    if (!templateKey) {
+      localError = "Template key is required.";
+      return;
+    }
+    localError = "";
+    await createPuzzleTemplate(templateKey, newTemplateTheme, newTemplateDifficulty);
+    newTemplateKey = "";
+    openTemplateKeys = new Set<string>([templateKey]);
   }
 
   function expandFilteredTemplates(): void {
@@ -151,8 +306,7 @@
       return;
     }
 
-    const formData = new FormData(form);
-    const sourceCode = String(formData.get("source_code") ?? "");
+    const sourceCode = sourceEditorViews.get(template.template_key)?.state.doc.toString() ?? "";
     if (!sourceCode.trim()) {
       localError = "Puzzle source code is required.";
       return;
@@ -163,6 +317,17 @@
       ...template,
       source_code: sourceCode,
     });
+  }
+
+  async function confirmDeletePuzzle(template: AdminPuzzleTemplate): Promise<void> {
+    const confirmed = window.confirm(
+      `Delete puzzle template ${template.template_key}? This removes its source file.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    localError = "";
+    await deletePuzzleTemplate(template.template_key);
   }
 </script>
 
@@ -237,7 +402,7 @@
               </div>
               <button
                 type="button"
-                class="btn"
+                class="btn admin-delete-btn"
                 on:click={() => void confirmDelete(user)}
                 disabled={busy || user.id === sessionUser.id}
               >
@@ -291,6 +456,44 @@
         </div>
 
         <section class="admin-puzzle-toolbar">
+          <div class="admin-puzzle-create">
+            <label class="admin-filter-field">
+              <span>New Template Key</span>
+              <input
+                class="admin-input"
+                type="text"
+                placeholder="example-template-v1"
+                bind:value={newTemplateKey}
+                disabled={busy}
+              />
+            </label>
+            <label class="admin-filter-field">
+              <span>Theme</span>
+              <select class="admin-input" bind:value={newTemplateTheme} disabled={busy}>
+                <option value="Cryptography">Cryptography</option>
+                <option value="Algorithms">Algorithms</option>
+                <option value="Numeric">Numeric</option>
+              </select>
+            </label>
+            <label class="admin-filter-field">
+              <span>Difficulty</span>
+              <select class="admin-input" bind:value={newTemplateDifficulty} disabled={busy}>
+                <option value="easy">easy</option>
+                <option value="medium">medium</option>
+                <option value="hard">hard</option>
+                <option value="expert">expert</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              class="btn admin-save-btn"
+              on:click={() => void submitCreatePuzzleTemplate()}
+              disabled={busy}
+            >
+              Add Template
+            </button>
+          </div>
+
           <label class="admin-filter-field">
             <span>Search</span>
             <input
@@ -380,38 +583,29 @@
                     </p>
                   </div>
 
-                  <label>
-                    Prompt
-                    <textarea class="admin-input" rows="2" readonly>{template.prompt}</textarea>
-                  </label>
-
-                  <div class="admin-puzzle-grid admin-puzzle-hints">
-                    <label>
-                      Hint 1
-                      <textarea class="admin-input" rows="2" readonly>{template.hint_level_1}</textarea>
-                    </label>
-                    <label>
-                      Hint 2
-                      <textarea class="admin-input" rows="2" readonly>{template.hint_level_2}</textarea>
-                    </label>
-                    <label>
-                      Hint 3
-                      <textarea class="admin-input" rows="2" readonly>{template.hint_level_3}</textarea>
-                    </label>
+                  <div class="admin-source-field">
+                    <span>Puzzle Source (Python)</span>
+                    <div
+                      class="admin-source-editor"
+                      use:sourceEditorHost={{
+                        templateKey: template.template_key,
+                        sourceCode: template.source_code,
+                      }}
+                    ></div>
                   </div>
 
-                  <label>
-                    Puzzle Source (Python)
-                    <textarea
-                      name="source_code"
-                      class="admin-input admin-puzzle-source"
-                      rows="14"
-                      disabled={busy}
-                    >{template.source_code}</textarea>
-                  </label>
-
                   <div class="admin-puzzle-actions">
-                    <button type="submit" class="btn" disabled={busy}>Save Source</button>
+                    <button type="submit" class="btn admin-save-btn" disabled={busy}>
+                      Save Source
+                    </button>
+                    <button
+                      type="button"
+                      class="btn admin-delete-btn"
+                      disabled={busy}
+                      on:click={() => void confirmDeletePuzzle(template)}
+                    >
+                      Delete Template
+                    </button>
                   </div>
                 </form>
               </details>
