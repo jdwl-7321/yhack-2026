@@ -3401,15 +3401,15 @@
     syncSessionElo(payload.standings);
   }
 
-  async function addSampleTest(inputsText: string): Promise<void> {
+  async function addSampleTest(inputsText: string): Promise<boolean> {
     if (!match || !sessionUser) {
-      return;
+      return false;
     }
     const readOnlyReason = arenaReadOnlyReason(match);
     if (readOnlyReason) {
       error = readOnlyReason;
       appendConsole("Add sample blocked: match is read-only.", "error");
-      return;
+      return false;
     }
     const currentMatchId = match.match_id;
     busy = true;
@@ -3425,9 +3425,11 @@
         inputs,
       });
       appendConsole("Added sample test.", "system");
+      return true;
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Add sample failed: ${toErrorMessage(err)}`, "error");
+      return false;
     } finally {
       busy = false;
     }
@@ -3436,15 +3438,15 @@
   async function updateSampleTest(
     index: number,
     inputsText: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!match || !sessionUser) {
-      return;
+      return false;
     }
     const readOnlyReason = arenaReadOnlyReason(match);
     if (readOnlyReason) {
       error = readOnlyReason;
       appendConsole("Update sample blocked: match is read-only.", "error");
-      return;
+      return false;
     }
     const currentMatchId = match.match_id;
     busy = true;
@@ -3461,23 +3463,25 @@
         inputs,
       });
       appendConsole(`Updated sample ${index + 1}.`, "system");
+      return true;
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Update sample failed: ${toErrorMessage(err)}`, "error");
+      return false;
     } finally {
       busy = false;
     }
   }
 
-  async function deleteSampleTest(index: number): Promise<void> {
+  async function deleteSampleTest(index: number): Promise<boolean> {
     if (!match || !sessionUser) {
-      return;
+      return false;
     }
     const readOnlyReason = arenaReadOnlyReason(match);
     if (readOnlyReason) {
       error = readOnlyReason;
       appendConsole("Delete sample blocked: match is read-only.", "error");
-      return;
+      return false;
     }
     const currentMatchId = match.match_id;
     busy = true;
@@ -3489,9 +3493,11 @@
         index,
       });
       appendConsole(`Deleted sample ${index + 1}.`, "system");
+      return true;
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Delete sample failed: ${toErrorMessage(err)}`, "error");
+      return false;
     } finally {
       busy = false;
     }

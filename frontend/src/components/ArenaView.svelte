@@ -36,12 +36,12 @@
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
   export let showHome: () => void = () => {};
   export let raceModeIcon: (value: MatchPayload["mode"]) => string = () => "fa-mountain";
-  export let addSampleTest: (inputsText: string) => void | Promise<void> = () => {};
+  export let addSampleTest: (inputsText: string) => Promise<boolean> = async () => false;
   export let updateSampleTest: (
     index: number,
     inputsText: string,
-  ) => void | Promise<void> = () => {};
-  export let deleteSampleTest: (index: number) => void | Promise<void> = () => {};
+  ) => Promise<boolean> = async () => false;
+  export let deleteSampleTest: (index: number) => Promise<boolean> = async () => false;
   export let addFirstFailedSampleTest: () => void | Promise<void> = () => {};
   export let promoteFailedTest: () => void | Promise<void> = () => {};
   export let requestHint: () => void | Promise<void> = () => {};
@@ -119,18 +119,24 @@
     resizeSampleTextarea(newSampleInputEl);
   }
 
-  function saveSampleOnBlur(index: number): void {
+  async function saveSampleOnBlur(index: number): Promise<void> {
     if (busy || actionLocked || !match) {
       return;
     }
 
     const draft = sampleInputDrafts[index] ?? "[]";
     const currentInputs = match.sample_tests[index]?.primary_inputs ?? [];
-    if (draft === formatInputDraft(currentInputs)) {
+    const lastValidDraft = formatInputDraft(currentInputs);
+    if (draft === lastValidDraft) {
       return;
     }
 
-    void updateSampleTest(index, draft);
+    const updated = await updateSampleTest(index, draft);
+    if (!updated) {
+      sampleInputDrafts[index] = lastValidDraft;
+      await tick();
+      resizeSampleTextarea(sampleInputEls[index]);
+    }
   }
 
   async function commitNewSample(): Promise<void> {
@@ -144,9 +150,16 @@
     }
 
     const previousSampleCount = match.sample_tests.length;
+    const lastValidDraft = newSampleInputTemplate;
     committingNewSample = true;
     try {
-      await addSampleTest(newSampleInputs);
+      const added = await addSampleTest(newSampleInputs);
+      if (!added) {
+        newSampleInputs = lastValidDraft;
+        await tick();
+        resizeSampleTextarea(newSampleInputEl);
+        return;
+      }
       await tick();
       if ((match?.sample_tests.length ?? 0) > previousSampleCount) {
         newSampleInputs = newSampleInputTemplate;
@@ -262,6 +275,12 @@
           ? "Review mode. This completed match is read-only and submissions are disabled."
           : "Lobby closed by leader. Timer stopped and submissions are disabled."}
       </p>
+    {/if}
+
+    {#if match.finished}
+      <div class="arena-review-actions">
+        <button type="button" class="btn" on:click={showHome}>Home</button>
+      </div>
     {/if}
 
     <div class="game-layout">

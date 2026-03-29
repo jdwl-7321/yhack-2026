@@ -1689,6 +1689,13 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.arena-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: -0.25rem;
+}
+
 .editor-mode-badge {
   display: inline-flex;
   align-items: center;
