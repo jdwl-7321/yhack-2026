@@ -1090,6 +1090,7 @@ select:focus {
 }
 
 .vim-editor-host .cm-scroller {
+  flex: 1;
   font-family: inherit;
   line-height: 1.5;
 }
@@ -1118,6 +1119,40 @@ select:focus {
 .vim-editor-host .cm-selectionBackground,
 .vim-editor-host .cm-content ::selection {
   background: var(--editor-selection);
+}
+
+.vim-editor-host .cm-panels-bottom {
+  border-top: 1px solid color-mix(in srgb, var(--sub-color) 35%, transparent);
+  background: color-mix(in srgb, var(--editor-bg) 88%, var(--sub-alt-color));
+}
+
+.vim-editor-host .cm-vim-panel {
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 1.8rem;
+  padding: 0.2rem 0.65rem;
+  font-family: var(--font-family);
+  font-size: calc(var(--editor-font-size) * 0.9);
+  line-height: 1.35;
+  color: var(--editor-text);
+}
+
+.vim-editor-host .cm-vim-panel > div,
+.vim-editor-host .cm-vim-panel > div > span {
+  align-items: center;
+}
+
+.vim-editor-host .cm-vim-panel input {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  background: transparent;
 }
 
 .line-numbers {
