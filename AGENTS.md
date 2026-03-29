@@ -226,6 +226,7 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples with inline input editing inside the sample grid (save on blur), auto-resizing sample input textareas, output auto-refresh, sample delete/add actions, hints, failed hidden case promotion, editor, console, standings.
+  - When a match is finished or otherwise locked, the sample table becomes read-only and add/delete controls are disabled even if the arena is reopened from post-match.
   - Sample table uses a dedicated Action column so delete/add controls are separated from output values.
   - Shows a `+5 min` timer extension action next to the live match timer for casual-party leaders and zen matches.
   - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
