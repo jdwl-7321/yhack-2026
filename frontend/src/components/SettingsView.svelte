@@ -117,7 +117,7 @@
       <div class="settings-panel-heading">
         <div>
           <p class="eyebrow">Profile</p>
-          <h3>Pilot Identity</h3>
+          <h3>User</h3>
         </div>
         <span class="settings-panel-note">
           {sessionUser ? "Connected account" : "Offline preview"}
