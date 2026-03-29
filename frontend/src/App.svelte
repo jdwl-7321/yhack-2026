@@ -3768,6 +3768,7 @@
   {:else if activeView === "postmatch"}
     <PostMatchView
       {postMatch}
+      {sessionUser}
       matchId={match?.match_id ?? null}
       {notice}
       {error}

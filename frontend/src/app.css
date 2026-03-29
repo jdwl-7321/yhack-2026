@@ -1041,6 +1041,53 @@ select:focus {
   flex: 1;
   display: grid;
   gap: 1rem;
+  align-content: start;
+  position: relative;
+  isolation: isolate;
+}
+
+.postmatch-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.postmatch-confetti-piece {
+  position: absolute;
+  top: -1.25rem;
+  left: var(--confetti-left);
+  width: calc(var(--confetti-size) * 0.72);
+  height: var(--confetti-size);
+  border-radius: 0.1rem;
+  background: var(--confetti-color);
+  opacity: 0;
+  transform: translate3d(0, -10vh, 0) rotate(0deg);
+  animation: postmatch-confetti-fall var(--confetti-duration)
+    var(--confetti-delay) cubic-bezier(0.22, 0.8, 0.25, 1) forwards;
+}
+
+.postmatch-confetti-piece.circle {
+  width: calc(var(--confetti-size) * 0.85);
+  height: calc(var(--confetti-size) * 0.85);
+  border-radius: 999px;
+}
+
+@keyframes postmatch-confetti-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -10vh, 0) rotate(0deg);
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--confetti-drift), 105vh, 0) rotate(720deg);
+  }
 }
 
 #leaderboard-view {
@@ -1098,6 +1145,7 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 0.7rem;
+  align-items: start;
 }
 
 .postmatch-stat-card {
