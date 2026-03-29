@@ -3,6 +3,7 @@ from rating import (
     assign_ranked_difficulty,
     elo_deltas,
     order_ranked_results,
+    ranked_matchmaking_window,
     resolve_mode,
 )
 
@@ -19,6 +20,14 @@ def test_ranked_difficulty_buckets() -> None:
 def test_ranked_mode_falls_back_for_guests() -> None:
     assert resolve_mode("ranked", has_guest=True) == "casual"
     assert resolve_mode("ranked", has_guest=False) == "ranked"
+
+
+def test_ranked_matchmaking_window_expands_over_time() -> None:
+    assert ranked_matchmaking_window(0) == 150
+    assert ranked_matchmaking_window(14.9) == 150
+    assert ranked_matchmaking_window(15.0) == 200
+    assert ranked_matchmaking_window(120.0) == 550
+    assert ranked_matchmaking_window(600.0) == 600
 
 
 def test_rank_order_tie_breaking() -> None:

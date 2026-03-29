@@ -75,6 +75,17 @@ export type MatchPayload = {
   standings: Standing[];
 };
 
+export type RankedQueueStatus = "idle" | "queued" | "matched";
+
+export type RankedQueuePayload = {
+  status: RankedQueueStatus;
+  queued_players: number;
+  queued_at: number | null;
+  queued_elo: number | null;
+  search_range: number | null;
+  match: MatchPayload | null;
+};
+
 export type PartySettingsPayload = {
   theme: string;
   difficulty: Difficulty;

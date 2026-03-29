@@ -36,7 +36,7 @@ If AGENTS.md and code disagree, code is the source of truth, and AGENTS.md must 
 Full-stack prototype for a competitive puzzle platform:
 - Backend: Flask + Flask-Sock (Python), with in-memory gameplay state and SQLite user persistence.
 - Frontend: Svelte + TypeScript (Vite), single-page app with local state and WebSocket live updates.
-- Game loop: create/join party -> start match -> solve puzzle via Python submission -> standings/rating updates.
+- Game loop: casual create/join party -> start match -> solve puzzle via Python submission -> standings/rating updates; ranked uses a direct ELO queue that auto-creates 1v1 matches.
 
 Top-level layout:
 - `backend/` Python API, game domain, judge, persistence, tests
@@ -62,6 +62,7 @@ Top-level layout:
   - Defines all REST endpoints and WebSocket endpoint (`/ws/events`).
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
   - Converts domain/store objects into API payloads (`_party_payload`, `_match_payload`, `_judge_result_payload`).
+  - Also exposes ranked queue payloads via `_ranked_queue_payload`.
   - Enables permissive CORS headers for local frontend dev.
   - Defaults to `SqliteStore` using `backend/data/yhack.sqlite3` unless `YHACK_DB_PATH` is set.
 
@@ -76,6 +77,7 @@ Top-level layout:
 - `backend/src/rating.py`
   - Mode resolution (`ranked` falls back to `casual` if guests exist).
   - Ranked difficulty bucket assignment by average ELO.
+  - Ranked matchmaking search window starts narrow and widens over queue wait time.
   - Placement ordering and ELO delta computation.
   - Hint penalty applies only to positive rating gains; level 1 has no penalty, levels 2/3 reduce gain.
 
@@ -99,14 +101,16 @@ Top-level layout:
 
 - `backend/src/store.py`
   - Core in-memory domain state and gameplay operations.
-  - Dataclasses: `User`, `PartySettings`, `Party`, `MatchPlayer`, `Match`.
-  - `MemoryStore` handles auth, parties, matches, hints, submissions, standings, leaderboard, and finish logic.
+  - Dataclasses: `User`, `PartySettings`, `Party`, `MatchPlayer`, `Match`, `RankedQueueEntry`.
+  - `MemoryStore` handles auth, parties, ranked queue matchmaking, matches, hints, submissions, standings, leaderboard, and finish logic.
   - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO updates.
   - Important behavior:
     - Parties and matches are in-memory only.
+    - Ranked queue entries are in-memory only and expire if the client stops polling for ~20 seconds before a match is found.
     - Users are persisted in SQLite only when using `SqliteStore`.
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
+    - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
     - Ranked theme rotation avoids repeats until all themes are used once.
@@ -142,6 +146,9 @@ Defined in `backend/src/app.py`:
   - `POST /api/parties/<code>/start`
 
 - Match/gameplay:
+  - `GET /api/ranked/queue`
+  - `POST /api/ranked/queue`
+  - `POST /api/ranked/queue/leave`
   - `GET /api/matches/<match_id>`
   - `POST /api/matches/<match_id>/test` (sample tests only)
   - `POST /api/matches/<match_id>/submit` (sample + hidden; includes `finished` in response)
@@ -182,7 +189,7 @@ Defined in `backend/src/app.py`:
   - Large orchestration component (state hub).
   - Responsibilities include:
     - auth/session, account stats localStorage, and stored active-party restore after refresh/login
-    - party and match lifecycle
+    - casual party lifecycle, ranked queue polling, and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
     - editor behavior (normal/custom shortcuts + custom vim handling)
@@ -193,10 +200,10 @@ Defined in `backend/src/app.py`:
 ### Svelte component roles
 
 - `frontend/src/components/AppHeader.svelte`
-  - Top navigation, theme picker dialog, and account summary dialog.
+  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, and account summary dialog.
 
 - `frontend/src/components/HomeView.svelte`
-  - Auth card, party setup/lobby controls, start flow, and active-match resume spotlight/CTA.
+  - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples, hints, failed hidden case promotion, editor, console, standings.
@@ -221,7 +228,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
@@ -230,7 +237,7 @@ Defined in `backend/src/app.py`:
   - Puzzle schema validation, deterministic generation, cryptography template expectations, scaffold typing.
 
 - `backend/tests/test_rating.py`
-  - Difficulty buckets, mode fallback, ordering ties, and hint penalties on rating gains.
+  - Difficulty buckets, ranked matchmaking window growth, mode fallback, ordering ties, and hint penalties on rating gains.
 
 ## Persistence and State Boundaries
 
@@ -238,14 +245,14 @@ Defined in `backend/src/app.py`:
   - Users (id, name, guest, elo, password hash) in SQLite via `SqliteStore`.
 
 - In-memory only:
-  - Parties, matches, submissions, hints, standings, event subscriptions, ranked-theme cycle memory.
+  - Parties, ranked queue entries, matches, submissions, hints, standings, event subscriptions, ranked-theme cycle memory.
 
 Implication: server restart drops active parties/matches but keeps user accounts and ELO if SQLite is used.
 
 ## Common Task Routing (Where to Edit)
 
 - Add/modify endpoint behavior: `backend/src/app.py` + `backend/src/store.py`
-- Change game rules (party limits, hint policy, ranked fallback, auto-finish): `backend/src/store.py`, `backend/src/rating.py`
+- Change game rules (party limits, hint policy, ranked fallback, ranked matchmaking window, auto-finish): `backend/src/store.py`, `backend/src/rating.py`
 - Add new puzzle family/theme/template: `backend/src/puzzle.py` + `backend/src/constants.py` + tests
 - Change judging sandbox or verdict details: `backend/src/judge.py` + tests
 - Update API payload types in frontend: `frontend/src/app-types.ts`

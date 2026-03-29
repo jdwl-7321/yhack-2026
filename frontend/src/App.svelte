@@ -49,6 +49,7 @@
     Mode,
     PartyPayload,
     PostMatchState,
+    RankedQueuePayload,
     SessionPayload,
     SessionUser,
     ShikiThemeDefinition,
@@ -65,6 +66,7 @@
   const PARTY_LIMIT_MIN = 2;
   const PARTY_LIMIT_MAX = 16;
   const DEFAULT_PARTY_LIMIT = 4;
+  const RANKED_QUEUE_POLL_MS = 3000;
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
@@ -191,6 +193,7 @@
   let partyLimit = DEFAULT_PARTY_LIMIT;
   let joinCodeInput = "";
   let party: PartyPayload | null = null;
+  let rankedQueue: RankedQueuePayload | null = null;
 
   let themePref: UiTheme = "dark";
   let appearanceMode: AppearanceMode = "system";
@@ -242,6 +245,7 @@
   let liveSocket: WebSocket | null = null;
   let liveSocketReady = false;
   let liveSocketRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let rankedQueuePollTimer: ReturnType<typeof setTimeout> | null = null;
   let liveSocketSubscribedChannels = new Set<string>();
 
   let highlightedCode = "";
@@ -870,19 +874,50 @@
     }
   }
 
-  async function openMatchFromLobby(matchId: string): Promise<void> {
-    const payload = await api<MatchPayload>(`/api/matches/${matchId}`);
+  function stopRankedQueuePolling(): void {
+    if (rankedQueuePollTimer) {
+      clearTimeout(rankedQueuePollTimer);
+      rankedQueuePollTimer = null;
+    }
+  }
+
+  function syncRankedQueuePolling(): void {
+    stopRankedQueuePolling();
+    if (
+      !sessionUser ||
+      activeView !== "home" ||
+      rankedQueue?.status !== "queued" ||
+      match
+    ) {
+      return;
+    }
+
+    rankedQueuePollTimer = setTimeout(() => {
+      rankedQueuePollTimer = null;
+      void refreshRankedQueue(true);
+    }, RANKED_QUEUE_POLL_MS);
+  }
+
+  function clearRankedQueueState(): void {
+    rankedQueue = null;
+    stopRankedQueuePolling();
+  }
+
+  function loadMatchIntoArena(payload: MatchPayload, consoleMessage: string): void {
+    clearRankedQueueState();
     match = payload;
     postMatch = null;
     testResult = null;
     submitResult = null;
-    hints = [];
+    hints = payload.free_hint ? [payload.free_hint] : [];
     standings = payload.standings;
     mode = payload.mode;
     difficulty = payload.difficulty;
     selectedTheme = payload.theme;
     timeLimitSeconds = payload.time_limit_seconds;
     syncSessionElo(payload.standings);
+    code = payload.scaffold;
+    resetEditorHistory(payload.scaffold);
 
     if (payload.finished) {
       showPostMatch("Match complete", payload.standings);
@@ -903,6 +938,126 @@
     if (!payload.locked) {
       setLiveStatus("Match started", "ok");
       appendConsole(`Joined live match: ${payload.theme}`, "system");
+    }
+    // setLiveStatus("Live match in progress", "ok");
+    // appendConsole(consoleMessage, "system");
+  }
+
+  async function handleRankedQueuePayload(
+    payload: RankedQueuePayload,
+    options: {
+      fromQueueJoin?: boolean;
+      quiet?: boolean;
+    } = {},
+  ): Promise<void> {
+    const fromQueueJoin = options.fromQueueJoin ?? false;
+    const quiet = options.quiet ?? false;
+    if (payload.status === "idle") {
+      clearRankedQueueState();
+      if (!quiet) {
+        setLiveStatus("Idle", "neutral");
+      }
+      return;
+    }
+
+    mode = "ranked";
+    party = null;
+    rankedQueue = payload;
+    if (payload.status === "matched" && payload.match) {
+      clearRankedQueueState();
+      loadMatchIntoArena(payload.match, `Ranked match ready: ${payload.match.theme}`);
+      updateAccountStats((current) => ({
+        ...current,
+        matchesStarted: current.matchesStarted + 1,
+      }));
+      notice = "Opponent found. Ranked match is live.";
+      return;
+    }
+
+    setLiveStatus("Searching ranked queue", "neutral");
+    if (fromQueueJoin) {
+      notice = "Joined ranked matchmaking.";
+    } else if (!quiet) {
+      notice = "Ranked queue refreshed.";
+    }
+    syncRankedQueuePolling();
+  }
+
+  async function openMatchFromLobby(matchId: string): Promise<void> {
+    const payload = await api<MatchPayload>(`/api/matches/${matchId}`);
+    loadMatchIntoArena(payload, `Joined live match: ${payload.theme}`);
+  }
+
+  async function refreshRankedQueue(quiet = false): Promise<void> {
+    if (!sessionUser) {
+      clearRankedQueueState();
+      return;
+    }
+
+    try {
+      const payload = await api<RankedQueuePayload>("/api/ranked/queue");
+      await handleRankedQueuePayload(payload, { quiet });
+    } catch (err) {
+      clearRankedQueueState();
+      if (!quiet) {
+        error = toErrorMessage(err);
+      }
+    }
+  }
+
+  async function joinRankedQueue(): Promise<void> {
+    if (!sessionUser) {
+      error = "Sign in to join ranked matchmaking.";
+      activeView = "home";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    party = null;
+    try {
+      const payload = await api<RankedQueuePayload>("/api/ranked/queue", {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id }),
+      });
+      await handleRankedQueuePayload(payload, { fromQueueJoin: true });
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function leaveRankedQueue(silent = false): Promise<void> {
+    if (!sessionUser) {
+      clearRankedQueueState();
+      return;
+    }
+
+    busy = silent ? busy : true;
+    if (!silent) {
+      error = "";
+      notice = "";
+    }
+    try {
+      await api<RankedQueuePayload>("/api/ranked/queue/leave", {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id }),
+      });
+      clearRankedQueueState();
+      setLiveStatus("Idle", "neutral");
+      if (!silent) {
+        notice = "Left ranked queue.";
+      }
+    } catch (err) {
+      if (!silent) {
+        error = toErrorMessage(err);
+      }
+    } finally {
+      if (!silent) {
+        busy = false;
+      }
     }
   }
 
@@ -2230,6 +2385,7 @@
       match = null;
       postMatch = null;
       party = null;
+      clearRankedQueueState();
       clearTimer();
       disconnectLiveSocket();
       return;
@@ -2237,6 +2393,7 @@
     sessionUser = payload.user;
     loadAccountStats(payload.user);
     await loadLeaderboard();
+    await refreshRankedQueue(true);
     await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
   }
 
@@ -2345,6 +2502,7 @@
       match = null;
       postMatch = null;
       party = null;
+      clearRankedQueueState();
       joinCodeInput = "";
       standings = [];
       testResult = null;
@@ -2702,18 +2860,7 @@
         },
       );
 
-      match = payload;
-      mode = payload.mode;
-      difficulty = payload.difficulty;
-      selectedTheme = payload.theme;
-      timeLimitSeconds = payload.time_limit_seconds;
-      standings = payload.standings;
-      syncSessionElo(payload.standings);
-      code = payload.scaffold;
-      hints = payload.free_hint ? [payload.free_hint] : [];
-      resetEditorHistory(payload.scaffold);
-      activeView = "arena";
-      setLiveStatus("Live match in progress", "ok");
+      loadMatchIntoArena(payload, `Match loaded: ${payload.theme}`);
       updateAccountStats((current) => ({
         ...current,
         matchesStarted: current.matchesStarted + 1,
@@ -2723,9 +2870,6 @@
         party = null;
       }
 
-      startTimer(remainingSecondsForMatch(payload));
-      resetConsole();
-      appendConsole(`Match loaded: ${payload.theme}`, "system");
       if (payload.mode !== requestedMode) {
         notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`;
       }
@@ -2754,7 +2898,14 @@
   async function launchConfiguredMatch(): Promise<void> {
     if (mode === "zen") {
       party = null;
+      clearRankedQueueState();
       await startMatch();
+      return;
+    }
+
+    if (mode === "ranked") {
+      party = null;
+      await joinRankedQueue();
       return;
     }
 
@@ -2772,15 +2923,21 @@
   }
 
   async function startRace(nextMode: Mode): Promise<void> {
+    if (rankedQueue && nextMode !== "ranked") {
+      await leaveRankedQueue(true);
+    }
     if (party && party.mode !== nextMode) {
       party = null;
       forgetPartyCode();
       setLiveStatus("Idle", "neutral");
     }
     mode = nextMode;
-    if (nextMode === "casual" || nextMode === "ranked") {
+    if (nextMode === "casual") {
       setLiveStatus("Pick create or join to go live", "neutral");
       notice = "Create a party or enter a join code to continue.";
+    } else if (nextMode === "ranked") {
+      setLiveStatus("Join the ranked queue", "neutral");
+      notice = "Queue into a live 1v1 match with a nearby ELO opponent.";
     } else {
       setLiveStatus("Solo mode", "neutral");
       notice = "";
@@ -3004,7 +3161,8 @@
     }
   }
 
-  $: isPartyMode = mode === "casual" || mode === "ranked";
+  $: isPartyMode = mode === "casual";
+  $: isRankedMode = mode === "ranked";
   $: isPartyLeader = !!party && !!sessionUser && party.leader_id === sessionUser.id;
   $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
   $: {
@@ -3023,6 +3181,14 @@
     partyLimit = Math.min(PARTY_LIMIT_MAX, Math.max(PARTY_LIMIT_MIN, partyLimit));
   } else {
     partyLimit = 1;
+  }
+
+  $: {
+    sessionUser;
+    activeView;
+    rankedQueue;
+    match;
+    syncRankedQueuePolling();
   }
 
   $: themeStatusText =
@@ -3203,6 +3369,7 @@
     return () => {
       clearTimer();
       disconnectLiveSocket();
+      stopRankedQueuePolling();
       destroyVimEditor();
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener("change", mediaListener);
@@ -3271,12 +3438,14 @@
       bind:partyLimit
       bind:joinCodeInput
       {party}
+      {rankedQueue}
       {match}
       {timerText}
       {themes}
       {modeOptions}
       {difficultyOptions}
       {isPartyMode}
+      {isRankedMode}
       {isPartyLeader}
       {canEditPartySetup}
       {liveStatusText}
@@ -3298,6 +3467,8 @@
       {joinPartyLobby}
       {kickPartyMember}
       {clearPartyLobby}
+      {refreshRankedQueue}
+      leaveRankedQueue={() => leaveRankedQueue(false)}
       {launchConfiguredMatch}
       {resumeRace}
       {logout}

@@ -6,6 +6,7 @@
     MatchPayload,
     Mode,
     PartyPayload,
+    RankedQueuePayload,
     SessionUser,
   } from "../app-types";
 
@@ -21,12 +22,14 @@
   export let partyLimit = 4;
   export let joinCodeInput = "";
   export let party: PartyPayload | null = null;
+  export let rankedQueue: RankedQueuePayload | null = null;
   export let match: MatchPayload | null = null;
   export let timerText = "00:00";
   export let themes: string[] = [];
   export let modeOptions: Mode[] = [];
   export let difficultyOptions: Difficulty[] = [];
   export let isPartyMode = false;
+  export let isRankedMode = false;
   export let isPartyLeader = false;
   export let canEditPartySetup = true;
   export let liveStatusText = "Idle";
@@ -46,6 +49,8 @@
   export let joinPartyLobby: () => void | Promise<void> = () => {};
   export let kickPartyMember: (memberId: string) => void | Promise<void> = () => {};
   export let clearPartyLobby: () => void | Promise<void> = () => {};
+  export let refreshRankedQueue: () => void | Promise<void> = () => {};
+  export let leaveRankedQueue: () => void | Promise<void> = () => {};
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
   export let resumeRace: () => void | Promise<void> = () => {};
   export let logout: () => void | Promise<void> = () => {};
@@ -181,7 +186,7 @@
         <div class="field-grid">
           <label>
             <span>Mode</span>
-            <select bind:value={mode} disabled={!!party || busy}>
+            <select bind:value={mode} disabled={!!party || !!rankedQueue || busy}>
               {#each modeOptions as option}
                 <option value={option}>{option.toUpperCase()}</option>
               {/each}
@@ -351,6 +356,44 @@
               </div>
             {/if}
           </div>
+        {:else if isRankedMode}
+          <div class="party-lobby">
+            <div class="party-lobby-head">
+              <h3>Ranked Queue</h3>
+              <div class="party-live-head-actions">
+                <span class={`live-status-badge ${liveStatusTone}`}>
+                  <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
+                </span>
+                {#if rankedQueue}
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={refreshRankedQueue}
+                    disabled={busy}
+                  >
+                    <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
+                  </button>
+                {/if}
+              </div>
+            </div>
+
+            {#if rankedQueue}
+              <div class="party-code-row mono">
+                <span class="eyebrow">Current search</span>
+                <strong>
+                  ELO {rankedQueue.queued_elo} +/- {rankedQueue.search_range}
+                </strong>
+              </div>
+
+              <p class="party-note">
+                Searching for an opponent. {rankedQueue.queued_players} player{rankedQueue.queued_players === 1 ? "" : "s"} currently waiting.
+              </p>
+            {:else}
+              <p class="party-note">
+                Ranked uses live matchmaking. Join the queue to get paired with a nearby ELO opponent in a 1v1 match.
+              </p>
+            {/if}
+          </div>
         {/if}
 
         <div class="home-actions">
@@ -358,12 +401,14 @@
             type="button"
             class="btn primary"
             on:click={launchConfiguredMatch}
-            disabled={busy || (isPartyMode && !!party && !isPartyLeader)}
+            disabled={busy || (isPartyMode && !!party && !isPartyLeader) || (isRankedMode && !!rankedQueue)}
           >
             {#if mode === "zen"}
               {match ? "Restart Match" : "Start Match"}
+            {:else if isRankedMode && rankedQueue}
+              Searching Matchmaking
             {:else if !party}
-              Create Party
+              {isRankedMode ? "Join Ranked Queue" : "Create Party"}
             {:else if !isPartyLeader}
               Waiting for Leader
             {:else}
@@ -388,6 +433,15 @@
               disabled={busy}
             >
               Close Lobby
+            </button>
+          {:else if rankedQueue}
+            <button
+              type="button"
+              class="btn"
+              on:click={leaveRankedQueue}
+              disabled={busy}
+            >
+              Leave Queue
             </button>
           {/if}
 
