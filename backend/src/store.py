@@ -6,7 +6,6 @@ import random
 import sqlite3
 import string
 from time import time
-from typing import cast
 import uuid
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -99,18 +98,6 @@ class RankedQueueEntry:
     match_id: str | None = None
 
 
-@dataclass(slots=True)
-class PuzzleTemplateConfig:
-    template_key: str
-    theme: str
-    difficulty: Difficulty
-    prompt: str
-    hint_level_1: str
-    hint_level_2: str
-    hint_level_3: str
-    enabled: bool = True
-
-
 class MemoryStore:
     _RANKED_QUEUE_STALE_SECONDS = 20.0
 
@@ -121,13 +108,6 @@ class MemoryStore:
         self.matches: dict[str, Match] = {}
         self.ranked_queue: dict[str, RankedQueueEntry] = {}
         self._ranked_used_themes: set[str] = set()
-        self._hardcoded_puzzle_templates: dict[str, HardcodedPuzzleTemplate] = {
-            template.template_key: template for template in hardcoded_puzzle_templates()
-        }
-        self.puzzle_templates: dict[str, PuzzleTemplateConfig] = {
-            template_key: self._config_from_hardcoded(template)
-            for template_key, template in self._hardcoded_puzzle_templates.items()
-        }
 
     def create_user(
         self,
@@ -805,85 +785,15 @@ class MemoryStore:
         user.elo = elo
         return user
 
-    def admin_list_puzzle_templates(self) -> list[PuzzleTemplateConfig]:
+    def admin_list_puzzle_templates(self) -> list[HardcodedPuzzleTemplate]:
         return sorted(
-            self.puzzle_templates.values(),
+            hardcoded_puzzle_templates(),
             key=lambda template: (
                 template.theme,
                 template.difficulty,
                 template.template_key,
             ),
         )
-
-    def admin_missing_puzzle_template_keys(self) -> list[str]:
-        return sorted(
-            template_key
-            for template_key in self._hardcoded_puzzle_templates
-            if template_key not in self.puzzle_templates
-        )
-
-    def admin_create_puzzle_template(
-        self, *, template_key: str
-    ) -> PuzzleTemplateConfig:
-        normalized_key = template_key.strip()
-        if normalized_key in self.puzzle_templates:
-            raise ValueError("Puzzle template already exists")
-        hardcoded = self._hardcoded_puzzle_templates.get(normalized_key)
-        if hardcoded is None:
-            raise ValueError("Unknown hardcoded puzzle template")
-
-        created = self._config_from_hardcoded(hardcoded)
-        self.puzzle_templates[created.template_key] = created
-        return created
-
-    def admin_update_puzzle_template(
-        self,
-        *,
-        template_key: str,
-        theme: str,
-        difficulty: Difficulty,
-        prompt: str,
-        hint_level_1: str,
-        hint_level_2: str,
-        hint_level_3: str,
-        enabled: bool,
-    ) -> PuzzleTemplateConfig:
-        normalized_key = template_key.strip()
-        if normalized_key not in self._hardcoded_puzzle_templates:
-            raise ValueError("Unknown hardcoded puzzle template")
-        existing = self.puzzle_templates.get(normalized_key)
-        if existing is None:
-            raise ValueError("Puzzle template not found")
-
-        self._validate_puzzle_template_config(
-            theme=theme,
-            difficulty=difficulty,
-            prompt=prompt,
-            hint_level_1=hint_level_1,
-            hint_level_2=hint_level_2,
-            hint_level_3=hint_level_3,
-        )
-        updated = PuzzleTemplateConfig(
-            template_key=existing.template_key,
-            theme=theme,
-            difficulty=difficulty,
-            prompt=prompt,
-            hint_level_1=hint_level_1,
-            hint_level_2=hint_level_2,
-            hint_level_3=hint_level_3,
-            enabled=enabled,
-        )
-        self.puzzle_templates[updated.template_key] = updated
-        return updated
-
-    def admin_delete_puzzle_template(
-        self, *, template_key: str
-    ) -> PuzzleTemplateConfig:
-        normalized_key = template_key.strip()
-        template = self.puzzle_templates.pop(normalized_key, None)
-        if template is None:
-            raise ValueError("Puzzle template not found")
-        return template
 
     def admin_cancel_match(self, *, match_id: str) -> Match:
         match = self._require_match(match_id)
@@ -988,63 +898,17 @@ class MemoryStore:
         if time_limit_seconds <= 0:
             raise ValueError("time_limit_seconds must be positive")
 
-    @staticmethod
-    def _validate_puzzle_template_config(
-        *,
-        theme: str,
-        difficulty: Difficulty,
-        prompt: str,
-        hint_level_1: str,
-        hint_level_2: str,
-        hint_level_3: str,
-    ) -> None:
-        if theme not in THEMES:
-            raise ValueError("Theme must be from the hardcoded catalog")
-        if difficulty not in {"easy", "medium", "hard", "expert"}:
-            raise ValueError("Invalid difficulty")
-        if not prompt.strip():
-            raise ValueError("prompt is required")
-        if not hint_level_1.strip():
-            raise ValueError("hint_level_1 is required")
-        if not hint_level_2.strip():
-            raise ValueError("hint_level_2 is required")
-        if not hint_level_3.strip():
-            raise ValueError("hint_level_3 is required")
-
-    @staticmethod
-    def _config_from_hardcoded(
-        template: HardcodedPuzzleTemplate,
-    ) -> PuzzleTemplateConfig:
-        return PuzzleTemplateConfig(
-            template_key=template.template_key,
-            theme=template.theme,
-            difficulty=template.difficulty,
-            prompt=template.prompt,
-            hint_level_1=template.hint_level_1,
-            hint_level_2=template.hint_level_2,
-            hint_level_3=template.hint_level_3,
-            enabled=True,
-        )
-
-    def _templates_for_match(
-        self, *, theme: str, difficulty: Difficulty
-    ) -> list[PuzzleTemplateConfig]:
-        candidates = [
-            template
-            for template in self.puzzle_templates.values()
-            if template.enabled
-            and template.theme == theme
-            and template.difficulty == difficulty
-        ]
-        return sorted(candidates, key=lambda template: template.template_key)
-
     def _generate_match_puzzle(
         self, *, theme: str, difficulty: Difficulty, seed: int
     ) -> PuzzleInstance:
-        candidates = self._templates_for_match(theme=theme, difficulty=difficulty)
+        candidates = [
+            template
+            for template in hardcoded_puzzle_templates()
+            if template.theme == theme and template.difficulty == difficulty
+        ]
         if not candidates:
             raise ValueError(
-                "No enabled puzzle templates are configured for this theme/difficulty"
+                "No puzzle templates are available for this theme/difficulty"
             )
 
         selected = random.Random(seed).choice(candidates)
@@ -1307,8 +1171,6 @@ class SqliteStore(MemoryStore):
         self._conn.row_factory = sqlite3.Row
         self._create_schema()
         self._load_users()
-        self._upsert_hardcoded_puzzle_templates()
-        self._load_puzzle_templates()
 
     def create_user(
         self,
@@ -1398,97 +1260,6 @@ class SqliteStore(MemoryStore):
             )
         return user
 
-    def admin_create_puzzle_template(
-        self, *, template_key: str
-    ) -> PuzzleTemplateConfig:
-        template = super().admin_create_puzzle_template(template_key=template_key)
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO puzzle_templates (
-                    template_key,
-                    theme,
-                    difficulty,
-                    prompt,
-                    hint_level_1,
-                    hint_level_2,
-                    hint_level_3,
-                    enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    template.template_key,
-                    template.theme,
-                    template.difficulty,
-                    template.prompt,
-                    template.hint_level_1,
-                    template.hint_level_2,
-                    template.hint_level_3,
-                    1 if template.enabled else 0,
-                ),
-            )
-        return template
-
-    def admin_update_puzzle_template(
-        self,
-        *,
-        template_key: str,
-        theme: str,
-        difficulty: Difficulty,
-        prompt: str,
-        hint_level_1: str,
-        hint_level_2: str,
-        hint_level_3: str,
-        enabled: bool,
-    ) -> PuzzleTemplateConfig:
-        template = super().admin_update_puzzle_template(
-            template_key=template_key,
-            theme=theme,
-            difficulty=difficulty,
-            prompt=prompt,
-            hint_level_1=hint_level_1,
-            hint_level_2=hint_level_2,
-            hint_level_3=hint_level_3,
-            enabled=enabled,
-        )
-        with self._conn:
-            self._conn.execute(
-                """
-                UPDATE puzzle_templates
-                SET
-                    theme = ?,
-                    difficulty = ?,
-                    prompt = ?,
-                    hint_level_1 = ?,
-                    hint_level_2 = ?,
-                    hint_level_3 = ?,
-                    enabled = ?
-                WHERE template_key = ?
-                """,
-                (
-                    template.theme,
-                    template.difficulty,
-                    template.prompt,
-                    template.hint_level_1,
-                    template.hint_level_2,
-                    template.hint_level_3,
-                    1 if template.enabled else 0,
-                    template.template_key,
-                ),
-            )
-        return template
-
-    def admin_delete_puzzle_template(
-        self, *, template_key: str
-    ) -> PuzzleTemplateConfig:
-        template = super().admin_delete_puzzle_template(template_key=template_key)
-        with self._conn:
-            self._conn.execute(
-                "DELETE FROM puzzle_templates WHERE template_key = ?",
-                (template.template_key,),
-            )
-        return template
-
     def admin_delete_user(
         self, *, user_id: str
     ) -> tuple[User, list[Match], list[Party]]:
@@ -1529,20 +1300,6 @@ class SqliteStore(MemoryStore):
                 )
                 """
             )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS puzzle_templates (
-                    template_key TEXT PRIMARY KEY,
-                    theme TEXT NOT NULL,
-                    difficulty TEXT NOT NULL,
-                    prompt TEXT NOT NULL,
-                    hint_level_1 TEXT NOT NULL,
-                    hint_level_2 TEXT NOT NULL,
-                    hint_level_3 TEXT NOT NULL,
-                    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
-                )
-                """
-            )
 
     def _load_users(self) -> None:
         rows = self._conn.execute(
@@ -1566,74 +1323,3 @@ class SqliteStore(MemoryStore):
             normalized_name = row["normalized_name"]
             if normalized_name is not None:
                 self.user_name_index[str(normalized_name)] = user.id
-
-    def _upsert_hardcoded_puzzle_templates(self) -> None:
-        rows = [
-            self._config_from_hardcoded(template)
-            for template in self._hardcoded_puzzle_templates.values()
-        ]
-        with self._conn:
-            self._conn.executemany(
-                """
-                INSERT INTO puzzle_templates (
-                    template_key,
-                    theme,
-                    difficulty,
-                    prompt,
-                    hint_level_1,
-                    hint_level_2,
-                    hint_level_3,
-                    enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(template_key) DO NOTHING
-                """,
-                [
-                    (
-                        row.template_key,
-                        row.theme,
-                        row.difficulty,
-                        row.prompt,
-                        row.hint_level_1,
-                        row.hint_level_2,
-                        row.hint_level_3,
-                        1 if row.enabled else 0,
-                    )
-                    for row in rows
-                ],
-            )
-
-    def _load_puzzle_templates(self) -> None:
-        rows = self._conn.execute(
-            """
-            SELECT
-                template_key,
-                theme,
-                difficulty,
-                prompt,
-                hint_level_1,
-                hint_level_2,
-                hint_level_3,
-                enabled
-            FROM puzzle_templates
-            """
-        ).fetchall()
-
-        loaded: dict[str, PuzzleTemplateConfig] = {}
-        for row in rows:
-            raw_difficulty = str(row["difficulty"])
-            if raw_difficulty not in {"easy", "medium", "hard", "expert"}:
-                continue
-            difficulty = cast(Difficulty, raw_difficulty)
-            loaded[str(row["template_key"])] = PuzzleTemplateConfig(
-                template_key=str(row["template_key"]),
-                theme=str(row["theme"]),
-                difficulty=difficulty,
-                prompt=str(row["prompt"]),
-                hint_level_1=str(row["hint_level_1"]),
-                hint_level_2=str(row["hint_level_2"]),
-                hint_level_3=str(row["hint_level_3"]),
-                enabled=bool(row["enabled"]),
-            )
-
-        if loaded:
-            self.puzzle_templates = loaded

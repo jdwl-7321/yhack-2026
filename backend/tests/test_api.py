@@ -355,19 +355,19 @@ def test_admin_can_delete_users_and_auto_cancel_their_live_matches() -> None:
     assert self_delete.get_json() == {"error": "Admin account cannot delete itself"}
 
 
-def test_admin_can_update_delete_and_restore_puzzle_templates() -> None:
+def test_admin_can_update_puzzle_template_source() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
     _register_admin(client)
 
     template_key = "crypto-xor-byte-inference-v1"
-    custom_prompt = "Custom XOR prompt for dashboard CRUD testing."
-    custom_hint_1 = "Custom hint one"
-    custom_hint_2 = "Custom hint two"
-    custom_hint_3 = "Custom hint three"
+    custom_prompt = "Admin-edited XOR prompt for source-of-truth testing."
+    custom_hint_1 = "Admin-edited hint level one"
 
     dashboard = client.get("/api/admin/dashboard").get_json()
     assert dashboard is not None
+    assert "missing_puzzle_template_keys" not in dashboard
+
     source_template = next(
         item
         for item in dashboard["puzzle_templates"]
@@ -376,152 +376,75 @@ def test_admin_can_update_delete_and_restore_puzzle_templates() -> None:
     source_code = source_template["source_code"]
     assert "def case_factory" in source_code
 
-    updated = client.post(
-        f"/api/admin/puzzles/{template_key}",
-        json={
-            "theme": "Cryptography",
-            "difficulty": "easy",
-            "prompt": custom_prompt,
-            "hint_level_1": custom_hint_1,
-            "hint_level_2": custom_hint_2,
-            "hint_level_3": custom_hint_3,
-            "enabled": True,
-            "source_code": source_code,
-        },
+    updated_source = source_code.replace(
+        "A deterministic 8-bit XOR mask is used across this match. ",
+        f"{custom_prompt} ",
+        1,
+    ).replace(
+        'hint_level_1 = "Every value is an integer byte in the inclusive range 0..255."',
+        f'hint_level_1 = "{custom_hint_1}"',
+        1,
     )
-    assert updated.status_code == 200
-    updated_payload = updated.get_json()
-    assert updated_payload is not None
-    assert updated_payload["puzzle_template"]["prompt"] == custom_prompt
+    assert updated_source != source_code
 
-    user = client.post(
-        "/api/users", json={"name": "PuzzleUser", "guest": False}
-    ).get_json()
-    assert user is not None
+    try:
+        updated = client.post(
+            f"/api/admin/puzzles/{template_key}",
+            json={"source_code": updated_source},
+        )
+        assert updated.status_code == 200
+        updated_payload = updated.get_json()
+        assert updated_payload is not None
+        assert custom_prompt in updated_payload["puzzle_template"]["prompt"]
+        assert updated_payload["puzzle_template"]["hint_level_1"] == custom_hint_1
 
-    party = client.post(
-        "/api/parties",
-        json={
-            "leader_id": user["id"],
-            "mode": "zen",
-            "theme": "Cryptography",
-            "difficulty": "easy",
-            "time_limit_seconds": 900,
-            "seed": 203,
-        },
-    ).get_json()
-    assert party is not None
+        user = client.post(
+            "/api/users", json={"name": "PuzzleUser", "guest": False}
+        ).get_json()
+        assert user is not None
 
-    match = client.post(
-        f"/api/parties/{party['code']}/start",
-        json={"seed": 203, "user_id": user["id"]},
-    ).get_json()
-    assert match is not None
-    assert match["template_key"] == template_key
-    assert match["prompt"] == custom_prompt
-    assert match["free_hint"] == custom_hint_1
+        party = client.post(
+            "/api/parties",
+            json={
+                "leader_id": user["id"],
+                "mode": "zen",
+                "theme": "Cryptography",
+                "difficulty": "easy",
+                "time_limit_seconds": 900,
+                "seed": 203,
+            },
+        ).get_json()
+        assert party is not None
 
-    deleted = client.delete(f"/api/admin/puzzles/{template_key}")
-    assert deleted.status_code == 200
+        match = client.post(
+            f"/api/parties/{party['code']}/start",
+            json={"seed": 203, "user_id": user["id"]},
+        ).get_json()
+        assert match is not None
+        assert match["template_key"] == template_key
+        assert custom_prompt in match["prompt"]
+        assert match["free_hint"] == custom_hint_1
+    finally:
+        restore = client.post(
+            f"/api/admin/puzzles/{template_key}",
+            json={"source_code": source_code},
+        )
+        assert restore.status_code == 200
 
-    dashboard_after_delete = client.get("/api/admin/dashboard").get_json()
-    assert dashboard_after_delete is not None
-    assert template_key in dashboard_after_delete["missing_puzzle_template_keys"]
 
-    second_user = client.post(
-        "/api/users", json={"name": "PuzzleUserTwo", "guest": False}
-    ).get_json()
-    assert second_user is not None
+def test_admin_puzzle_restore_and_delete_endpoints_are_not_available() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    _register_admin(client)
 
-    second_party = client.post(
-        "/api/parties",
-        json={
-            "leader_id": second_user["id"],
-            "mode": "zen",
-            "theme": "Cryptography",
-            "difficulty": "easy",
-            "time_limit_seconds": 900,
-            "seed": 204,
-        },
-    ).get_json()
-    assert second_party is not None
-
-    blocked_start = client.post(
-        f"/api/parties/{second_party['code']}/start",
-        json={"seed": 204, "user_id": second_user["id"]},
-    )
-    assert blocked_start.status_code == 400
-    assert blocked_start.get_json() == {
-        "error": "No enabled puzzle templates are configured for this theme/difficulty"
-    }
-
-    restored = client.post(
+    create_response = client.post(
         "/api/admin/puzzles",
-        json={"template_key": template_key},
+        json={"template_key": "crypto-xor-byte-inference-v1"},
     )
-    assert restored.status_code == 200
-    restored_payload = restored.get_json()
-    assert restored_payload is not None
-    assert (
-        "A deterministic 8-bit XOR mask"
-        in restored_payload["puzzle_template"]["prompt"]
-    )
+    assert create_response.status_code == 404
 
-    third_user = client.post(
-        "/api/users", json={"name": "PuzzleUserThree", "guest": False}
-    ).get_json()
-    assert third_user is not None
-    third_party = client.post(
-        "/api/parties",
-        json={
-            "leader_id": third_user["id"],
-            "mode": "zen",
-            "theme": "Cryptography",
-            "difficulty": "easy",
-            "time_limit_seconds": 900,
-            "seed": 205,
-        },
-    ).get_json()
-    assert third_party is not None
-
-    restarted_match = client.post(
-        f"/api/parties/{third_party['code']}/start",
-        json={"seed": 205, "user_id": third_user["id"]},
-    )
-    assert restarted_match.status_code == 200
-
-
-def test_sqlite_store_upserts_hardcoded_puzzle_templates_on_startup(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "puzzle-templates.sqlite3"
-    template_key = "crypto-xor-byte-inference-v1"
-
-    first_app = create_app(SqliteStore(str(db_path)))
-    first_client = first_app.test_client()
-    _register_admin(first_client)
-
-    deleted = first_client.delete(f"/api/admin/puzzles/{template_key}")
-    assert deleted.status_code == 200
-
-    missing_dashboard = first_client.get("/api/admin/dashboard").get_json()
-    assert missing_dashboard is not None
-    assert template_key in missing_dashboard["missing_puzzle_template_keys"]
-
-    second_app = create_app(SqliteStore(str(db_path)))
-    second_client = second_app.test_client()
-    login = second_client.post(
-        "/api/auth/login",
-        json={"name": ADMIN_USERNAME, "password": "secret123"},
-    )
-    assert login.status_code == 200
-
-    restored_dashboard = second_client.get("/api/admin/dashboard").get_json()
-    assert restored_dashboard is not None
-    assert any(
-        template["template_key"] == template_key
-        for template in restored_dashboard["puzzle_templates"]
-    )
+    delete_response = client.delete("/api/admin/puzzles/crypto-xor-byte-inference-v1")
+    assert delete_response.status_code == 405
 
 
 def test_authenticated_user_can_change_password() -> None:

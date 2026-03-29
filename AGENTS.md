@@ -108,7 +108,7 @@ Top-level layout:
   - Renders hints with Jinja templates.
   - Builds solution scaffold from contract.
   - Supports hidden-test replacement (`generate_additional_hidden_test`) for promoted failures.
-  - Exposes hardcoded template seed metadata (`hardcoded_puzzle_templates`) and targeted generation (`generate_puzzle_from_template`) so store/admin can persist and apply template overrides from database state.
+  - Exposes hardcoded template seed metadata (`hardcoded_puzzle_templates`) and targeted generation (`generate_puzzle_from_template`) with prompt/hint values coming directly from puzzle module files.
   - Exposes template source helpers (`template_source_path`, `template_source`, `update_template_source`) used by admin source editing.
 
 - `backend/src/puzzles/`
@@ -127,9 +127,9 @@ Top-level layout:
 
 - `backend/src/store.py`
   - Core in-memory domain state and gameplay operations.
-  - Dataclasses: `User`, `PartySettings`, `Party`, `MatchPlayer`, `Match`, `RankedQueueEntry`, `PuzzleTemplateConfig`.
+  - Dataclasses: `User`, `PartySettings`, `Party`, `MatchPlayer`, `Match`, `RankedQueueEntry`.
   - `MemoryStore` handles auth, parties, ranked queue matchmaking, matches, hints, submissions, standings, leaderboard, and finish logic.
-  - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO updates and persisted admin puzzle-template catalog (`puzzle_templates` table).
+  - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO updates.
   - Important behavior:
     - Parties and matches are in-memory only.
     - Ranked queue entries are in-memory only and expire if the client stops polling for ~20 seconds before a match is found.
@@ -141,13 +141,13 @@ Top-level layout:
     - Casual and zen party leaders can add time (`add_seconds`) to party settings; if a casual/zen match is currently active and unlocked for that party, the match timer is extended too.
     - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
-    - Match generation now selects from enabled admin puzzle-template records for the requested theme+difficulty, then uses the matching hardcoded executable template key.
-    - If a theme+difficulty has no enabled templates, match start fails with a validation error.
+    - Match generation selects from puzzle modules loaded from `backend/src/puzzles/*_puzzle.py` for the requested theme+difficulty.
+    - If a theme+difficulty has no puzzle modules, match start fails with a validation error.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
     - Match participants can add/update/delete visible sample tests during a match.
     - Admin operations are available in store layer: reset all ELO values, set one user ELO, cancel active matches (finished+locked, no rating delta), and delete users.
-    - Admin puzzle operations are available in store layer: list templates, update template metadata/enablement, delete template entries, and recreate missing hardcoded templates.
+    - Store-layer admin operations are account/match focused; puzzle template source editing is handled through `puzzle.py` source helpers and app routes.
     - Admin user deletion auto-cancels that user's active matches, removes them from parties and ranked queue, and purges name-index/DB rows.
     - Custom sample edits validate argument arity against puzzle contract and recompute expected outputs from the active puzzle template; for templates with shared example inputs, clients may send either primary args only or full invocation args (shared suffix is immutable).
     - Ranked theme rotation avoids repeats until all themes are used once.
@@ -178,9 +178,7 @@ Defined in `backend/src/app.py`:
   - `POST /api/admin/users/<user_id>/elo`
   - `DELETE /api/admin/users/<user_id>`
   - `POST /api/admin/matches/<match_id>/cancel`
-  - `POST /api/admin/puzzles`
   - `POST /api/admin/puzzles/<template_key>`
-  - `DELETE /api/admin/puzzles/<template_key>`
 
 - Party/lobby:
   - `POST /api/parties`
@@ -251,7 +249,7 @@ Defined in `backend/src/app.py`:
     - syntax highlighting/theming via highlight.js + Shiki
     - appearance persistence with light-mode startup default, explicit light fallback for system mode, and Everforest Light / Catppuccin Mocha as the default light/dark palettes
     - local per-user profile photo persistence in browser storage, including client-side square crop/compression before save
-    - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match, restore/update/delete puzzle templates)
+    - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match, save puzzle template source code)
     - routing between subviews (`home`, `arena`, `leaderboard`, `admin`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 
@@ -263,7 +261,7 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/AdminView.svelte`
   - Admin dashboard UI for account, puzzle-template, and live-match operations.
-  - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match, edit puzzle template prompt/hints/theme/difficulty/enabled state, edit template Python source, delete templates, and restore missing hardcoded templates.
+  - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match, filter/search puzzle templates, collapse/expand template cards, and edit template Python source.
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
@@ -308,7 +306,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, and admin puzzle-template CRUD/upsert behavior.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and removal of puzzle restore/delete endpoints.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
@@ -323,7 +321,7 @@ Defined in `backend/src/app.py`:
 
 - Persisted:
   - Users (id, name, guest, elo, password hash) in SQLite via `SqliteStore`.
-  - Admin puzzle template records (template key/theme/difficulty/prompt/hints/enabled) in SQLite via `SqliteStore`.
+  - Puzzle template source/metadata through files under `backend/src/puzzles/` (not SQLite).
 
 - In-memory only:
   - Parties, ranked queue entries, matches, submissions, hints, standings, event subscriptions, ranked-theme cycle memory.
@@ -355,7 +353,7 @@ Implication: server restart drops active parties/matches but keeps user accounts
 - `frontend/public/engimga.html` is not part of active app flow; avoid changing it unless explicitly requested.
 - Theme names are validated against `THEMES`; theme/template sync is enforced in `puzzle.py` module initialization.
 - Puzzle module source edits are validated by reloading all `backend/src/puzzles/*_puzzle.py` files; invalid edits fail and are rolled back.
-- Match generation depends on enabled entries in the admin puzzle-template catalog; deleting all templates for a theme+difficulty blocks new matches in that bucket until a template is restored or re-enabled.
+- Match generation depends entirely on puzzle modules present in `backend/src/puzzles/`; removing all templates for a theme+difficulty in code blocks new matches in that bucket.
 - Sample editor input in the frontend supports `argN = <json>` lines (and accepts raw JSON-array format); outputs are recomputed server-side from the active puzzle rule.
 - Judge security is constrained but still process-based Python execution; treat sandbox changes as security-sensitive.
 
