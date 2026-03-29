@@ -689,7 +689,11 @@
       return;
     }
 
-    applyParty(nextParty);
+    const shouldForceSetupSync =
+      eventName === "settings_updated" ||
+      eventName === "time_extended" ||
+      eventName === "started";
+    applyParty(nextParty, shouldForceSetupSync ? { syncSetup: true } : undefined);
 
     if (previousParty) {
       if (nextParty.members.length > previousParty.members.length) {
@@ -2529,13 +2533,27 @@
     await addSampleTest(formatInputDraft(failedSample.primary_inputs));
   }
 
-  function applyParty(partyPayload: PartyPayload): void {
+  function applyParty(
+    partyPayload: PartyPayload,
+    options?: { syncSetup?: boolean },
+  ): void {
+    const existingParty = party;
+    const shouldSyncSetup = options?.syncSetup ?? !(
+      !!sessionUser &&
+      !!existingParty &&
+      existingParty.code === partyPayload.code &&
+      partyPayload.mode === "casual" &&
+      partyPayload.leader_id === sessionUser.id
+    );
+
     party = partyPayload;
     joinCodeInput = partyPayload.join_code;
     mode = partyPayload.mode;
-    selectedTheme = partyPayload.settings.theme;
-    difficulty = partyPayload.settings.difficulty;
-    timeLimitSeconds = partyPayload.settings.time_limit_seconds;
+    if (shouldSyncSetup) {
+      selectedTheme = partyPayload.settings.theme;
+      difficulty = partyPayload.settings.difficulty;
+      timeLimitSeconds = partyPayload.settings.time_limit_seconds;
+    }
     partyLimit = partyPayload.member_limit;
     rememberPartyCode(partyPayload.code);
   }
@@ -2665,7 +2683,7 @@
         return false;
       }
 
-      applyParty(partyPayload);
+      applyParty(partyPayload, { syncSetup: true });
       setLiveStatus("Lobby restored", "ok");
 
       if (!partyPayload.active_match_id || partyPayload.active_match_finished) {
@@ -2828,9 +2846,6 @@
         body: JSON.stringify({
           leader_id: sessionUser.id,
           mode,
-          theme: selectedTheme,
-          difficulty,
-          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
           member_limit: mode === "zen"
             ? 1
             : Math.min(
@@ -2840,10 +2855,10 @@
         }),
       });
 
-      applyParty(payload);
+      applyParty(payload, { syncSetup: true });
       setLiveStatus("Party live. Waiting for members...", "neutral");
       syncLiveSocket();
-      notice = `Party created. Share code ${payload.join_code}.`;
+      notice = `Party created. Share code ${payload.join_code}. Configure match settings in the lobby, then start.`;
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -2872,7 +2887,7 @@
         return;
       }
 
-      applyParty(payload);
+      applyParty(payload, { syncSetup: true });
       setLiveStatus("Lobby synced", "ok");
       if (payload.active_match_id && (!match || match.match_id !== payload.active_match_id)) {
         setLiveStatus("Host started the match", "ok");
@@ -2969,37 +2984,6 @@
     }
   }
 
-  async function updatePartySetup(): Promise<void> {
-    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
-      return;
-    }
-
-    busy = true;
-    error = "";
-    notice = "";
-    try {
-      const payload = await api<PartyPayload>(
-        `/api/parties/${party.code}/settings`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            user_id: sessionUser.id,
-            theme: selectedTheme,
-            difficulty,
-            time_limit_seconds: timeLimitSeconds,
-          }),
-        },
-      );
-      applyParty(payload);
-      setLiveStatus("Party setup updated", "ok");
-      notice = "Party setup updated.";
-    } catch (err) {
-      error = toErrorMessage(err);
-    } finally {
-      busy = false;
-    }
-  }
-
   async function addPartyTime(): Promise<void> {
     if (!match || !sessionUser) {
       return;
@@ -3034,7 +3018,7 @@
         }),
       });
       if (party || payload.mode !== "zen") {
-        applyParty(payload);
+        applyParty(payload, { syncSetup: true });
       } else {
         timeLimitSeconds = payload.settings.time_limit_seconds;
       }
@@ -3158,7 +3142,16 @@
         `/api/parties/${codeToStart}/start`,
         {
           method: "POST",
-          body: JSON.stringify({ user_id: sessionUser.id }),
+          body: JSON.stringify({
+            user_id: sessionUser.id,
+            ...(requestedMode === "casual"
+              ? {
+                  theme: selectedTheme,
+                  difficulty,
+                  time_limit_seconds: timeLimitSeconds,
+                }
+              : {}),
+          }),
         },
       );
 
@@ -3908,7 +3901,6 @@
       }}
       {startRace}
       {authenticate}
-      {updatePartySetup}
       {updatePartyLimit}
       {copyPartyInvite}
       {refreshPartyLobby}

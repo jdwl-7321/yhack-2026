@@ -60,6 +60,8 @@ Top-level layout:
 - `backend/src/app.py`
   - Main Flask app wiring (`create_app`, `main`).
   - Defines all REST endpoints and WebSocket endpoint (`/ws/events`).
+  - `POST /api/parties` accepts minimal lobby creation payloads (mode + optional member limit) and fills default match settings (`theme=THEMES[0]`, `difficulty=easy`, `time_limit_seconds=900`) when omitted.
+  - `POST /api/parties/<code>/start` accepts optional non-ranked match settings (`theme`, `difficulty`, `time_limit_seconds`) so casual lobbies can set puzzle config at match start.
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
   - Converts domain/store objects into API payloads (`_party_payload`, `_match_payload`, `_judge_result_payload`).
   - Also exposes ranked queue payloads via `_ranked_queue_payload`.
@@ -118,6 +120,7 @@ Top-level layout:
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
+    - Casual/zen match settings can be supplied per match at party start time; those selected settings become the party's latest stored setup.
     - Casual and zen party leaders can add time (`add_seconds`) to party settings; if a casual/zen match is currently active and unlocked for that party, the match timer is extended too.
     - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
@@ -221,8 +224,8 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
-  - Match setup fields are mode-aware: ranked shows only mode selection, and party limit appears only in casual party mode.
-  - Casual party leaders get lobby management actions for setup and member limit.
+  - Match setup fields are mode-aware: ranked shows only mode selection; casual pre-lobby setup shows mode + party limit; puzzle theme/difficulty/time appear after the lobby exists and are used for each started match.
+  - Casual party leaders get lobby management actions for member limit (match setup updates happen through match start payloads).
   - In casual party mode, setup fields and party lobby render in a two-column layout on desktop, with primary action buttons kept in the bottom action row.
 
 - `frontend/src/components/ArenaView.svelte`
