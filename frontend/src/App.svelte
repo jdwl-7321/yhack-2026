@@ -3949,6 +3949,7 @@
     {setEditorFontSize}
     {setKeybindMode}
     {resetThemePreferences}
+    {uploadProfileImage}
     {accountInitials}
     {formatActivityTime}
     {formatRatingDelta}

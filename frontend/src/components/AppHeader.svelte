@@ -77,6 +77,7 @@
   export let setEditorFontSize: (size: EditorFontSize) => void = () => {};
   export let setKeybindMode: (mode: KeybindMode) => void = () => {};
   export let resetThemePreferences: () => void = () => {};
+  export let uploadProfileImage: (file: File) => void | Promise<void> = () => {};
   export let accountInitials: (name: string) => string = () => "EN";
   export let formatActivityTime: (timestamp: string) => string = () => "";
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
@@ -91,6 +92,7 @@
   let quickSettingsIndex = 0;
   let quickSettingsInputEl: HTMLInputElement | null = null;
   let quickSettingsActions: QuickSettingAction[] = [];
+  let accountImageInputEl: HTMLInputElement | null = null;
 
   function closeQuickSettings(): void {
     quickSettingsOpen = false;
@@ -116,6 +118,15 @@
       return "Follow system appearance";
     }
     return `Use ${mode} appearance`;
+  }
+
+  async function handleAccountImageChange(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) {
+      await uploadProfileImage(file);
+    }
+    input.value = "";
   }
 
   function handleQuickSettingsKeydown(event: KeyboardEvent): void {
@@ -438,16 +449,33 @@
         <div class="account-menu" role="dialog" aria-label="Account summary">
           {#if sessionUser}
             <section class="account-summary-card">
-              <div class="account-avatar">
-                {#if profileImageUrl}
-                  <img
-                    class="avatar-image"
-                    src={profileImageUrl}
-                    alt={`${sessionUser.name} profile photo`}
-                  />
-                {:else}
-                  {accountInitials(sessionUser.name)}
-                {/if}
+              <div class="account-avatar-shell">
+                <div class="account-avatar">
+                  {#if profileImageUrl}
+                    <img
+                      class="avatar-image"
+                      src={profileImageUrl}
+                      alt={`${sessionUser.name} profile photo`}
+                    />
+                  {:else}
+                    {accountInitials(sessionUser.name)}
+                  {/if}
+                </div>
+                <input
+                  bind:this={accountImageInputEl}
+                  class="account-avatar-input"
+                  type="file"
+                  accept="image/*"
+                  on:change={(event) => void handleAccountImageChange(event)}
+                />
+                <button
+                  type="button"
+                  class="account-avatar-button"
+                  on:click={() => accountImageInputEl?.click()}
+                  aria-label="Upload profile photo"
+                >
+                  <i class="fas fa-plus" aria-hidden="true"></i>
+                </button>
               </div>
               <div class="account-summary-copy">
                 <p class="eyebrow">Account</p>

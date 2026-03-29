@@ -223,7 +223,7 @@ Defined in `backend/src/app.py`:
 ### Svelte component roles
 
 - `frontend/src/components/AppHeader.svelte`
-  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, account summary dialog, a quick Vim-mode toggle, and uploaded profile-photo display in the account summary card.
+  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, account summary dialog, a quick Vim-mode toggle, and a hover `+` profile-photo upload affordance in the account summary card.
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
