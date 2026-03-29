@@ -82,6 +82,7 @@ class _Template:
     case_factory: CaseFactory
     variable_factory: VariableFactory
     shared_input_factory: SharedInputFactory
+    difficulties: tuple[Difficulty, ...] | None = None
 
 
 class NoveltyPool:
@@ -253,9 +254,16 @@ def generate_puzzle(
     for attempt in range(retry_budget):
         attempt_seed = seed + (attempt * 7919)
         rng = random.Random(attempt_seed)
-        template = _select_template(normalized_theme, rng)
+        template = _select_template(normalized_theme, difficulty, rng)
         params = template.variable_factory(rng, difficulty)
-        sample_tests = _build_cases(template, params, rng, difficulty, count=2)
+        sample_tests = _build_cases(
+            template,
+            params,
+            rng,
+            difficulty,
+            count=2,
+            distinct_outputs=_samples_require_distinct_outputs(template.key),
+        )
         shared_inputs = template.shared_input_factory(params, sample_tests)
 
         hidden_count = {"easy": 10, "medium": 12, "hard": 14, "expert": 16}[difficulty]
@@ -340,7 +348,7 @@ def generate_additional_hidden_test(
     template = (
         _template_for_key(template_key)
         if template_key is not None
-        else _default_template_for_theme(_normalize_theme(theme))
+        else _default_template_for_theme(_normalize_theme(theme), difficulty)
     )
     rng = random.Random(seed)
     existing_pairs = {_case_signature(case) for case in existing_cases}
@@ -372,7 +380,7 @@ def solution_scaffold(contract: FunctionContract) -> str:
 
 
 def format_value(value: Any) -> str:
-    return pformat(value, width=76, sort_dicts=True)
+    return pformat(value, width=96, sort_dicts=True, compact=True)
 
 
 def format_case_input(inputs: Sequence[Any]) -> str:
@@ -478,9 +486,15 @@ def _build_cases(
     difficulty: Difficulty,
     count: int,
     existing_cases: Sequence[TestCase] | None = None,
+    distinct_outputs: bool = False,
 ) -> list[TestCase]:
     cases: list[TestCase] = []
     seen_signatures = {_case_signature(case) for case in (existing_cases or [])}
+    seen_outputs = (
+        {_case_output_signature(case) for case in (existing_cases or [])}
+        if distinct_outputs
+        else set()
+    )
     attempts = 0
     max_attempts = max(60, count * 40)
 
@@ -490,6 +504,11 @@ def _build_cases(
         signature = _case_signature(case)
         if signature in seen_signatures:
             continue
+        if distinct_outputs:
+            output_signature = _case_output_signature(case)
+            if output_signature in seen_outputs:
+                continue
+            seen_outputs.add(output_signature)
         seen_signatures.add(signature)
         cases.append(case)
 
@@ -516,18 +535,38 @@ def _normalize_theme(theme: str) -> str:
     raise ValueError("Unknown theme")
 
 
-def _select_template(theme: str, rng: random.Random) -> _Template:
+def _supports_difficulty(template: _Template, difficulty: Difficulty) -> bool:
+    if template.difficulties is None:
+        return True
+    return difficulty in template.difficulties
+
+
+def _samples_require_distinct_outputs(template_key: str) -> bool:
+    return template_key in {"crypto-lsb-steganography-v1"}
+
+
+def _select_template(
+    theme: str, difficulty: Difficulty, rng: random.Random
+) -> _Template:
     templates = _TEMPLATES_BY_THEME.get(theme)
     if not templates:
         raise ValueError("Theme has no registered templates")
-    return rng.choice(templates)
+    eligible = tuple(
+        template for template in templates if _supports_difficulty(template, difficulty)
+    )
+    if not eligible:
+        raise ValueError("Theme has no templates for this difficulty")
+    return rng.choice(eligible)
 
 
-def _default_template_for_theme(theme: str) -> _Template:
+def _default_template_for_theme(theme: str, difficulty: Difficulty) -> _Template:
     templates = _TEMPLATES_BY_THEME.get(theme)
     if not templates:
         raise ValueError("Theme has no registered templates")
-    return templates[0]
+    for template in templates:
+        if _supports_difficulty(template, difficulty):
+            return template
+    raise ValueError("Theme has no templates for this difficulty")
 
 
 def _template_for_key(template_key: str) -> _Template:
@@ -587,6 +626,10 @@ def _case_signature(case: TestCase) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def _case_output_signature(case: TestCase) -> str:
+    return json.dumps(to_json_value(case.output), sort_keys=True, separators=(",", ":"))
+
+
 def _no_variables(_: random.Random, __: Difficulty) -> dict[str, JsonScalar]:
     return {}
 
@@ -609,6 +652,38 @@ def _sample_pairs_shared_inputs(
             raise ValueError("Sample-pair context requires string-to-string cases")
         pairs.append([input_value, case.output])
     return (pairs,)
+
+
+def _sample_pairs_shared_scalar_inputs(
+    _params: dict[str, JsonScalar], sample_tests: list[TestCase]
+) -> tuple[Any, ...]:
+    pairs: list[list[JsonScalar]] = []
+    for case in sample_tests:
+        if len(case.inputs) != 1:
+            raise ValueError("Expected one primary input for sample-pair context")
+        input_value = case.inputs[0]
+        if not _is_scalar(input_value) or not _is_scalar(case.output):
+            raise ValueError("Sample-pair context requires scalar-to-scalar cases")
+        pairs.append([cast(JsonScalar, input_value), cast(JsonScalar, case.output)])
+    return (pairs,)
+
+
+def _solve_xor_byte(value: int, key: int) -> int:
+    return (value ^ key) & 0xFF
+
+
+def _variables_xor_byte(
+    rng: random.Random, _difficulty: Difficulty
+) -> dict[str, JsonScalar]:
+    return {"key": rng.randint(1, 255)}
+
+
+def _case_xor_byte(
+    rng: random.Random, _difficulty: Difficulty, params: dict[str, JsonScalar]
+) -> TestCase:
+    value = rng.randint(0, 255)
+    key = int(params["key"])
+    return TestCase(inputs=(value,), output=_solve_xor_byte(value, key))
 
 
 def _shift_char(char: str, shift: int) -> str:
@@ -982,6 +1057,27 @@ def _case_non_overlapping_count(
 
 _TEMPLATES: tuple[_Template, ...] = (
     _Template(
+        key="crypto-xor-byte-inference-v1",
+        theme="Cryptography",
+        prompt=(
+            "A deterministic 8-bit XOR mask is used across this match. "
+            "`examples` contains visible [input, output] byte pairs produced with that same mask. "
+            "Implement solution(value, examples) so it applies the same transformation to `value`."
+        ),
+        hint_level_1="Every value is an integer byte in the inclusive range 0..255.",
+        hint_level_2="A single hidden mask is reused unchanged for all tests in the match.",
+        hint_level_3="Infer the mask from a sample pair using output == input ^ mask, then apply that mask.",
+        contract=FunctionContract(
+            parameter_types=("int", "list[list[int]]"),
+            return_type="int",
+            parameter_names=("value", "samples"),
+        ),
+        case_factory=_case_xor_byte,
+        variable_factory=_variables_xor_byte,
+        shared_input_factory=_sample_pairs_shared_scalar_inputs,
+        difficulties=("easy",),
+    ),
+    _Template(
         key="crypto-shift-inference-v2",
         theme="Cryptography",
         prompt=(
@@ -1000,6 +1096,7 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_shift_cipher,
         variable_factory=_variables_shift_cipher,
         shared_input_factory=_sample_pairs_shared_inputs,
+        difficulties=("medium",),
     ),
     _Template(
         key="crypto-substitution-inference-v2",
@@ -1020,6 +1117,7 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_substitution_cipher,
         variable_factory=_variables_substitution_cipher,
         shared_input_factory=_sample_pairs_shared_inputs,
+        difficulties=("hard",),
     ),
     _Template(
         key="crypto-lsb-steganography-v1",
@@ -1038,6 +1136,7 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_lsb_steganography,
         variable_factory=_no_variables,
         shared_input_factory=_no_shared_inputs,
+        difficulties=("expert",),
     ),
     _Template(
         key="algorithms-index-pair-v2",
@@ -1162,6 +1261,9 @@ for theme_name, templates in _TEMPLATES_BY_THEME.items():
 _THEME_ALIASES = {
     "Cryptography - Caesar cipher": "Cryptography",
     "Cryptography - Random substitution cipher": "Cryptography",
+    "Cryptography - Monoalphabetic substitution cipher": "Cryptography",
+    "Cryptography - LSB steganography": "Cryptography",
+    "Cryptography - XOR byte mask": "Cryptography",
     "Algorithms - Two sum indices": "Algorithms",
     "Algorithms - Merge overlapping intervals": "Algorithms",
     "Algorithms - Product of array except self": "Algorithms",
