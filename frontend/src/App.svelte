@@ -2982,12 +2982,24 @@
   }
 
   async function addPartyTime(): Promise<void> {
-    if (
-      !party ||
-      !sessionUser ||
-      party.leader_id !== sessionUser.id ||
-      party.mode !== "casual"
-    ) {
+    if (!match || !sessionUser) {
+      return;
+    }
+
+    const partyCode = party?.code || match.party_code;
+    if (!partyCode || (match.mode !== "casual" && match.mode !== "zen")) {
+      return;
+    }
+
+    const canExtendCasual =
+      match.mode === "casual" &&
+      !!party &&
+      party.mode === "casual" &&
+      party.leader_id === sessionUser.id;
+    const canExtendZen =
+      match.mode === "zen" &&
+      (!party || (party.mode === "zen" && party.leader_id === sessionUser.id));
+    if (!canExtendCasual && !canExtendZen) {
       return;
     }
 
@@ -2995,14 +3007,18 @@
     error = "";
     notice = "";
     try {
-      const payload = await api<PartyPayload>(`/api/parties/${party.code}/add-time`, {
+      const payload = await api<PartyPayload>(`/api/parties/${partyCode}/add-time`, {
         method: "POST",
         body: JSON.stringify({
           user_id: sessionUser.id,
           add_seconds: PARTY_TIME_EXTENSION_SECONDS,
         }),
       });
-      applyParty(payload);
+      if (party || payload.mode !== "zen") {
+        applyParty(payload);
+      } else {
+        timeLimitSeconds = payload.settings.time_limit_seconds;
+      }
       setLiveStatus("Added 5 minutes for the party", "ok");
       notice = "Added 5 minutes to the party timer.";
     } catch (err) {
@@ -3557,13 +3573,21 @@
   $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
   $: canAddPartyTime =
     !!match &&
-    !!party &&
     !!sessionUser &&
     !match.finished &&
     !match.locked &&
-    match.mode === "casual" &&
-    party.mode === "casual" &&
-    party.leader_id === sessionUser.id;
+    (
+      (
+        match.mode === "casual" &&
+        !!party &&
+        party.mode === "casual" &&
+        party.leader_id === sessionUser.id
+      ) ||
+      (
+        match.mode === "zen" &&
+        (!party || (party.mode === "zen" && party.leader_id === sessionUser.id))
+      )
+    );
   $: {
     sessionUser;
     party;
