@@ -645,6 +645,18 @@ nav {
   background-color: var(--main-color);
 }
 
+.btn.resume {
+  color: color-mix(in srgb, var(--main-color) 88%, var(--text-color) 12%);
+  border-color: color-mix(in srgb, var(--main-color) 42%, var(--panel-border) 58%);
+  background: color-mix(in srgb, var(--main-color) 20%, var(--bg-color) 80%);
+}
+
+.btn.resume:hover:not(:disabled) {
+  color: var(--bg-color);
+  border-color: var(--main-color);
+  background: var(--main-color);
+}
+
 .wide {
   width: 100%;
 }
@@ -679,6 +691,43 @@ nav {
   width: 100%;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.resume-spotlight {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--main-color) 44%, var(--panel-border) 56%);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--main-color) 16%, var(--sub-alt-color) 84%);
+  color: var(--text-color);
+  text-align: left;
+  padding: 1.1rem 1.2rem;
+  display: grid;
+  gap: 0.3rem;
+  cursor: pointer;
+  font-family: var(--font-family);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.resume-spotlight h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--text-color);
+}
+
+.resume-spotlight p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--sub-color) 75%, var(--text-color) 25%);
+}
+
+.resume-spotlight:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--main-color);
+}
+
+.resume-spotlight:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .mode-card {

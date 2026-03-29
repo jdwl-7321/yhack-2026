@@ -106,6 +106,7 @@ Top-level layout:
     - Parties and matches are in-memory only.
     - Users are persisted in SQLite only when using `SqliteStore`.
     - Matches in every mode auto-finish when all players are solved or forfeited.
+    - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
     - Ranked theme rotation avoids repeats until all themes are used once.
@@ -137,6 +138,7 @@ Defined in `backend/src/app.py`:
   - `POST /api/parties/<code>/limit`
   - `POST /api/parties/<code>/settings`
   - `POST /api/parties/<code>/kick`
+  - `POST /api/parties/<code>/close`
   - `POST /api/parties/<code>/start`
 
 - Match/gameplay:
@@ -179,7 +181,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/App.svelte`
   - Large orchestration component (state hub).
   - Responsibilities include:
-    - auth/session and account stats localStorage
+    - auth/session, account stats localStorage, and stored active-party restore after refresh/login
     - party and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
@@ -194,7 +196,7 @@ Defined in `backend/src/app.py`:
   - Top navigation, theme picker dialog, and account summary dialog.
 
 - `frontend/src/components/HomeView.svelte`
-  - Auth card, mode selection, party setup/lobby controls, and start flow.
+  - Auth card, party setup/lobby controls, start flow, and active-match resume spotlight/CTA.
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples, hints, failed hidden case promotion, editor, console, standings.

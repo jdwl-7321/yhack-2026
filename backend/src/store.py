@@ -81,6 +81,7 @@ class Match:
     submissions: list[JudgeResult] = field(default_factory=list)
     rating_deltas: dict[str, int] | None = None
     finished: bool = False
+    locked: bool = False
 
 
 class MemoryStore:
@@ -278,6 +279,35 @@ class MemoryStore:
         party.members = [user_id for user_id in party.members if user_id != member_id]
         return party
 
+    def close_party(self, *, code: str, leader_id: str) -> tuple[Party, Match | None]:
+        party = self._require_party(code)
+        self._require_party_leader(party, leader_id)
+
+        locked_match: Match | None = None
+        if party.active_match_id is not None:
+            active_match = self.matches.get(party.active_match_id)
+            if active_match is not None and not active_match.finished:
+                active_match.locked = True
+                locked_match = active_match
+
+        party.active_match_id = None
+        closed_party = Party(
+            code=party.code,
+            mode=party.mode,
+            leader_id=party.leader_id,
+            settings=PartySettings(
+                theme=party.settings.theme,
+                difficulty=party.settings.difficulty,
+                time_limit_seconds=party.settings.time_limit_seconds,
+                seed=party.settings.seed,
+            ),
+            member_limit=party.member_limit,
+            active_match_id=None,
+            members=list(party.members),
+        )
+        self.parties.pop(code, None)
+        return closed_party, locked_match
+
     def start_match(
         self,
         *,
@@ -342,6 +372,8 @@ class MemoryStore:
 
     def submit(self, *, match_id: str, user_id: str, code: str) -> JudgeResult:
         match = self._require_match(match_id)
+        if match.locked:
+            raise ValueError("This match has been closed")
         player = self._require_player(match, user_id)
         if player.forfeited:
             raise ValueError("Player already forfeited")
@@ -369,6 +401,8 @@ class MemoryStore:
 
     def test_samples(self, *, match_id: str, user_id: str, code: str) -> JudgeResult:
         match = self._require_match(match_id)
+        if match.locked:
+            raise ValueError("This match has been closed")
         player = self._require_player(match, user_id)
         if player.forfeited:
             raise ValueError("Player already forfeited")
@@ -386,6 +420,8 @@ class MemoryStore:
         self, *, match_id: str, user_id: str
     ) -> list[TestCase]:
         match = self._require_match(match_id)
+        if match.locked:
+            raise ValueError("This match has been closed")
         player = self._require_player(match, user_id)
         failed = player.last_failed_hidden_test
         if failed is None:
@@ -422,6 +458,8 @@ class MemoryStore:
 
     def request_hint(self, *, match_id: str, user_id: str) -> tuple[int, str]:
         match = self._require_match(match_id)
+        if match.locked:
+            raise ValueError("This match has been closed")
         player = self._require_player(match, user_id)
         if player.hint_level >= 3:
             raise ValueError("All hints already used")
@@ -439,6 +477,8 @@ class MemoryStore:
 
     def forfeit(self, *, match_id: str, user_id: str) -> None:
         match = self._require_match(match_id)
+        if match.locked:
+            raise ValueError("This match has been closed")
         player = self._require_player(match, user_id)
         player.forfeited = True
         self._auto_finish_match(match)

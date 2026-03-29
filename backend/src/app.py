@@ -124,6 +124,17 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             },
         )
 
+    def publish_party_closed(party: Party) -> None:
+        event_hub.publish(
+            channel=_party_channel(party.code),
+            payload={
+                "type": "party.closed",
+                "event": "closed",
+                "code": party.code,
+                "message": "Party lobby was closed by the leader",
+            },
+        )
+
     def publish_match_update(match: Match, *, event: str) -> None:
         event_hub.publish(
             channel=_match_channel(match.id),
@@ -388,6 +399,18 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         publish_party_update(party, event="member_kicked")
         return jsonify(_party_payload(data, party))
 
+    @app.route("/api/parties/<code>/close", methods=["POST"])
+    def close_party(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        closed_party, locked_match = data.close_party(
+            code=code,
+            leader_id=payload_user_id(payload),
+        )
+        if locked_match is not None:
+            publish_match_update(locked_match, event="lobby_closed")
+        publish_party_closed(closed_party)
+        return jsonify({"ok": True, "match_locked": locked_match is not None})
+
     @app.route("/api/parties/<code>/start", methods=["POST"])
     def start_match(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
@@ -566,6 +589,7 @@ def _match_payload(
         "party_code": match.party_code,
         "mode": match.mode,
         "finished": match.finished,
+        "locked": match.locked,
         "theme": match.theme,
         "difficulty": match.difficulty,
         "time_limit_seconds": match.time_limit_seconds,

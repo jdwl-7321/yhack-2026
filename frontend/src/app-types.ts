@@ -63,6 +63,7 @@ export type MatchPayload = {
   party_code: string;
   mode: Mode;
   finished: boolean;
+  locked: boolean;
   theme: string;
   difficulty: Difficulty;
   time_limit_seconds: number;

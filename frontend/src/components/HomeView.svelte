@@ -22,6 +22,7 @@
   export let joinCodeInput = "";
   export let party: PartyPayload | null = null;
   export let match: MatchPayload | null = null;
+  export let timerText = "00:00";
   export let themes: string[] = [];
   export let modeOptions: Mode[] = [];
   export let difficultyOptions: Difficulty[] = [];
@@ -44,11 +45,13 @@
   export let refreshPartyLobby: () => void | Promise<void> = () => {};
   export let joinPartyLobby: () => void | Promise<void> = () => {};
   export let kickPartyMember: (memberId: string) => void | Promise<void> = () => {};
-  export let clearPartyLobby: () => void = () => {};
+  export let clearPartyLobby: () => void | Promise<void> = () => {};
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
-  export let showArena: () => void = () => {};
+  export let resumeRace: () => void | Promise<void> = () => {};
   export let logout: () => void | Promise<void> = () => {};
   export let normalizePartyCode: (raw: string) => string = (raw) => raw;
+
+  $: resumableMatch = match && !match.finished && !match.locked ? match : null;
 </script>
 
 <main id="home-view">
@@ -57,40 +60,56 @@
     <span>Defeat your opponents.</span>
   </div>
 
-  <div class="mode-selector" role="group" aria-label="Play mode">
+  {#if resumableMatch}
     <button
       type="button"
-      class="mode-card"
-      on:click={() => startRace("zen")}
+      class="resume-spotlight"
+      on:click={resumeRace}
       disabled={!sessionUser || busy}
     >
-      <i class="fas fa-mountain" aria-hidden="true"></i>
-      <h3>Zen Mode</h3>
-      <p>Solo play. No rating. Infinite time.</p>
+      <span class="eyebrow">Match in progress</span>
+      <h3>Resume your race</h3>
+      <p>
+        {resumableMatch.mode.toUpperCase()} | {resumableMatch.theme} | {resumableMatch.difficulty.toUpperCase()} | {timerText}
+        left
+      </p>
     </button>
+  {:else}
+    <div class="mode-selector" role="group" aria-label="Play mode">
+      <button
+        type="button"
+        class="mode-card"
+        on:click={() => startRace("zen")}
+        disabled={!sessionUser || busy}
+      >
+        <i class="fas fa-mountain" aria-hidden="true"></i>
+        <h3>Zen Mode</h3>
+        <p>Solo play. No rating. Infinite time.</p>
+      </button>
 
-    <button
-      type="button"
-      class="mode-card"
-      on:click={() => startRace("casual")}
-      disabled={!sessionUser || busy}
-    >
-      <i class="fas fa-user-friends" aria-hidden="true"></i>
-      <h3>Casual Party</h3>
-      <p>Play with friends via link. Custom rules.</p>
-    </button>
+      <button
+        type="button"
+        class="mode-card"
+        on:click={() => startRace("casual")}
+        disabled={!sessionUser || busy}
+      >
+        <i class="fas fa-user-friends" aria-hidden="true"></i>
+        <h3>Casual Party</h3>
+        <p>Play with friends via link. Custom rules.</p>
+      </button>
 
-    <button
-      type="button"
-      class="mode-card"
-      on:click={() => startRace("ranked")}
-      disabled={!sessionUser || busy}
-    >
-      <i class="fas fa-trophy" aria-hidden="true"></i>
-      <h3>Ranked</h3>
-      <p>Random theme. 1 hour limit. ELO rating.</p>
-    </button>
-  </div>
+      <button
+        type="button"
+        class="mode-card"
+        on:click={() => startRace("ranked")}
+        disabled={!sessionUser || busy}
+      >
+        <i class="fas fa-trophy" aria-hidden="true"></i>
+        <h3>Ranked</h3>
+        <p>Random theme. 1 hour limit. ELO rating.</p>
+      </button>
+    </div>
+  {/if}
 
   <section class="home-panels">
     {#if !sessionUser}
@@ -354,13 +373,9 @@
 
           <button
             type="button"
-            class="btn"
-            on:click={() => {
-              if (match) {
-                showArena();
-              }
-            }}
-            disabled={!match || busy}
+            class="btn resume"
+            on:click={resumeRace}
+            disabled={!resumableMatch || busy}
           >
             Resume Race
           </button>

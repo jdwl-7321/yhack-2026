@@ -43,6 +43,8 @@
   export let handleEditorKeydown: (event: KeyboardEvent) => void = () => {};
   export let syncEditorScroll: (event: Event) => void = () => {};
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
+
+  $: actionLocked = !!match?.locked;
 </script>
 
 <main id="race-view">
@@ -97,6 +99,12 @@
       </div>
     </div>
 
+    {#if actionLocked}
+      <p class="flash notice">
+        Lobby closed by leader. Timer stopped and submissions are disabled.
+      </p>
+    {/if}
+
     <div class="game-layout">
       <section class="prompt-panel">
         <article class="prompt-card">
@@ -143,7 +151,7 @@
                 type="button"
                 class="btn"
                 on:click={promoteFailedTest}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 Use as sample test
               </button>
@@ -194,7 +202,7 @@
               type="button"
               class="btn"
               on:click={requestHint}
-              disabled={busy || hints.length >= 3}
+              disabled={busy || actionLocked || hints.length >= 3}
             >
               <i class="fas fa-lightbulb" aria-hidden="true"></i> Hint
             </button>
@@ -204,7 +212,7 @@
                 type="button"
                 class="btn"
                 on:click={forfeit}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 <i class="fas fa-flag" aria-hidden="true"></i> Forfeit
               </button>
@@ -212,7 +220,7 @@
                 type="button"
                 class="btn"
                 on:click={testSamples}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 <i class="fas fa-vial" aria-hidden="true"></i> Run Samples
               </button>
@@ -220,7 +228,7 @@
                 type="button"
                 class="btn primary"
                 on:click={submit}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 {#if busy}
                   <i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Running...

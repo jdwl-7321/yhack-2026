@@ -73,6 +73,7 @@
   const EDITOR_FONT_FAMILY_STORAGE_KEY = "yhack.editor-font-family";
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
+  const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
   const DEFAULT_EDITOR_FONT_FAMILY: EditorFontFamily = "roboto-mono";
@@ -274,6 +275,34 @@
 
   function accountStatsStorageKey(userId: string): string {
     return `${ACCOUNT_STATS_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function activePartyStorageKey(userId: string): string {
+    return `${ACTIVE_PARTY_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function storedPartyCodeForUser(userId: string): string {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return normalizePartyCode(localStorage.getItem(activePartyStorageKey(userId)) ?? "");
+  }
+
+  function rememberPartyCode(partyCode: string): void {
+    if (typeof window === "undefined" || !sessionUser) {
+      return;
+    }
+    localStorage.setItem(
+      activePartyStorageKey(sessionUser.id),
+      normalizePartyCode(partyCode),
+    );
+  }
+
+  function forgetPartyCode(userId: string | undefined = sessionUser?.id): void {
+    if (typeof window === "undefined" || !userId) {
+      return;
+    }
+    localStorage.removeItem(activePartyStorageKey(userId));
   }
 
   function normalizeAccountStats(raw: unknown): AccountStats {
@@ -572,6 +601,7 @@
       if (previousParty && previousParty.code === nextParty.code) {
         party = null;
         joinCodeInput = "";
+        forgetPartyCode();
         setLiveStatus("You were removed from the party", "warn");
         notice = "You were removed from the party.";
       }
@@ -628,6 +658,14 @@
       return;
     }
 
+    if (nextMatch.locked) {
+      clearTimer();
+      timerText = "Paused";
+      notice = "Party lobby closed. This match is read-only now.";
+      setLiveStatus("Lobby closed by leader", "warn");
+      return;
+    }
+
     if (eventName === "submission") {
       setLiveStatus("Standings updated from a submission", "ok");
     }
@@ -658,6 +696,18 @@
         payload.match as MatchPayload,
         String(payload.event ?? "updated"),
       );
+      return;
+    }
+
+    if (type === "party.closed") {
+      const closedCode = normalizePartyCode(String(payload.code ?? ""));
+      if (party && closedCode && party.code === closedCode) {
+        party = null;
+        joinCodeInput = "";
+        notice = "Party lobby was closed by the leader.";
+        setLiveStatus("Party closed", "warn");
+        forgetPartyCode();
+      }
       return;
     }
   }
@@ -800,6 +850,9 @@
     if (!match || !sessionUser) {
       return;
     }
+    if (match.locked) {
+      return;
+    }
 
     try {
       const payload = await api<{ standings: Standing[] }>(
@@ -837,11 +890,20 @@
     }
 
     activeView = "arena";
-    startTimer(remainingSecondsForMatch(payload));
+    if (payload.locked) {
+      clearTimer();
+      timerText = "Paused";
+      setLiveStatus("Lobby closed by leader", "warn");
+      notice = "Party lobby closed. This match is read-only now.";
+    } else {
+      startTimer(remainingSecondsForMatch(payload));
+    }
     code = payload.scaffold;
     resetConsole();
-    setLiveStatus("Match started", "ok");
-    appendConsole(`Joined live match: ${payload.theme}`, "system");
+    if (!payload.locked) {
+      setLiveStatus("Match started", "ok");
+      appendConsole(`Joined live match: ${payload.theme}`, "system");
+    }
   }
 
   function resetConsole(): void {
@@ -1462,11 +1524,31 @@
       activeView = "home";
       return;
     }
+    if (match && !match.locked && !timerInterval) {
+      startTimer(remainingSecondsForMatch(match));
+    }
     activeView = "arena";
     error = "";
     notice = "";
     setLiveStatus("Live match in progress", "ok");
     accountMenuOpen = false;
+  }
+
+  async function resumeRace(): Promise<void> {
+    if (!match) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await openMatchFromLobby(match.match_id);
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
   }
 
   function toggleLeaderboardView(): void {
@@ -2053,11 +2135,13 @@
 
   function applyParty(partyPayload: PartyPayload): void {
     party = partyPayload;
+    joinCodeInput = partyPayload.join_code;
     mode = partyPayload.mode;
     selectedTheme = partyPayload.settings.theme;
     difficulty = partyPayload.settings.difficulty;
     timeLimitSeconds = partyPayload.settings.time_limit_seconds;
     partyLimit = partyPayload.member_limit;
+    rememberPartyCode(partyPayload.code);
   }
 
   function partyJoinUrl(partyPayload: PartyPayload): string {
@@ -2135,8 +2219,10 @@
   }
 
   async function refreshSession(): Promise<void> {
+    const previousUserId = sessionUser?.id;
     const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
+      forgetPartyCode(previousUserId);
       sessionUser = null;
       accountStats = emptyAccountStats();
       accountMenuOpen = false;
@@ -2151,6 +2237,72 @@
     sessionUser = payload.user;
     loadAccountStats(payload.user);
     await loadLeaderboard();
+    await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
+  }
+
+  async function restorePartyAndMatch(
+    user: SessionUser,
+    partyCode: string,
+  ): Promise<boolean> {
+    const normalizedCode = normalizePartyCode(partyCode);
+    if (!normalizedCode) {
+      return false;
+    }
+
+    try {
+      const partyPayload = await api<PartyPayload>(
+        `/api/parties/${normalizedCode}?t=${Date.now()}`,
+      );
+      const stillMember = partyPayload.members.some((member) => member.id === user.id);
+      if (!stillMember) {
+        forgetPartyCode(user.id);
+        return false;
+      }
+
+      applyParty(partyPayload);
+      setLiveStatus("Lobby restored", "ok");
+
+      if (!partyPayload.active_match_id || partyPayload.active_match_finished) {
+        if (match && match.party_code === partyPayload.code) {
+          match = null;
+          standings = [];
+        }
+        return true;
+      }
+
+      const activeMatch = await api<MatchPayload>(
+        `/api/matches/${partyPayload.active_match_id}`,
+      );
+      match = activeMatch;
+      postMatch = null;
+      testResult = null;
+      submitResult = null;
+      standings = activeMatch.standings;
+      syncSessionElo(activeMatch.standings);
+      mode = activeMatch.mode;
+      difficulty = activeMatch.difficulty;
+      selectedTheme = activeMatch.theme;
+      timeLimitSeconds = activeMatch.time_limit_seconds;
+      hints = activeMatch.free_hint ? [activeMatch.free_hint] : [];
+      code = activeMatch.scaffold;
+      resetEditorHistory(activeMatch.scaffold);
+      if (activeMatch.locked) {
+        clearTimer();
+        timerText = "Paused";
+        setLiveStatus("Lobby closed by leader", "warn");
+        notice = "Party lobby closed. This match is read-only now.";
+      } else {
+        startTimer(remainingSecondsForMatch(activeMatch));
+        setLiveStatus("Active match ready to resume", "ok");
+        notice = `You have an active ${activeMatch.mode} match in progress.`;
+      }
+      return true;
+    } catch (err) {
+      if (toErrorMessage(err) === "Party not found") {
+        forgetPartyCode(user.id);
+      }
+      return false;
+    }
   }
 
   async function authenticate(nextMode: AuthMode): Promise<void> {
@@ -2169,9 +2321,8 @@
         nextMode === "register"
           ? "Account created. Session is active."
           : "Signed in.";
-      void loadLeaderboard().catch((err) => {
-        error = toErrorMessage(err);
-      });
+      await loadLeaderboard();
+      await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -2180,11 +2331,13 @@
   }
 
   async function logout(): Promise<void> {
+    const previousUserId = sessionUser?.id;
     busy = true;
     error = "";
     notice = "";
     try {
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+      forgetPartyCode(previousUserId);
       sessionUser = null;
       accountStats = emptyAccountStats();
       accountMenuOpen = false;
@@ -2306,6 +2459,7 @@
       if (!stillMember) {
         party = null;
         joinCodeInput = "";
+        forgetPartyCode();
         setLiveStatus("You were removed from the party", "warn");
         notice = "You were removed from the party.";
         return;
@@ -2456,12 +2610,51 @@
     }
   }
 
-  function clearPartyLobby(): void {
-    party = null;
-    joinCodeInput = "";
-    syncLiveSocket();
-    setLiveStatus("Idle", "neutral");
-    notice = "Lobby closed.";
+  async function clearPartyLobby(): Promise<void> {
+    if (!party) {
+      return;
+    }
+
+    const currentParty = party;
+    if (!sessionUser || currentParty.leader_id !== sessionUser.id) {
+      party = null;
+      joinCodeInput = "";
+      forgetPartyCode();
+      syncLiveSocket();
+      setLiveStatus("Idle", "neutral");
+      notice = "Lobby closed.";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await api<{ ok: boolean; match_locked: boolean }>(
+        `/api/parties/${currentParty.code}/close`,
+        {
+          method: "POST",
+          body: JSON.stringify({ user_id: sessionUser.id }),
+        },
+      );
+      party = null;
+      match = null;
+      standings = [];
+      testResult = null;
+      submitResult = null;
+      hints = [];
+      clearTimer();
+      timerText = "00:00";
+      joinCodeInput = "";
+      forgetPartyCode();
+      syncLiveSocket();
+      setLiveStatus("Idle", "neutral");
+      notice = "Lobby closed.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
   }
 
   async function startMatch(partyCode?: string): Promise<void> {
@@ -2479,9 +2672,9 @@
     submitResult = null;
     hints = [];
     const requestedMode = mode;
+    let codeToStart = partyCode;
 
     try {
-      let codeToStart = partyCode;
       if (!codeToStart) {
         const createdParty = await api<PartyPayload>("/api/parties", {
           method: "POST",
@@ -2495,6 +2688,7 @@
           }),
         });
         codeToStart = createdParty.code;
+        rememberPartyCode(createdParty.code);
         if (mode !== "zen") {
           applyParty(createdParty);
         }
@@ -2536,10 +2730,22 @@
         notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`;
       }
     } catch (err) {
-      error = toErrorMessage(err);
-      match = null;
-      standings = [];
-      appendConsole(`System error: ${toErrorMessage(err)}`, "error");
+      const message = toErrorMessage(err);
+      if (
+        message === "This party already has an active match" &&
+        sessionUser &&
+        codeToStart
+      ) {
+        const restored = await restorePartyAndMatch(sessionUser, codeToStart);
+        if (restored) {
+          error = "";
+          notice = "This party already has an active match. Resume when ready.";
+          return;
+        }
+      }
+
+      error = message;
+      appendConsole(`System error: ${message}`, "error");
     } finally {
       busy = false;
     }
@@ -2568,6 +2774,7 @@
   async function startRace(nextMode: Mode): Promise<void> {
     if (party && party.mode !== nextMode) {
       party = null;
+      forgetPartyCode();
       setLiveStatus("Idle", "neutral");
     }
     mode = nextMode;
@@ -2582,6 +2789,11 @@
 
   async function submit(): Promise<void> {
     if (!match || !sessionUser) {
+      return;
+    }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Submission blocked: match has been closed.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -2642,6 +2854,11 @@
     if (!match || !sessionUser) {
       return;
     }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Sample run blocked: match has been closed.", "error");
+      return;
+    }
     const currentMatchId = match.match_id;
     busy = true;
     error = "";
@@ -2687,6 +2904,11 @@
     if (!match || !sessionUser || !submitResult?.first_failed_hidden_test) {
       return;
     }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Promotion blocked: match has been closed.", "error");
+      return;
+    }
     const currentMatchId = match.match_id;
     const currentSubmit = submitResult;
 
@@ -2718,6 +2940,11 @@
     if (!match || !sessionUser) {
       return;
     }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Hint request blocked: match has been closed.", "error");
+      return;
+    }
     busy = true;
     error = "";
     try {
@@ -2745,6 +2972,11 @@
 
   async function forfeit(): Promise<void> {
     if (!match || !sessionUser) {
+      return;
+    }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Forfeit blocked: match has been closed.", "error");
       return;
     }
     busy = true;
@@ -3040,6 +3272,7 @@
       bind:joinCodeInput
       {party}
       {match}
+      {timerText}
       {themes}
       {modeOptions}
       {difficultyOptions}
@@ -3066,7 +3299,7 @@
       {kickPartyMember}
       {clearPartyLobby}
       {launchConfiguredMatch}
-      {showArena}
+      {resumeRace}
       {logout}
       {normalizePartyCode}
     />

@@ -763,6 +763,39 @@ def test_casual_match_auto_finishes_when_all_players_forfeit() -> None:
     assert refreshed_party["active_match_finished"] is True
 
 
+def test_close_party_locks_active_match_and_blocks_actions() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    leader, teammate, party, match = _start_two_player_casual_match(client, seed=33)
+
+    closed = client.post(
+        f"/api/parties/{party['code']}/close",
+        json={"user_id": leader["id"]},
+    )
+    assert closed.status_code == 200
+    closed_payload = closed.get_json()
+    assert closed_payload == {"ok": True, "match_locked": True}
+
+    get_closed_party = client.get(f"/api/parties/{party['code']}")
+    assert get_closed_party.status_code == 400
+    assert get_closed_party.get_json() == {"error": "Party not found"}
+
+    locked_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert locked_match is not None
+    assert locked_match["locked"] is True
+    assert locked_match["finished"] is False
+
+    blocked_submit = client.post(
+        f"/api/matches/{match['match_id']}/submit",
+        json={
+            "user_id": teammate["id"],
+            "code": "def solution(arg1):\n    return arg1\n",
+        },
+    )
+    assert blocked_submit.status_code == 400
+    assert blocked_submit.get_json() == {"error": "This match has been closed"}
+
+
 def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
