@@ -60,6 +60,7 @@
   let committingNewSample = false;
 
   const DEFAULT_NEW_SAMPLE_INPUTS = "arg1 = null";
+  let newSampleInputTemplate = DEFAULT_NEW_SAMPLE_INPUTS;
   let newSampleInputs = DEFAULT_NEW_SAMPLE_INPUTS;
   let samplesAreEditable = true;
 
@@ -77,6 +78,18 @@
     return values
       .map((value, index) => `arg${index + 1} = ${asJsonText(value)}`)
       .join("\n");
+  }
+
+  function defaultSampleInputsForMatch(currentMatch: MatchPayload | null): string {
+    const firstSamplePrimaryArgs = currentMatch?.sample_tests[0]?.primary_inputs;
+    const argCount =
+      Array.isArray(firstSamplePrimaryArgs) && firstSamplePrimaryArgs.length > 0
+        ? firstSamplePrimaryArgs.length
+        : 1;
+
+    return Array.from({ length: argCount }, (_, index) => `arg${index + 1} = null`).join(
+      "\n"
+    );
   }
 
   $: samplesAreEditable =
@@ -128,7 +141,7 @@
       await addSampleTest(newSampleInputs);
       await tick();
       if ((match?.sample_tests.length ?? 0) > previousSampleCount) {
-        newSampleInputs = DEFAULT_NEW_SAMPLE_INPUTS;
+        newSampleInputs = newSampleInputTemplate;
         await tick();
         resizeSampleTextarea(newSampleInputEl);
       }
@@ -138,6 +151,21 @@
   }
 
   $: if (match) {
+    const nextNewSampleTemplate = defaultSampleInputsForMatch(match);
+    const shouldRefreshNewSampleInputs =
+      sampleDraftMatchId !== match.match_id ||
+      newSampleInputs === newSampleInputTemplate ||
+      newSampleInputs.trim().length === 0;
+
+    if (nextNewSampleTemplate !== newSampleInputTemplate) {
+      newSampleInputTemplate = nextNewSampleTemplate;
+      if (shouldRefreshNewSampleInputs) {
+        newSampleInputs = nextNewSampleTemplate;
+      }
+    } else if (sampleDraftMatchId !== match.match_id) {
+      newSampleInputs = nextNewSampleTemplate;
+    }
+
     const nextSignature = JSON.stringify(
       match.sample_tests.map((sample) => sample.primary_inputs)
     );

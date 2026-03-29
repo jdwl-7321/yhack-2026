@@ -207,7 +207,9 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples with inline input editing inside the sample grid (save on blur), auto-resizing sample input textareas, output auto-refresh, sample delete/add actions, hints, failed hidden case promotion, editor, console, standings.
+  - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
   - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
+  - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args used by locked cipher templates.
   - Caesar/substitution cryptography templates keep sample inputs read-only because shared example inputs are auto-generated.
 
 - `frontend/src/components/LeaderboardView.svelte`

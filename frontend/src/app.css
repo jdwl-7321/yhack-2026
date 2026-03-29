@@ -963,7 +963,9 @@ select:focus {
 }
 
 .samples-scroll {
-  overflow: hidden;
+  max-height: 15.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: 0.45rem;
   background-color: var(--bg-color);
 }
@@ -972,6 +974,7 @@ select:focus {
   display: grid;
   grid-template-columns: 3rem minmax(0, 1fr) minmax(0, 1fr);
   align-items: stretch;
+  border: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
 .sample-head {
@@ -980,11 +983,15 @@ select:focus {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 0.6rem 0.7rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 28%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
   background-color: var(--bg-color);
   position: sticky;
   top: 0;
   z-index: 1;
+}
+
+.sample-head + .sample-head {
+  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
 .index-head {
@@ -999,6 +1006,7 @@ select:focus {
   padding: 0.7rem 0.3rem;
   text-align: center;
   border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  align-self: stretch;
 }
 
 .sample-cell {
