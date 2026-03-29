@@ -249,8 +249,23 @@ export type AdminMatch = {
   players: AdminMatchPlayer[];
 };
 
+export type AdminPuzzleTemplate = {
+  template_key: string;
+  theme: string;
+  difficulty: Difficulty;
+  prompt: string;
+  hint_level_1: string;
+  hint_level_2: string;
+  hint_level_3: string;
+  enabled: boolean;
+  source_path: string;
+  source_code: string;
+};
+
 export type AdminDashboardPayload = {
   admin_username: string;
   users: SessionUser[];
   active_matches: AdminMatch[];
+  puzzle_templates: AdminPuzzleTemplate[];
+  missing_puzzle_template_keys: string[];
 };

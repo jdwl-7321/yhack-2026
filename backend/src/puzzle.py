@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass
 import hashlib
+import importlib
 import json
-import math
+from pathlib import Path
 from pprint import pformat
 import random
-import string
-import uuid
+import sys
+from dataclasses import dataclass
 from typing import Any, Callable, Literal, Sequence, cast
+import uuid
 
 from jinja2 import Environment, StrictUndefined, TemplateError
 
@@ -20,6 +20,8 @@ VarType = Literal["int", "float", "bool", "str", "choice"]
 SamplingMode = Literal["uniform", "weighted", "fixed_list"]
 
 _HINT_TEMPLATE_ENV = Environment(autoescape=False, undefined=StrictUndefined)
+_PUZZLE_MODULE_DIR = Path(__file__).resolve().parent / "puzzles"
+_PUZZLE_MODULE_SUFFIX = "_puzzle.py"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +69,7 @@ class PuzzleInstance:
 CaseFactory = Callable[[random.Random, Difficulty, dict[str, JsonScalar]], TestCase]
 VariableFactory = Callable[[random.Random, Difficulty], dict[str, JsonScalar]]
 SharedInputFactory = Callable[[dict[str, JsonScalar], list[TestCase]], tuple[Any, ...]]
+ExpectedOutputFactory = Callable[..., Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +84,22 @@ class _Template:
     case_factory: CaseFactory
     variable_factory: VariableFactory
     shared_input_factory: SharedInputFactory
+    expected_output_factory: ExpectedOutputFactory
+    source_path: str
     difficulties: tuple[Difficulty, ...] | None = None
+    distinct_sample_outputs: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class HardcodedPuzzleTemplate:
+    template_key: str
+    theme: str
+    difficulty: Difficulty
+    prompt: str
+    hint_level_1: str
+    hint_level_2: str
+    hint_level_3: str
+    contract: FunctionContract
 
 
 def generator_schema() -> dict[str, Any]:
@@ -220,6 +238,54 @@ def generate_puzzle(
     normalized_theme = _normalize_theme(theme)
     rng = random.Random(seed)
     template = _select_template(normalized_theme, difficulty, rng)
+    return _build_puzzle_instance(
+        template=template,
+        theme=normalized_theme,
+        difficulty=difficulty,
+        rng=rng,
+        prompt=template.prompt,
+        hint_level_1=template.hint_level_1,
+        hint_level_2=template.hint_level_2,
+        hint_level_3=template.hint_level_3,
+    )
+
+
+def generate_puzzle_from_template(
+    *,
+    template_key: str,
+    theme: str,
+    difficulty: Difficulty,
+    seed: int,
+    prompt: str,
+    hint_level_1: str,
+    hint_level_2: str,
+    hint_level_3: str,
+) -> PuzzleInstance:
+    normalized_theme = _normalize_theme(theme)
+    template = _template_for_key(template_key)
+    return _build_puzzle_instance(
+        template=template,
+        theme=normalized_theme,
+        difficulty=difficulty,
+        rng=random.Random(seed),
+        prompt=prompt,
+        hint_level_1=hint_level_1,
+        hint_level_2=hint_level_2,
+        hint_level_3=hint_level_3,
+    )
+
+
+def _build_puzzle_instance(
+    *,
+    template: _Template,
+    theme: str,
+    difficulty: Difficulty,
+    rng: random.Random,
+    prompt: str,
+    hint_level_1: str,
+    hint_level_2: str,
+    hint_level_3: str,
+) -> PuzzleInstance:
     params = template.variable_factory(rng, difficulty)
     sample_tests = _build_cases(
         template,
@@ -227,7 +293,7 @@ def generate_puzzle(
         rng,
         difficulty,
         count=3,
-        distinct_outputs=_samples_require_distinct_outputs(template.key),
+        distinct_outputs=template.distinct_sample_outputs,
     )
     shared_inputs = template.shared_input_factory(params, sample_tests)
 
@@ -243,7 +309,7 @@ def generate_puzzle(
 
     fingerprint_payload = {
         "template": template.key,
-        "theme": normalized_theme,
+        "theme": theme,
         "difficulty": difficulty,
         "variables": params,
         "contract": {
@@ -278,14 +344,14 @@ def generate_puzzle(
 
     return PuzzleInstance(
         id=uuid.uuid4().hex[:12],
-        theme=normalized_theme,
+        theme=theme,
         difficulty=difficulty,
-        prompt=template.prompt,
+        prompt=prompt,
         sample_tests=sample_tests,
         hidden_tests=hidden_tests,
-        hint_level_1=_render_hint_template(template.hint_level_1, params),
-        hint_level_2=_render_hint_template(template.hint_level_2, params),
-        hint_level_3=_render_hint_template(template.hint_level_3, params),
+        hint_level_1=_render_hint_template(hint_level_1, params),
+        hint_level_2=_render_hint_template(hint_level_2, params),
+        hint_level_3=_render_hint_template(hint_level_3, params),
         variables=params,
         contract=template.contract,
         template_key=template.key,
@@ -293,6 +359,54 @@ def generate_puzzle(
         fingerprint=fingerprint,
         signature=signature,
     )
+
+
+def hardcoded_puzzle_templates() -> list[HardcodedPuzzleTemplate]:
+    records: list[HardcodedPuzzleTemplate] = []
+    for template in _TEMPLATES:
+        if template.difficulties is None or len(template.difficulties) != 1:
+            raise ValueError(
+                f"Template {template.key} must declare exactly one difficulty"
+            )
+        records.append(
+            HardcodedPuzzleTemplate(
+                template_key=template.key,
+                theme=template.theme,
+                difficulty=template.difficulties[0],
+                prompt=template.prompt,
+                hint_level_1=template.hint_level_1,
+                hint_level_2=template.hint_level_2,
+                hint_level_3=template.hint_level_3,
+                contract=template.contract,
+            )
+        )
+    return records
+
+
+def template_source_path(template_key: str) -> str:
+    return _template_for_key(template_key).source_path
+
+
+def template_source(template_key: str) -> str:
+    path = Path(template_source_path(template_key))
+    return path.read_text(encoding="utf-8")
+
+
+def update_template_source(*, template_key: str, source_code: str) -> None:
+    template = _template_for_key(template_key)
+    path = Path(template.source_path)
+    if not source_code.strip():
+        raise ValueError("source_code is required")
+
+    previous_source = path.read_text(encoding="utf-8")
+    path.write_text(source_code, encoding="utf-8")
+    try:
+        _refresh_template_registry()
+        _template_for_key(template_key)
+    except Exception as exc:
+        path.write_text(previous_source, encoding="utf-8")
+        _refresh_template_registry()
+        raise ValueError(f"Invalid puzzle source: {exc}") from None
 
 
 def generate_additional_hidden_test(
@@ -361,96 +475,11 @@ def expected_output_for_primary_inputs(
     variables: dict[str, JsonScalar],
     primary_inputs: Sequence[Any],
 ) -> Any:
-    if template_key == "crypto-xor-byte-inference-v1":
-        _require_arity(primary_inputs, expected=1)
-        value = _require_int_value(primary_inputs[0], label="value")
-        key = _require_variable_int(variables, name="key")
-        return _solve_xor_byte(value, key)
-
-    if template_key == "crypto-shift-inference-v2":
-        _require_arity(primary_inputs, expected=1)
-        text = _require_str_value(primary_inputs[0], label="text")
-        shift = _require_variable_int(variables, name="shift")
-        return _solve_caesar(text, shift)
-
-    if template_key == "crypto-substitution-inference-v2":
-        _require_arity(primary_inputs, expected=1)
-        text = _require_str_value(primary_inputs[0], label="text")
-        source = _require_variable_str(variables, name="source")
-        target = _require_variable_str(variables, name="target")
-        return _solve_substitution(text, source, target)
-
-    if template_key == "crypto-lsb-steganography-v1":
-        _require_arity(primary_inputs, expected=1)
-        values = _require_int_sequence(primary_inputs[0], label="numbers")
-        return _decode_lsb_ascii(values)
-
-    if template_key == "algorithms-index-pair-v2":
-        _require_arity(primary_inputs, expected=2)
-        values = _require_int_sequence(primary_inputs[0], label="values")
-        target = _require_int_value(primary_inputs[1], label="target")
-        pairs = _two_sum_pairs(values, target)
-        if len(pairs) != 1:
-            raise ValueError(
-                "two-sum samples must contain exactly one valid index pair"
-            )
-        return pairs[0]
-
-    if template_key == "datastructures-bracket-structure-v2":
-        _require_arity(primary_inputs, expected=1)
-        text = _require_str_value(primary_inputs[0], label="source")
-        return _is_balanced_brackets(text)
-
-    if template_key == "greedy-interval-selection-v2":
-        _require_arity(primary_inputs, expected=1)
-        intervals = _require_intervals(primary_inputs[0])
-        return _max_non_overlapping(intervals)
-
-    if template_key == "strings-window-length-v2":
-        _require_arity(primary_inputs, expected=1)
-        text = _require_str_value(primary_inputs[0], label="text")
-        return _longest_unique_substring(text)
-
-    if template_key == "search-grid-navigation-v2":
-        _require_arity(primary_inputs, expected=1)
-        grid = _require_str_sequence(primary_inputs[0], label="grid")
-        return _maze_shortest_path(grid)
-
-    if template_key == "numeric-gcd-value-v1":
-        _require_arity(primary_inputs, expected=2)
-        left = _require_int_value(primary_inputs[0], label="a")
-        right = _require_int_value(primary_inputs[1], label="b")
-        return math.gcd(left, right)
-
-    if template_key == "numeric-lcm-value-v1":
-        _require_arity(primary_inputs, expected=2)
-        left = _require_int_value(primary_inputs[0], label="a")
-        right = _require_int_value(primary_inputs[1], label="b")
-        return _lcm(left, right)
-
-    if template_key == "numeric-prime-number-v1":
-        _require_arity(primary_inputs, expected=1)
-        value = _require_int_value(primary_inputs[0], label="n")
-        return _is_prime(value)
-
-    if template_key == "numeric-add-reversed-number-v1":
-        _require_arity(primary_inputs, expected=1)
-        value = _require_int_value(primary_inputs[0], label="n")
-        return _add_number_and_reverse(value)
-
-    if template_key == "numeric-total-factor-count-v1":
-        _require_arity(primary_inputs, expected=1)
-        values = _require_int_sequence(primary_inputs[0], label="values")
-        return _total_factor_count(values)
-
-    if template_key == "numeric-linear-transform-v1":
-        _require_arity(primary_inputs, expected=1)
-        value = _require_int_value(primary_inputs[0], label="x")
-        a = _require_variable_int(variables, name="a")
-        b = _require_variable_int(variables, name="b")
-        return a * value + b
-
-    raise ValueError("Unsupported puzzle template")
+    template = _template_for_key(template_key)
+    return template.expected_output_factory(
+        variables=variables,
+        primary_inputs=primary_inputs,
+    )
 
 
 def to_json_value(value: Any) -> JsonValue:
@@ -466,68 +495,6 @@ def to_json_value(value: Any) -> JsonValue:
         ordered = sorted(value, key=repr)
         return [to_json_value(item) for item in ordered]
     raise TypeError(f"Unsupported puzzle value type: {type(value).__name__}")
-
-
-def _require_arity(values: Sequence[Any], *, expected: int) -> None:
-    if len(values) != expected:
-        raise ValueError(f"inputs must contain exactly {expected} argument(s)")
-
-
-def _require_int_value(value: Any, *, label: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{label} must be an integer")
-    return value
-
-
-def _require_str_value(value: Any, *, label: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{label} must be a string")
-    return value
-
-
-def _require_int_sequence(value: Any, *, label: str) -> list[int]:
-    if not isinstance(value, list):
-        raise ValueError(f"{label} must be a list of integers")
-    parsed: list[int] = []
-    for index, item in enumerate(value):
-        parsed.append(_require_int_value(item, label=f"{label}[{index}]"))
-    return parsed
-
-
-def _require_str_sequence(value: Any, *, label: str) -> list[str]:
-    if not isinstance(value, list):
-        raise ValueError(f"{label} must be a list of strings")
-    parsed: list[str] = []
-    for index, item in enumerate(value):
-        parsed.append(_require_str_value(item, label=f"{label}[{index}]"))
-    return parsed
-
-
-def _require_intervals(value: Any) -> list[tuple[int, int]]:
-    if not isinstance(value, list):
-        raise ValueError("intervals must be a list")
-    intervals: list[tuple[int, int]] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, list) or len(item) != 2:
-            raise ValueError(f"interval[{index}] must be a two-item list")
-        start = _require_int_value(item[0], label=f"interval[{index}][0]")
-        end = _require_int_value(item[1], label=f"interval[{index}][1]")
-        intervals.append((start, end))
-    return intervals
-
-
-def _require_variable_int(variables: dict[str, JsonScalar], *, name: str) -> int:
-    value = variables.get(name)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"Puzzle variable {name} must be an integer")
-    return value
-
-
-def _require_variable_str(variables: dict[str, JsonScalar], *, name: str) -> str:
-    value = variables.get(name)
-    if not isinstance(value, str):
-        raise ValueError(f"Puzzle variable {name} must be a string")
-    return value
 
 
 def _validate_range(
@@ -661,10 +628,6 @@ def _supports_difficulty(template: _Template, difficulty: Difficulty) -> bool:
     return difficulty in template.difficulties
 
 
-def _samples_require_distinct_outputs(template_key: str) -> bool:
-    return template_key in {"crypto-lsb-steganography-v1"}
-
-
 def _select_template(
     theme: str, difficulty: Difficulty, rng: random.Random
 ) -> _Template:
@@ -750,820 +713,160 @@ def _case_output_signature(case: TestCase) -> str:
     return json.dumps(to_json_value(case.output), sort_keys=True, separators=(",", ":"))
 
 
-def _no_variables(_: random.Random, __: Difficulty) -> dict[str, JsonScalar]:
-    return {}
+def _coerce_difficulties(raw: object, *, template_key: str) -> tuple[Difficulty, ...]:
+    if raw is None:
+        raise ValueError(f"Template {template_key} must define difficulties")
+    if not isinstance(raw, (tuple, list)) or not raw:
+        raise ValueError(
+            f"Template {template_key} difficulties must be a non-empty list"
+        )
+    parsed: list[Difficulty] = []
+    for value in raw:
+        if not isinstance(value, str) or value not in {
+            "easy",
+            "medium",
+            "hard",
+            "expert",
+        }:
+            raise ValueError(f"Template {template_key} has invalid difficulty: {value}")
+        parsed.append(cast(Difficulty, value))
+    return tuple(parsed)
 
 
-def _no_shared_inputs(
-    _params: dict[str, JsonScalar], _sample_tests: list[TestCase]
-) -> tuple[Any, ...]:
-    return ()
+def _import_template_module(module_name: str) -> Any:
+    importlib.invalidate_caches()
+    if module_name in sys.modules:
+        return importlib.reload(sys.modules[module_name])
+    return importlib.import_module(module_name)
 
 
-def _sample_pairs_shared_inputs(
-    _params: dict[str, JsonScalar], sample_tests: list[TestCase]
-) -> tuple[Any, ...]:
-    pairs: list[tuple[str, str]] = []
-    for case in sample_tests:
-        if len(case.inputs) != 1:
-            raise ValueError("Expected one primary input for sample-pair context")
-        input_value = case.inputs[0]
-        if not isinstance(input_value, str) or not isinstance(case.output, str):
-            raise ValueError("Sample-pair context requires string-to-string cases")
-        pairs.append((input_value, case.output))
-    return (pairs,)
+def _load_template(module_name: str, source_path: Path) -> _Template:
+    module = _import_template_module(module_name)
 
+    required_fields = (
+        "template_key",
+        "theme",
+        "prompt",
+        "hint_level_1",
+        "hint_level_2",
+        "hint_level_3",
+        "contract",
+        "difficulties",
+        "case_factory",
+        "variable_factory",
+        "shared_input_factory",
+        "expected_output_for_primary_inputs",
+    )
+    for field in required_fields:
+        if not hasattr(module, field):
+            raise ValueError(f"Template module {module_name} is missing {field}")
 
-def _sample_pairs_shared_scalar_inputs(
-    _params: dict[str, JsonScalar], sample_tests: list[TestCase]
-) -> tuple[Any, ...]:
-    pairs: list[list[JsonScalar]] = []
-    for case in sample_tests:
-        if len(case.inputs) != 1:
-            raise ValueError("Expected one primary input for sample-pair context")
-        input_value = case.inputs[0]
-        if not _is_scalar(input_value) or not _is_scalar(case.output):
-            raise ValueError("Sample-pair context requires scalar-to-scalar cases")
-        pairs.append([cast(JsonScalar, input_value), cast(JsonScalar, case.output)])
-    return (pairs,)
+    template_key = getattr(module, "template_key")
+    if not isinstance(template_key, str) or not template_key.strip():
+        raise ValueError(f"Template module {module_name} has invalid template_key")
 
+    theme = getattr(module, "theme")
+    if not isinstance(theme, str) or theme not in THEMES:
+        raise ValueError(f"Template module {module_name} has invalid theme")
 
-def _solve_xor_byte(value: int, key: int) -> int:
-    return (value ^ key) & 0xFF
+    prompt = getattr(module, "prompt")
+    hint_level_1 = getattr(module, "hint_level_1")
+    hint_level_2 = getattr(module, "hint_level_2")
+    hint_level_3 = getattr(module, "hint_level_3")
+    if not all(
+        isinstance(value, str)
+        for value in (prompt, hint_level_1, hint_level_2, hint_level_3)
+    ):
+        raise ValueError(f"Template module {module_name} has invalid prompt/hints")
 
+    contract = getattr(module, "contract")
+    if not isinstance(contract, FunctionContract):
+        raise ValueError(f"Template module {module_name} has invalid contract")
 
-def _variables_xor_byte(
-    rng: random.Random, _difficulty: Difficulty
-) -> dict[str, JsonScalar]:
-    return {"key": rng.randint(1, 255)}
+    difficulties = _coerce_difficulties(
+        getattr(module, "difficulties"),
+        template_key=template_key,
+    )
 
+    case_factory = getattr(module, "case_factory")
+    variable_factory = getattr(module, "variable_factory")
+    shared_input_factory = getattr(module, "shared_input_factory")
+    expected_output = getattr(module, "expected_output_for_primary_inputs")
+    if not all(
+        callable(value)
+        for value in (
+            case_factory,
+            variable_factory,
+            shared_input_factory,
+            expected_output,
+        )
+    ):
+        raise ValueError(f"Template module {module_name} has invalid callables")
 
-def _case_xor_byte(
-    rng: random.Random, _difficulty: Difficulty, params: dict[str, JsonScalar]
-) -> TestCase:
-    value = rng.randint(0, 255)
-    key = int(params["key"])
-    return TestCase(inputs=(value,), output=_solve_xor_byte(value, key))
+    distinct_sample_outputs = bool(getattr(module, "distinct_sample_outputs", False))
 
-
-def _shift_char(char: str, shift: int) -> str:
-    if "a" <= char <= "z":
-        base = ord("a")
-        return chr(base + ((ord(char) - base + shift) % 26))
-    if "A" <= char <= "Z":
-        base = ord("A")
-        return chr(base + ((ord(char) - base + shift) % 26))
-    return char
-
-
-def _solve_caesar(text: str, shift: int) -> str:
-    return "".join(_shift_char(char, shift) for char in text)
-
-
-def _variables_shift_cipher(
-    rng: random.Random, difficulty: Difficulty
-) -> dict[str, JsonScalar]:
-    shift_span = {"easy": 8, "medium": 12, "hard": 18, "expert": 25}[difficulty]
-    shift = rng.randint(1, shift_span)
-    if difficulty in {"hard", "expert"} and rng.random() < 0.4:
-        shift *= -1
-    return {"shift": shift}
-
-
-def _random_text_with_letters(rng: random.Random, length: int) -> str:
-    charset = string.ascii_letters + "      ,.!?-"
-    chars = [rng.choice(charset) for _index in range(length)]
-    if sum(1 for char in chars if char.isalpha()) < 3:
-        for _index in range(3):
-            chars[rng.randrange(len(chars))] = rng.choice(string.ascii_lowercase)
-    text = "".join(chars).strip()
-    return text or "abc"
-
-
-def _case_shift_cipher(
-    rng: random.Random, difficulty: Difficulty, params: dict[str, JsonScalar]
-) -> TestCase:
-    length = {"easy": 16, "medium": 26, "hard": 40, "expert": 56}[difficulty]
-    shift = int(params["shift"])
-    source = _random_text_with_letters(rng, length)
-    return TestCase(inputs=(source,), output=_solve_caesar(source, shift))
-
-
-def _solve_substitution(text: str, source: str, target: str) -> str:
-    mapping = {src: dst for src, dst in zip(source, target, strict=True)}
-    return "".join(mapping.get(char, char) for char in text)
-
-
-def _variables_substitution_cipher(
-    rng: random.Random, difficulty: Difficulty
-) -> dict[str, JsonScalar]:
-    alphabet_size = {"easy": 5, "medium": 7, "hard": 9, "expert": 11}[difficulty]
-    source_chars = rng.sample(list(string.ascii_lowercase), alphabet_size)
-    source = "".join(source_chars)
-
-    target_chars = source_chars[:]
-    while target_chars == source_chars:
-        rng.shuffle(target_chars)
-
-    target = "".join(target_chars)
-    return {"source": source, "target": target}
-
-
-def _case_substitution_cipher(
-    rng: random.Random, difficulty: Difficulty, params: dict[str, JsonScalar]
-) -> TestCase:
-    source = str(params["source"])
-    target = str(params["target"])
-    source_chars = list(source)
-
-    extras = {"easy": 8, "medium": 14, "hard": 22, "expert": 30}[difficulty]
-    text_chars = source_chars + [rng.choice(source_chars) for _index in range(extras)]
-    rng.shuffle(text_chars)
-    source_text = "".join(text_chars)
-
-    return TestCase(
-        inputs=(source_text,),
-        output=_solve_substitution(source_text, source, target),
+    return _Template(
+        key=template_key,
+        theme=theme,
+        prompt=prompt,
+        hint_level_1=hint_level_1,
+        hint_level_2=hint_level_2,
+        hint_level_3=hint_level_3,
+        contract=contract,
+        case_factory=cast(CaseFactory, case_factory),
+        variable_factory=cast(VariableFactory, variable_factory),
+        shared_input_factory=cast(SharedInputFactory, shared_input_factory),
+        expected_output_factory=cast(ExpectedOutputFactory, expected_output),
+        source_path=str(source_path),
+        difficulties=difficulties,
+        distinct_sample_outputs=distinct_sample_outputs,
     )
 
 
-def _decode_lsb_ascii(values: Sequence[int]) -> str:
-    if len(values) % 8 != 0:
-        raise ValueError("Encoded value count must be a multiple of 8")
-
-    chars: list[str] = []
-    for start in range(0, len(values), 8):
-        chunk = values[start : start + 8]
-        byte = 0
-        for value in chunk:
-            byte = (byte << 1) | (value & 1)
-        chars.append(chr(byte))
-    return "".join(chars)
+def _discover_template_modules() -> list[tuple[str, Path]]:
+    modules: list[tuple[str, Path]] = []
+    for path in sorted(_PUZZLE_MODULE_DIR.glob(f"*{_PUZZLE_MODULE_SUFFIX}")):
+        module_name = f"puzzles.{path.stem}"
+        modules.append((module_name, path))
+    return modules
 
 
-def _encode_word_as_lsb_values(rng: random.Random, word: str) -> list[int]:
-    bits = "".join(f"{ord(char):08b}" for char in word)
-    values: list[int] = []
+def _refresh_template_registry() -> None:
+    global _TEMPLATES
+    global _TEMPLATE_BY_KEY
+    global _TEMPLATES_BY_THEME
 
-    for bit in bits:
-        value = rng.randint(0, 255)
-        if bit == "1":
-            value |= 1
-        else:
-            value &= ~1
+    modules = _discover_template_modules()
+    if not modules:
+        raise ValueError("No puzzle modules found")
 
-        if rng.random() < 0.25:
-            value += 256 * rng.randint(1, 3)
-        values.append(value)
+    templates = tuple(
+        _load_template(module_name, path) for module_name, path in modules
+    )
+    template_by_key = {template.key: template for template in templates}
+    if len(template_by_key) != len(templates):
+        raise ValueError("Puzzle template keys must be unique")
 
-    return values
-
-
-def _case_lsb_steganography(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    words_by_difficulty = {
-        "easy": ["tree", "code", "salt", "mint", "bird", "game", "book"],
-        "medium": ["cipher", "planet", "rocket", "winter", "bridge", "forest"],
-        "hard": [
-            "quantum",
-            "network",
-            "library",
-            "orchard",
-            "compass",
-            "harvest",
-        ],
-        "expert": [
-            "sandwich",
-            "bluebird",
-            "notebook",
-            "elephant",
-            "sunshine",
-            "hardware",
-        ],
+    templates_by_theme = {
+        theme: tuple(template for template in templates if template.theme == theme)
+        for theme in THEMES
     }
-    word = rng.choice(words_by_difficulty[difficulty])
-    encoded = _encode_word_as_lsb_values(rng, word)
-    decoded = _decode_lsb_ascii(encoded)
-    return TestCase(inputs=(encoded,), output=decoded)
+    if set(THEMES) != set(templates_by_theme):
+        raise ValueError("Theme catalog and puzzle templates are out of sync")
+    for theme_name, theme_templates in templates_by_theme.items():
+        if not theme_templates:
+            raise ValueError(f"Theme has no templates: {theme_name}")
 
+    _TEMPLATES = templates
+    _TEMPLATE_BY_KEY = template_by_key
+    _TEMPLATES_BY_THEME = templates_by_theme
 
-def _two_sum_pairs(values: Sequence[int], target: int) -> list[tuple[int, int]]:
-    pairs: list[tuple[int, int]] = []
-    for left in range(len(values)):
-        for right in range(left + 1, len(values)):
-            if values[left] + values[right] == target:
-                pairs.append((left, right))
-    return pairs
 
+_TEMPLATES: tuple[_Template, ...] = ()
+_TEMPLATE_BY_KEY: dict[str, _Template] = {}
+_TEMPLATES_BY_THEME: dict[str, tuple[_Template, ...]] = {}
 
-def _case_two_sum(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    length = {"easy": 6, "medium": 8, "hard": 11, "expert": 14}[difficulty]
-    span = {"easy": 20, "medium": 60, "hard": 130, "expert": 260}[difficulty]
-    for _attempt in range(300):
-        values = [rng.randint(-span, span) for _index in range(length)]
-        first, second = sorted(rng.sample(range(length), 2))
-        target = values[first] + values[second]
-        pairs = _two_sum_pairs(values, target)
-        if len(pairs) == 1:
-            return TestCase(inputs=(values, target), output=pairs[0])
-    raise ValueError("Unable to construct unique index-pair case")
-
-
-def _maze_shortest_path(grid: Sequence[str]) -> int:
-    rows = len(grid)
-    cols = len(grid[0]) if rows else 0
-    start = (-1, -1)
-    end = (-1, -1)
-    for row in range(rows):
-        for col in range(cols):
-            if grid[row][col] == "S":
-                start = (row, col)
-            elif grid[row][col] == "E":
-                end = (row, col)
-
-    queue: deque[tuple[int, int, int]] = deque([(start[0], start[1], 0)])
-    seen = {start}
-    while queue:
-        row, col, dist = queue.popleft()
-        if (row, col) == end:
-            return dist
-
-        for next_row, next_col in (
-            (row + 1, col),
-            (row - 1, col),
-            (row, col + 1),
-            (row, col - 1),
-        ):
-            if not (0 <= next_row < rows and 0 <= next_col < cols):
-                continue
-            if (next_row, next_col) in seen:
-                continue
-            if grid[next_row][next_col] == "#":
-                continue
-            seen.add((next_row, next_col))
-            queue.append((next_row, next_col, dist + 1))
-
-    return -1
-
-
-def _case_maze(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    dims = {
-        "easy": (5, 6),
-        "medium": (7, 8),
-        "hard": (9, 10),
-        "expert": (11, 12),
-    }
-    rows, cols = dims[difficulty]
-    grid = [["#" for _col in range(cols)] for _row in range(rows)]
-
-    path = [(0, 0)]
-    moves = ["D"] * (rows - 1) + ["R"] * (cols - 1)
-    rng.shuffle(moves)
-    row = 0
-    col = 0
-    for move in moves:
-        if move == "D":
-            row += 1
-        else:
-            col += 1
-        path.append((row, col))
-
-    for path_row, path_col in path:
-        grid[path_row][path_col] = "."
-
-    open_prob = {"easy": 0.40, "medium": 0.32, "hard": 0.25, "expert": 0.20}[difficulty]
-    for current_row in range(rows):
-        for current_col in range(cols):
-            if (current_row, current_col) in path:
-                continue
-            if rng.random() < open_prob:
-                grid[current_row][current_col] = "."
-
-    grid[0][0] = "S"
-    grid[rows - 1][cols - 1] = "E"
-    lines = ["".join(chars) for chars in grid]
-    return TestCase(inputs=(lines,), output=_maze_shortest_path(lines))
-
-
-def _lcm(left: int, right: int) -> int:
-    gcd_value = math.gcd(left, right)
-    return abs(left * right) // gcd_value
-
-
-def _case_gcd_value(
-    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    left = rng.randint(2, 400)
-    right = rng.randint(2, 400)
-    return TestCase(inputs=(left, right), output=math.gcd(left, right))
-
-
-def _case_lcm_value(
-    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    left = rng.randint(2, 90)
-    right = rng.randint(2, 90)
-    return TestCase(inputs=(left, right), output=_lcm(left, right))
-
-
-def _is_prime(value: int) -> bool:
-    if value < 2:
-        return False
-    if value == 2:
-        return True
-    if value % 2 == 0:
-        return False
-    limit = int(math.isqrt(value))
-    for candidate in range(3, limit + 1, 2):
-        if value % candidate == 0:
-            return False
-    return True
-
-
-def _case_prime_number(
-    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    value = rng.randint(2, 5000)
-    return TestCase(inputs=(value,), output=_is_prime(value))
-
-
-def _factor_count(value: int) -> int:
-    normalized = abs(value)
-    if normalized <= 1:
-        return 1
-
-    total = 0
-    limit = int(math.isqrt(normalized))
-    for candidate in range(1, limit + 1):
-        if normalized % candidate != 0:
-            continue
-        partner = normalized // candidate
-        total += 1 if partner == candidate else 2
-    return total
-
-
-def _total_factor_count(values: Sequence[int]) -> int:
-    return sum(_factor_count(value) for value in values)
-
-
-def _add_number_and_reverse(value: int) -> int:
-    if value < 0:
-        raise ValueError("n must be non-negative")
-    reversed_value = int(str(value)[::-1])
-    return value + reversed_value
-
-
-def _case_add_reversed_number(
-    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    value = rng.randint(10, 99)
-    return TestCase(inputs=(value,), output=_add_number_and_reverse(value))
-
-
-def _case_total_factor_count(
-    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    length = 6
-    values = [rng.randint(2, 6000) for _index in range(length)]
-    return TestCase(inputs=(values,), output=_total_factor_count(values))
-
-
-def _variables_linear_transform(
-    rng: random.Random, _difficulty: Difficulty
-) -> dict[str, JsonScalar]:
-    slope = 0
-    while slope == 0:
-        slope = rng.randint(-15, 15)
-    intercept = rng.randint(-120, 120)
-    return {"a": slope, "b": intercept}
-
-
-def _case_linear_transform(
-    rng: random.Random, _difficulty: Difficulty, params: dict[str, JsonScalar]
-) -> TestCase:
-    value = rng.randint(-400, 400)
-    slope = int(params["a"])
-    intercept = int(params["b"])
-    return TestCase(inputs=(value,), output=slope * value + intercept)
-
-
-def _longest_unique_substring(text: str) -> int:
-    last_index: dict[str, int] = {}
-    best = 0
-    start = 0
-    for index, char in enumerate(text):
-        if char in last_index and last_index[char] >= start:
-            start = last_index[char] + 1
-        last_index[char] = index
-        best = max(best, index - start + 1)
-    return best
-
-
-def _case_longest_unique(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    length = {"easy": 10, "medium": 16, "hard": 24, "expert": 36}[difficulty]
-    alphabet = {
-        "easy": "abcde",
-        "medium": "abcdefghi",
-        "hard": "abcdefghijkl",
-        "expert": string.ascii_lowercase,
-    }[difficulty]
-    text = "".join(rng.choice(alphabet) for _index in range(length))
-    return TestCase(inputs=(text,), output=_longest_unique_substring(text))
-
-
-_BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
-
-
-def _is_balanced_brackets(source: str) -> bool:
-    stack: list[str] = []
-    for char in source:
-        if char in _BRACKET_PAIRS:
-            stack.append(char)
-            continue
-        if char in ")]}":
-            if not stack:
-                return False
-            opener = stack.pop()
-            if _BRACKET_PAIRS[opener] != char:
-                return False
-    return not stack
-
-
-def _make_valid_bracket_text(rng: random.Random, pair_count: int) -> str:
-    stack: list[str] = []
-    chars: list[str] = []
-    while len(chars) < pair_count * 2:
-        can_open_more = len(chars) + len(stack) < pair_count * 2
-        if can_open_more and (not stack or rng.random() < 0.62):
-            opener = rng.choice(list(_BRACKET_PAIRS))
-            stack.append(opener)
-            chars.append(opener)
-        else:
-            opener = stack.pop()
-            chars.append(_BRACKET_PAIRS[opener])
-    return "".join(chars)
-
-
-def _make_invalid_bracket_text(rng: random.Random, pair_count: int) -> str:
-    for _attempt in range(32):
-        baseline = list(_make_valid_bracket_text(rng, pair_count))
-        mode = rng.choice(["swap", "drop", "append"])
-        if mode == "swap" and baseline:
-            index = rng.randrange(len(baseline))
-            baseline[index] = rng.choice(list("()[]{}"))
-        elif mode == "drop" and len(baseline) > 1:
-            del baseline[rng.randrange(len(baseline))]
-        else:
-            baseline.append(rng.choice(list(_BRACKET_PAIRS)))
-
-        candidate = "".join(baseline)
-        if not _is_balanced_brackets(candidate):
-            return candidate
-
-    return "(" * pair_count
-
-
-def _case_balanced_brackets(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    pair_count = {"easy": 4, "medium": 6, "hard": 8, "expert": 11}[difficulty]
-    if rng.random() < 0.5:
-        text = _make_valid_bracket_text(rng, pair_count)
-    else:
-        text = _make_invalid_bracket_text(rng, pair_count)
-    return TestCase(inputs=(text,), output=_is_balanced_brackets(text))
-
-
-def _max_non_overlapping(intervals: Sequence[tuple[int, int]]) -> int:
-    ordered = sorted(intervals, key=lambda value: (value[1], value[0]))
-    taken = 0
-    current_end: int | None = None
-    for start, end in ordered:
-        if current_end is None or start >= current_end:
-            taken += 1
-            current_end = end
-    return taken
-
-
-def _case_non_overlapping_count(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    count = {"easy": 6, "medium": 8, "hard": 11, "expert": 14}[difficulty]
-    span = {"easy": 16, "medium": 30, "hard": 45, "expert": 70}[difficulty]
-    width = {"easy": 5, "medium": 8, "hard": 12, "expert": 18}[difficulty]
-    intervals = [
-        (start, start + rng.randint(1, width))
-        for start in (rng.randint(0, span) for _index in range(count))
-    ]
-    rng.shuffle(intervals)
-    return TestCase(inputs=(intervals,), output=_max_non_overlapping(intervals))
-
-
-_TEMPLATES: tuple[_Template, ...] = (
-    _Template(
-        key="crypto-xor-byte-inference-v1",
-        theme="Cryptography",
-        prompt=(
-            "A deterministic 8-bit XOR mask is used across this match. "
-            "`examples` contains visible [input, output] byte pairs produced with that same mask. "
-            "Implement solution(value, examples) so it applies the same transformation to `value`."
-        ),
-        hint_level_1="Every value is an integer byte in the inclusive range 0..255.",
-        hint_level_2="A single hidden mask is reused unchanged for all tests in the match.",
-        hint_level_3="Infer the mask from a sample pair using output == input ^ mask, then apply that mask.",
-        contract=FunctionContract(
-            parameter_types=("int", "list[list[int]]"),
-            return_type="int",
-            parameter_names=("value", "samples"),
-        ),
-        case_factory=_case_xor_byte,
-        variable_factory=_variables_xor_byte,
-        shared_input_factory=_sample_pairs_shared_scalar_inputs,
-        difficulties=("easy",),
-    ),
-    _Template(
-        key="crypto-shift-inference-v2",
-        theme="Cryptography",
-        prompt=(
-            "A deterministic text transformation is used across this match. "
-            "`samples` contains visible (input, output) string pairs generated by that same hidden rule. "
-            "Implement solution(arg1, samples) so it applies the same rule to `arg1`."
-        ),
-        hint_level_1="Each letter is transformed independently; punctuation and spaces stay unchanged.",
-        hint_level_2="One fixed alphabet rotation amount is reused for every case in the match.",
-        hint_level_3="Infer that rotation from any example letter mapping, then apply it to the input text.",
-        contract=FunctionContract(
-            parameter_types=("str", "list[tuple[str, str]]"),
-            return_type="str",
-            parameter_names=("arg1", "samples"),
-        ),
-        case_factory=_case_shift_cipher,
-        variable_factory=_variables_shift_cipher,
-        shared_input_factory=_sample_pairs_shared_inputs,
-        difficulties=("medium",),
-    ),
-    _Template(
-        key="crypto-substitution-inference-v2",
-        theme="Cryptography",
-        prompt=(
-            "A deterministic character substitution is used across this match. "
-            "`samples` contains visible (input, output) string pairs produced with the same hidden mapping. "
-            "Implement solution(arg1, samples) so it applies that same mapping to `arg1`."
-        ),
-        hint_level_1="Each source character always maps to exactly one target character.",
-        hint_level_2="The mapping is one-to-one and reused unchanged for all tests in the match.",
-        hint_level_3="Build a mapping table from example characters, then translate the input text.",
-        contract=FunctionContract(
-            parameter_types=("str", "list[tuple[str, str]]"),
-            return_type="str",
-            parameter_names=("arg1", "samples"),
-        ),
-        case_factory=_case_substitution_cipher,
-        variable_factory=_variables_substitution_cipher,
-        shared_input_factory=_sample_pairs_shared_inputs,
-        difficulties=("hard",),
-    ),
-    _Template(
-        key="crypto-lsb-steganography-v1",
-        theme="Cryptography",
-        prompt=(
-            "Given a list of integers, decode the hidden text value implied by the samples and return it as a string."
-        ),
-        hint_level_1="Each integer contributes exactly one binary digit.",
-        hint_level_2="That digit is determined by whether the integer is odd or even.",
-        hint_level_3="Read least-significant bits in order, group every 8 bits, and decode ASCII characters.",
-        contract=FunctionContract(
-            parameter_types=("list[int]",),
-            return_type="str",
-            parameter_names=("numbers",),
-        ),
-        case_factory=_case_lsb_steganography,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("expert",),
-    ),
-    _Template(
-        key="algorithms-index-pair-v2",
-        theme="Algorithms",
-        prompt=(
-            "Given a list of integers and a target integer, return a pair of indices that follows "
-            "the hidden rule shown by the samples."
-        ),
-        hint_level_1="The output always has two indices where the first is smaller than the second.",
-        hint_level_2="Exactly one valid pair exists per case.",
-        hint_level_3="Return indices i, j such that values[i] + values[j] == target.",
-        contract=FunctionContract(
-            parameter_types=("list[int]", "int"),
-            return_type="tuple[int, int]",
-        ),
-        case_factory=_case_two_sum,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("easy",),
-    ),
-    _Template(
-        key="datastructures-bracket-structure-v2",
-        theme="Algorithms",
-        prompt=(
-            "Given a bracket string, return a boolean according to the structural validity rule implied by samples."
-        ),
-        hint_level_1="Track opening symbols and how they are closed.",
-        hint_level_2="A closing bracket must match the most recent unmatched opening bracket.",
-        hint_level_3="Return True only when every bracket is matched and correctly nested.",
-        contract=FunctionContract(parameter_types=("str",), return_type="bool"),
-        case_factory=_case_balanced_brackets,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("easy",),
-    ),
-    _Template(
-        key="greedy-interval-selection-v2",
-        theme="Algorithms",
-        prompt=(
-            "Given integer intervals, return the maximum count selected under the non-overlap rule shown by samples."
-        ),
-        hint_level_1="A selected interval blocks later intervals that start before it ends.",
-        hint_level_2="Sorting by earliest finishing time enables the optimal strategy.",
-        hint_level_3="Choose the largest set of intervals where each next start is >= previous end.",
-        contract=FunctionContract(
-            parameter_types=("list[tuple[int, int]]",),
-            return_type="int",
-        ),
-        case_factory=_case_non_overlapping_count,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("medium",),
-    ),
-    _Template(
-        key="strings-window-length-v2",
-        theme="Algorithms",
-        prompt=(
-            "Given a string, return the integer metric over contiguous segments that is suggested by the samples."
-        ),
-        hint_level_1="Repeated characters force the active segment to shift forward.",
-        hint_level_2="A sliding window with last-seen positions works efficiently.",
-        hint_level_3="Return the length of the longest substring with all distinct characters.",
-        contract=FunctionContract(parameter_types=("str",), return_type="int"),
-        case_factory=_case_longest_unique,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("hard",),
-    ),
-    _Template(
-        key="search-grid-navigation-v2",
-        theme="Algorithms",
-        prompt=(
-            "Input is a grid made from S, E, ., and #. Return the integer score implied by the samples "
-            "for traversing that grid."
-        ),
-        hint_level_1="Moves are only up, down, left, or right through non-wall cells.",
-        hint_level_2="Think in terms of expanding reachable cells level by level from S.",
-        hint_level_3="Return the fewest moves from S to E, or -1 if E cannot be reached.",
-        contract=FunctionContract(parameter_types=("list[str]",), return_type="int"),
-        case_factory=_case_maze,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("expert",),
-    ),
-    _Template(
-        key="numeric-gcd-value-v1",
-        theme="Numeric",
-        prompt=(
-            "Given two positive integers, return the largest integer that divides both inputs."
-        ),
-        hint_level_1="The answer always divides both numbers exactly.",
-        hint_level_2="The answer is as large as possible while still dividing both.",
-        hint_level_3="Return gcd(a, b).",
-        contract=FunctionContract(
-            parameter_types=("int", "int"),
-            return_type="int",
-        ),
-        case_factory=_case_gcd_value,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("easy",),
-    ),
-    _Template(
-        key="numeric-lcm-value-v1",
-        theme="Numeric",
-        prompt=(
-            "Given two positive integers, return the smallest positive integer that is a multiple of both."
-        ),
-        hint_level_1="The result must be divisible by both inputs.",
-        hint_level_2="The result is the minimum positive shared multiple.",
-        hint_level_3="Return lcm(a, b).",
-        contract=FunctionContract(
-            parameter_types=("int", "int"),
-            return_type="int",
-        ),
-        case_factory=_case_lcm_value,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("easy",),
-    ),
-    _Template(
-        key="numeric-prime-number-v1",
-        theme="Numeric",
-        prompt=("Given an integer, return whether it is prime."),
-        hint_level_1="Prime numbers are integers greater than 1.",
-        hint_level_2="A prime has exactly two positive divisors: 1 and itself.",
-        hint_level_3="Return True iff n has no divisor in 2..sqrt(n).",
-        contract=FunctionContract(
-            parameter_types=("int",),
-            return_type="bool",
-        ),
-        case_factory=_case_prime_number,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("medium",),
-    ),
-    _Template(
-        key="numeric-add-reversed-number-v1",
-        theme="Numeric",
-        prompt=(
-            "Given a non-negative integer, return the sum of the integer and its digit-reversed form."
-        ),
-        hint_level_1="Reverse digits in base-10 (for example, 120 becomes 21).",
-        hint_level_2="Compute the reversed number first, then add it to the original input.",
-        hint_level_3="Return n + int(str(n)[::-1]).",
-        contract=FunctionContract(
-            parameter_types=("int",),
-            return_type="int",
-        ),
-        case_factory=_case_add_reversed_number,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("hard",),
-    ),
-    _Template(
-        key="numeric-total-factor-count-v1",
-        theme="Numeric",
-        prompt=(
-            "Given a list of positive integers, return the total number of positive factors across all numbers in the list."
-        ),
-        hint_level_1="Each integer contributes the count of its own positive divisors.",
-        hint_level_2="Compute divisor counts per value, then sum them.",
-        hint_level_3="Return sum(d(n) for n in values), where d(n) is the divisor count.",
-        contract=FunctionContract(
-            parameter_types=("list[int]",),
-            return_type="int",
-        ),
-        case_factory=_case_total_factor_count,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-        difficulties=("expert",),
-    ),
-    _Template(
-        key="numeric-linear-transform-v1",
-        theme="Numeric",
-        prompt=(
-            "A deterministic linear transformation is used across this match. "
-            "`examples` contains visible [input, output] pairs generated by that same hidden rule. "
-            "Implement solution(value, examples) so it applies the same rule to `value`."
-        ),
-        hint_level_1="The hidden rule has the form output = a*x + b.",
-        hint_level_2="The same constants a and b are reused for every case in the match.",
-        hint_level_3="Infer a and b from sample pairs, then compute a*value + b.",
-        contract=FunctionContract(
-            parameter_types=("int", "list[list[int]]"),
-            return_type="int",
-            parameter_names=("value", "samples"),
-        ),
-        case_factory=_case_linear_transform,
-        variable_factory=_variables_linear_transform,
-        shared_input_factory=_sample_pairs_shared_scalar_inputs,
-        difficulties=("expert",),
-    ),
-)
-
-
-_TEMPLATE_BY_KEY: dict[str, _Template] = {
-    template.key: template for template in _TEMPLATES
-}
-if len(_TEMPLATE_BY_KEY) != len(_TEMPLATES):
-    raise ValueError("Puzzle template keys must be unique")
-
-
-_TEMPLATES_BY_THEME: dict[str, tuple[_Template, ...]] = {
-    theme: tuple(template for template in _TEMPLATES if template.theme == theme)
-    for theme in THEMES
-}
-
-
-if set(THEMES) != set(_TEMPLATES_BY_THEME):
-    raise ValueError("Theme catalog and puzzle templates are out of sync")
-
-
-for theme_name, templates in _TEMPLATES_BY_THEME.items():
-    if not templates:
-        raise ValueError(f"Theme has no templates: {theme_name}")
+_refresh_template_registry()
 
 
 _THEME_ALIASES = {

@@ -21,10 +21,21 @@ from puzzle import (
     generator_schema,
     invocation_inputs,
     solution_scaffold,
+    template_source,
+    template_source_path,
     to_json_value,
+    update_template_source,
 )
 from rating import ranked_matchmaking_window
-from store import Match, MemoryStore, Party, RankedQueueEntry, SqliteStore, User
+from store import (
+    Match,
+    MemoryStore,
+    Party,
+    PuzzleTemplateConfig,
+    RankedQueueEntry,
+    SqliteStore,
+    User,
+)
 from domain_types import Difficulty, Mode
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
@@ -365,6 +376,13 @@ def create_app(store: MemoryStore | None = None) -> Flask:
                 "active_matches": [
                     _admin_match_payload(data, match) for match in active_matches
                 ],
+                "puzzle_templates": [
+                    _admin_puzzle_template_payload(template)
+                    for template in data.admin_list_puzzle_templates()
+                ],
+                "missing_puzzle_template_keys": (
+                    data.admin_missing_puzzle_template_keys()
+                ),
             }
         )
 
@@ -417,6 +435,60 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         match = data.admin_cancel_match(match_id=match_id)
         publish_match_update(match, event="admin_cancelled")
         return jsonify({"match": _admin_match_payload(data, match)})
+
+    @app.route("/api/admin/puzzles", methods=["POST"])
+    def admin_create_puzzle_template() -> Any:
+        require_admin_user()
+        payload = request.get_json(silent=True) or {}
+        template_key = str(payload.get("template_key", "")).strip()
+        if not template_key:
+            raise ValueError("template_key is required")
+
+        template = data.admin_create_puzzle_template(template_key=template_key)
+        return jsonify({"puzzle_template": _admin_puzzle_template_payload(template)})
+
+    @app.route("/api/admin/puzzles/<template_key>", methods=["POST"])
+    def admin_update_puzzle_template(template_key: str) -> Any:
+        require_admin_user()
+        payload = request.get_json(silent=True) or {}
+
+        required_fields = (
+            "theme",
+            "difficulty",
+            "prompt",
+            "hint_level_1",
+            "hint_level_2",
+            "hint_level_3",
+            "enabled",
+        )
+        for field in required_fields:
+            if field not in payload:
+                raise ValueError(f"{field} is required")
+
+        raw_source_code = payload.get("source_code")
+        if raw_source_code is not None:
+            update_template_source(
+                template_key=template_key,
+                source_code=str(raw_source_code),
+            )
+
+        template = data.admin_update_puzzle_template(
+            template_key=template_key,
+            theme=str(payload["theme"]),
+            difficulty=_parse_difficulty(payload["difficulty"]),
+            prompt=str(payload["prompt"]),
+            hint_level_1=str(payload["hint_level_1"]),
+            hint_level_2=str(payload["hint_level_2"]),
+            hint_level_3=str(payload["hint_level_3"]),
+            enabled=_parse_bool(payload["enabled"], field_name="enabled"),
+        )
+        return jsonify({"puzzle_template": _admin_puzzle_template_payload(template)})
+
+    @app.route("/api/admin/puzzles/<template_key>", methods=["DELETE"])
+    def admin_delete_puzzle_template(template_key: str) -> Any:
+        require_admin_user()
+        deleted = data.admin_delete_puzzle_template(template_key=template_key)
+        return jsonify({"deleted": _admin_puzzle_template_payload(deleted)})
 
     @app.route("/api/parties", methods=["POST"])
     def create_party() -> Any:
@@ -760,6 +832,12 @@ def _parse_difficulty(raw: object) -> Difficulty:
     raise ValueError("difficulty must be one of: easy, medium, hard, expert")
 
 
+def _parse_bool(raw: object, *, field_name: str) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    raise ValueError(f"{field_name} must be a boolean")
+
+
 def _optional_int(value: object) -> int | None:
     if value is None:
         return None
@@ -938,4 +1016,19 @@ def _admin_match_payload(store: MemoryStore, match: Match) -> dict[str, Any]:
         "locked": match.locked,
         "finished": match.finished,
         "players": players,
+    }
+
+
+def _admin_puzzle_template_payload(template: PuzzleTemplateConfig) -> dict[str, Any]:
+    return {
+        "template_key": template.template_key,
+        "theme": template.theme,
+        "difficulty": template.difficulty,
+        "prompt": template.prompt,
+        "hint_level_1": template.hint_level_1,
+        "hint_level_2": template.hint_level_2,
+        "hint_level_3": template.hint_level_3,
+        "enabled": template.enabled,
+        "source_path": template_source_path(template.template_key),
+        "source_code": template_source(template.template_key),
     }
