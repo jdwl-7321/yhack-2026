@@ -8,17 +8,25 @@ import store as store_module
 from store import MemoryStore, SqliteStore
 
 
-def _start_single_player_match(client: Any, *, seed: int = 3) -> tuple[dict, dict]:
+def _start_single_player_match(
+    client: Any,
+    *,
+    seed: int = 3,
+    theme: str | None = None,
+    difficulty: str = "easy",
+) -> tuple[dict, dict]:
     user = client.post("/api/users", json={"name": "Ada", "guest": False}).get_json()
     assert user is not None
+
+    selected_theme = theme or THEMES[0]
 
     party = client.post(
         "/api/parties",
         json={
             "leader_id": user["id"],
             "mode": "zen",
-            "theme": THEMES[0],
-            "difficulty": "easy",
+            "theme": selected_theme,
+            "difficulty": difficulty,
             "time_limit_seconds": 900,
             "seed": seed,
         },
@@ -644,7 +652,7 @@ def test_party_leader_can_add_time_to_casual_lobby_and_active_match() -> None:
     assert refreshed_match["time_limit_seconds"] == 1020
 
 
-def test_add_time_requires_casual_party_mode() -> None:
+def test_add_time_rejects_ranked_party_mode() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
 
@@ -672,7 +680,29 @@ def test_add_time_requires_casual_party_mode() -> None:
         json={"user_id": leader["id"], "add_seconds": 120},
     )
     assert invalid.status_code == 400
-    assert invalid.get_json() == {"error": "Time can only be added in casual parties"}
+    assert invalid.get_json() == {
+        "error": "Time can only be added in casual or zen parties"
+    }
+
+
+def test_party_leader_can_add_time_to_zen_active_match() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    user, match = _start_single_player_match(client, seed=78)
+
+    extended = client.post(
+        f"/api/parties/{match['party_code']}/add-time",
+        json={"user_id": user["id"], "add_seconds": 120},
+    )
+    assert extended.status_code == 200
+    extended_payload = extended.get_json()
+    assert extended_payload is not None
+    assert extended_payload["settings"]["time_limit_seconds"] == 1020
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["time_limit_seconds"] == 1020
 
 
 def test_only_party_leader_can_start_match() -> None:
@@ -1175,6 +1205,89 @@ def test_sample_tests_can_be_added_updated_and_deleted() -> None:
     delete_payload = delete_response.get_json()
     assert delete_payload is not None
     assert len(delete_payload["sample_tests"]) == 3
+
+
+def test_caesar_and_substitution_samples_allow_row_edits_but_keep_shared_arg_locked() -> (
+    None
+):
+    scenarios = (
+        ("medium", "crypto-shift-inference-v2"),
+        ("hard", "crypto-substitution-inference-v2"),
+    )
+
+    for index, (difficulty, expected_template_key) in enumerate(scenarios, start=1):
+        app = create_app(MemoryStore())
+        client = app.test_client()
+        user, match = _start_single_player_match(
+            client,
+            seed=60 + index,
+            theme="Cryptography",
+            difficulty=difficulty,
+        )
+
+        assert match["template_key"] == expected_template_key
+        original_samples = match["sample_tests"]
+        assert len(original_samples) == 3
+
+        baseline_input = original_samples[0]["primary_inputs"][0]
+        assert isinstance(baseline_input, str)
+
+        added_input = f"{baseline_input} test"
+        add_response = client.post(
+            f"/api/matches/{match['match_id']}/sample-tests",
+            json={
+                "user_id": user["id"],
+                "action": "add",
+                "inputs": [added_input],
+            },
+        )
+        assert add_response.status_code == 200
+        add_payload = add_response.get_json()
+        assert add_payload is not None
+        assert len(add_payload["sample_tests"]) == 4
+        assert add_payload["sample_tests"][-1]["primary_inputs"] == [added_input]
+
+        updated_input = added_input.upper()
+        update_response = client.post(
+            f"/api/matches/{match['match_id']}/sample-tests",
+            json={
+                "user_id": user["id"],
+                "action": "update",
+                "index": 0,
+                "inputs": [updated_input],
+            },
+        )
+        assert update_response.status_code == 200
+        update_payload = update_response.get_json()
+        assert update_payload is not None
+        assert update_payload["sample_tests"][0]["primary_inputs"] == [updated_input]
+
+        delete_response = client.post(
+            f"/api/matches/{match['match_id']}/sample-tests",
+            json={
+                "user_id": user["id"],
+                "action": "delete",
+                "index": 3,
+            },
+        )
+        assert delete_response.status_code == 200
+        delete_payload = delete_response.get_json()
+        assert delete_payload is not None
+        assert len(delete_payload["sample_tests"]) == 3
+
+        blocked_shared_arg_update = client.post(
+            f"/api/matches/{match['match_id']}/sample-tests",
+            json={
+                "user_id": user["id"],
+                "action": "update",
+                "index": 0,
+                "inputs": [updated_input, []],
+            },
+        )
+        assert blocked_shared_arg_update.status_code == 400
+        assert blocked_shared_arg_update.get_json() == {
+            "error": "shared sample inputs cannot be edited"
+        }
 
 
 def test_ranked_theme_rotation_uses_all_themes_before_repeat() -> None:

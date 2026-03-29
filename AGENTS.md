@@ -90,6 +90,7 @@ Top-level layout:
   - Generates deterministic sample/hidden tests from `theme + difficulty + seed`.
   - Starts each puzzle with 3 visible sample tests.
   - Maintains template registry (`_TEMPLATES`) and mapping by theme/key.
+  - Caesar/substitution inference templates expose scaffold args as `arg1`/`samples`, with `samples` typed as `list[tuple[str, str]]` and backed by auto-generated sample pairs.
   - `Algorithms` now contains classic algorithm/search/string/data-structure/greedy templates with explicit difficulty assignments covering easy/medium/hard/expert.
   - `Numeric` includes dedicated templates for GCD, LCM, prime checking, total factor-count summation, and linear `a*x + b` inference.
   - Produces `fingerprint` (template/params context) and `signature` (includes all tests) hashes.
@@ -117,7 +118,7 @@ Top-level layout:
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
-    - Casual party leaders can add time (`add_seconds`) to party settings; if a casual match is currently active and unlocked for that party, the match timer is extended too.
+    - Casual and zen party leaders can add time (`add_seconds`) to party settings; if a casual/zen match is currently active and unlocked for that party, the match timer is extended too.
     - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
@@ -205,7 +206,7 @@ Defined in `backend/src/app.py`:
     - casual party lifecycle, ranked queue polling, and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
-    - casual-party leader time-extension action and live timer resync when a `time_extended` match event is received
+    - casual-party leader and zen-match time-extension action, plus live timer resync when a `time_extended` match event is received
     - immediate match handoff on party join when a casual lobby already has an active match
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
@@ -226,8 +227,9 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples with inline input editing inside the sample grid (save on blur), auto-resizing sample input textareas, output auto-refresh, sample delete/add actions, hints, failed hidden case promotion, editor, console, standings.
+  - When a match is finished or otherwise locked, the sample table becomes read-only and add/delete controls are disabled even if the arena is reopened from post-match.
   - Sample table uses a dedicated Action column so delete/add controls are separated from output values.
-  - Shows a casual-party leader `+5 min` timer extension action next to the live match timer.
+  - Shows a `+5 min` timer extension action next to the live match timer for casual-party leaders and zen matches.
   - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
   - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
   - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args (for shared-input ciphers this means users edit only `arg1`).
@@ -254,7 +256,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, and casual party time extension.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, and casual/zen party time extension.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.

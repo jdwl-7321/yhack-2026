@@ -131,7 +131,7 @@ def solution(arg1: list[int], arg2: int):
 
 def test_supports_shared_context_inputs() -> None:
     code = """
-def solution(arg1: str, arg2: list[list[str]]) -> str:
+def solution(arg1: str, arg2: list[tuple[str, str]]) -> str:
     mapping = {left: right for left, right in arg2}
     return mapping[arg1]
 """
@@ -139,7 +139,7 @@ def solution(arg1: str, arg2: list[list[str]]) -> str:
         code,
         [TestCase(("ab",), "cd")],
         [TestCase(("ba",), "dc")],
-        contract=FunctionContract(("str", "list[list[str]]"), "str"),
-        shared_inputs=([["ab", "cd"], ["ba", "dc"]],),
+        contract=FunctionContract(("str", "list[tuple[str, str]]"), "str"),
+        shared_inputs=([("ab", "cd"), ("ba", "dc")],),
     )
     assert result.verdict == "accepted"
