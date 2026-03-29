@@ -452,6 +452,15 @@ nav {
   color: var(--main-color);
   font-size: 1.15rem;
   font-weight: 700;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .account-summary-copy {
@@ -2297,6 +2306,11 @@ select:focus {
   min-height: 100%;
 }
 
+.settings-avatar-shell {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .settings-avatar {
   width: 4rem;
   height: 4rem;
@@ -2307,6 +2321,40 @@ select:focus {
   color: var(--main-color);
   font-size: 1.45rem;
   font-weight: 700;
+  overflow: hidden;
+}
+
+.settings-avatar-input {
+  display: none;
+}
+
+.settings-avatar-button {
+  position: absolute;
+  right: -0.18rem;
+  bottom: -0.18rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--main-color);
+  color: var(--bg-color);
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.settings-avatar-shell:hover .settings-avatar-button,
+.settings-avatar-shell:focus-within .settings-avatar-button {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.settings-avatar-button:hover {
+  filter: brightness(1.04);
 }
 
 .settings-identity-copy {
@@ -2321,6 +2369,10 @@ select:focus {
 .settings-identity-copy span {
   color: var(--sub-color);
   line-height: 1.5;
+}
+
+.settings-identity-note {
+  font-size: 0.78rem;
 }
 
 .settings-stat-grid,

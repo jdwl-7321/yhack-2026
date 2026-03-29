@@ -18,10 +18,12 @@
   export let match: MatchPayload | null = null;
   export let themeStatusText = "";
   export let activeEditorThemeName = "";
+  export let profileImageUrl = "";
 
   export let showPlayView: () => void = () => {};
   export let logout: () => void | Promise<void> = () => {};
   export let refreshSession: () => void | Promise<void> = () => {};
+  export let uploadProfileImage: (file: File) => void | Promise<void> = () => {};
   export let userInitial: (name: string | undefined) => string = () => "?";
 
   export let keybindMode: KeybindMode = "normal";
@@ -61,6 +63,17 @@
   export let passwordNotice = "";
   export let passwordError = "";
   export let changePassword: () => void | Promise<void> = () => {};
+
+  let profileImageInputEl: HTMLInputElement | null = null;
+
+  async function handleProfileImageChange(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) {
+      await uploadProfileImage(file);
+    }
+    input.value = "";
+  }
 </script>
 
 <main id="settings-view">
@@ -134,8 +147,35 @@
 
       <div class="settings-profile-grid">
         <article class="settings-identity-card">
-          <div class="settings-avatar" aria-hidden="true">
-            {userInitial(sessionUser?.name)}
+          <div class="settings-avatar-shell">
+            <div class="settings-avatar" aria-hidden={!profileImageUrl}>
+              {#if profileImageUrl}
+                <img
+                  class="avatar-image"
+                  src={profileImageUrl}
+                  alt={`${sessionUser?.name ?? "User"} profile photo`}
+                />
+              {:else}
+                {userInitial(sessionUser?.name)}
+              {/if}
+            </div>
+            {#if sessionUser}
+              <input
+                bind:this={profileImageInputEl}
+                class="settings-avatar-input"
+                type="file"
+                accept="image/*"
+                on:change={(event) => void handleProfileImageChange(event)}
+              />
+              <button
+                type="button"
+                class="settings-avatar-button"
+                on:click={() => profileImageInputEl?.click()}
+                aria-label="Upload profile photo"
+              >
+                <i class="fas fa-plus" aria-hidden="true"></i>
+              </button>
+            {/if}
           </div>
           <div class="settings-identity-copy">
             <strong>{sessionUser?.name ?? "Guest challenger"}</strong>
@@ -144,6 +184,9 @@
                 ? `Current ladder rating: ${sessionUser.elo} ELO`
                 : "Sign in to persist ranked progress and match history."}
             </span>
+            {#if sessionUser}
+              <span class="settings-identity-note">Profile photo is stored on this browser.</span>
+            {/if}
           </div>
         </article>
 

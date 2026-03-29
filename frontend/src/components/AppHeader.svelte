@@ -30,6 +30,7 @@
   export let themePref: UiTheme = "light";
   export let activeEditorTheme: BundledTheme = "everforest-light";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
+  export let profileImageUrl = "";
   export let editorFontFamily: EditorFontFamily = "roboto-mono";
   export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];
   export let editorFontSize: EditorFontSize = 14;
@@ -437,7 +438,17 @@
         <div class="account-menu" role="dialog" aria-label="Account summary">
           {#if sessionUser}
             <section class="account-summary-card">
-              <div class="account-avatar">{accountInitials(sessionUser.name)}</div>
+              <div class="account-avatar">
+                {#if profileImageUrl}
+                  <img
+                    class="avatar-image"
+                    src={profileImageUrl}
+                    alt={`${sessionUser.name} profile photo`}
+                  />
+                {:else}
+                  {accountInitials(sessionUser.name)}
+                {/if}
+              </div>
               <div class="account-summary-copy">
                 <p class="eyebrow">Account</p>
                 <h2>{sessionUser.name}</h2>

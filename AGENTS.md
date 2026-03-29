@@ -216,13 +216,14 @@ Defined in `backend/src/app.py`:
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
     - appearance persistence with light-mode startup default, explicit light fallback for system mode, and Everforest Light / Catppuccin Mocha as the default light/dark palettes
+    - local per-user profile photo persistence in browser storage, including client-side square crop/compression before save
     - routing between subviews (`home`, `arena`, `leaderboard`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 
 ### Svelte component roles
 
 - `frontend/src/components/AppHeader.svelte`
-  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, account summary dialog, and a quick Vim-mode toggle.
+  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, account summary dialog, a quick Vim-mode toggle, and uploaded profile-photo display in the account summary card.
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
@@ -253,7 +254,7 @@ Defined in `backend/src/app.py`:
   - End-of-match summary and final standings board.
 
 - `frontend/src/components/SettingsView.svelte`
-  - Appearance/theme controls, keybind profile/custom shortcuts, account/session settings, password change.
+  - Appearance/theme controls, keybind profile/custom shortcuts, account/session settings, password change, and a hover `+` profile-photo upload affordance in the profile card.
 
 ### Static assets and legacy prototype
 

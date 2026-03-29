@@ -78,6 +78,7 @@
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
+  const PROFILE_IMAGE_STORAGE_PREFIX = "yhack.profile-image";
   const DEFAULT_APPEARANCE_MODE: AppearanceMode = "light";
   const SYSTEM_APPEARANCE_FALLBACK: UiTheme = "light";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "everforest-light";
@@ -302,6 +303,10 @@
     return `${ACTIVE_PARTY_STORAGE_PREFIX}:${userId}`;
   }
 
+  function profileImageStorageKey(userId: string): string {
+    return `${PROFILE_IMAGE_STORAGE_PREFIX}:${userId}`;
+  }
+
   function storedPartyCodeForUser(userId: string): string {
     if (typeof window === "undefined") {
       return "";
@@ -324,6 +329,83 @@
       return;
     }
     localStorage.removeItem(activePartyStorageKey(userId));
+  }
+
+  function loadProfileImage(user: SessionUser): void {
+    if (typeof window === "undefined") {
+      profileImageUrl = "";
+      return;
+    }
+    profileImageUrl = localStorage.getItem(profileImageStorageKey(user.id)) ?? "";
+  }
+
+  function clearProfileImage(): void {
+    profileImageUrl = "";
+  }
+
+  async function normalizeProfileImage(file: File): Promise<string> {
+    if (typeof window === "undefined") {
+      throw new Error("Profile images can only be updated in the browser.");
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const nextImage = new Image();
+        nextImage.onload = () => resolve(nextImage);
+        nextImage.onerror = () => reject(new Error("Could not load that image."));
+        nextImage.src = objectUrl;
+      });
+
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Could not process that image.");
+      }
+
+      const size = 256;
+      const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+      const sourceX = (image.naturalWidth - sourceSize) / 2;
+      const sourceY = (image.naturalHeight - sourceSize) / 2;
+
+      canvas.width = size;
+      canvas.height = size;
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceSize,
+        sourceSize,
+        0,
+        0,
+        size,
+        size,
+      );
+
+      return canvas.toDataURL("image/jpeg", 0.86);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function uploadProfileImage(file: File): Promise<void> {
+    if (!sessionUser || typeof window === "undefined") {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      error = "Choose an image file for your profile photo.";
+      return;
+    }
+
+    try {
+      const nextProfileImage = await normalizeProfileImage(file);
+      localStorage.setItem(profileImageStorageKey(sessionUser.id), nextProfileImage);
+      profileImageUrl = nextProfileImage;
+      error = "";
+      notice = "Profile photo updated.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    }
   }
 
   function normalizeAccountStats(raw: unknown): AccountStats {
@@ -874,6 +956,7 @@
   let passwordBusy = false;
   let passwordNotice = "";
   let passwordError = "";
+  let profileImageUrl = "";
 
   function userInitial(name: string | undefined): string {
     return name?.trim().charAt(0).toUpperCase() || "?";
@@ -2647,6 +2730,7 @@
       forgetPartyCode(previousUserId);
       sessionUser = null;
       accountStats = emptyAccountStats();
+      clearProfileImage();
       accountMenuOpen = false;
       activeView = "home";
       match = null;
@@ -2660,6 +2744,7 @@
     }
     sessionUser = payload.user;
     loadAccountStats(payload.user);
+    loadProfileImage(payload.user);
     await loadLeaderboard();
     await refreshRankedQueue(true);
     await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
@@ -2741,6 +2826,7 @@
       });
       sessionUser = payload.user;
       loadAccountStats(payload.user);
+      loadProfileImage(payload.user);
       authPassword = "";
       notice =
         nextMode === "register"
@@ -2765,6 +2851,7 @@
       forgetPartyCode(previousUserId);
       sessionUser = null;
       accountStats = emptyAccountStats();
+      clearProfileImage();
       accountMenuOpen = false;
       activeView = "home";
       match = null;
@@ -3830,6 +3917,7 @@
     {themePref}
     {activeEditorTheme}
     {availableEditorThemes}
+    {profileImageUrl}
     {sessionUser}
     {accountStats}
     {accountSolveRate}
@@ -3935,9 +4023,11 @@
       {match}
       {themeStatusText}
       {activeEditorThemeName}
+      {profileImageUrl}
       {showPlayView}
       {logout}
       {refreshSession}
+      {uploadProfileImage}
       {userInitial}
       {keybindMode}
       {setKeybindMode}
