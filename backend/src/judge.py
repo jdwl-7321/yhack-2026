@@ -7,9 +7,15 @@ import io
 import inspect
 import multiprocessing as mp
 from time import perf_counter
-from typing import Callable, Literal, cast
+from typing import Any, Callable, Literal, cast
 
-from puzzle import TestCase
+from puzzle import (
+    FunctionContract,
+    TestCase,
+    format_case_input,
+    format_value,
+    invocation_inputs,
+)
 
 Verdict = Literal["accepted", "sample_failed", "wrong_answer", "error"]
 
@@ -52,12 +58,15 @@ class JudgeResult:
     message: str = ""
     stdout: str = ""
     first_failed_hidden_test: FailedHiddenTest | None = None
+    first_failed_hidden_case: TestCase | None = None
 
 
 def judge_submission(
     code: str,
     sample_tests: list[TestCase],
     hidden_tests: list[TestCase],
+    contract: FunctionContract,
+    shared_inputs: tuple[Any, ...] = (),
     timeout_seconds: float = 1.0,
     include_hidden_tests: bool = True,
 ) -> JudgeResult:
@@ -65,13 +74,13 @@ def judge_submission(
     runtime_ms = 0
     stdout_chunks: list[str] = []
     hidden_total = len(hidden_tests) if include_hidden_tests else 0
-    sample_cases = [(case.input_str, case.output_str) for case in sample_tests]
 
     for case_index, case in enumerate(sample_tests, start=1):
+        call_inputs = invocation_inputs(case, shared_inputs)
         ok, output, error, elapsed_ms, stdout = _run_case(
             code,
-            case.input_str,
-            sample_cases,
+            call_inputs,
+            contract,
             timeout_seconds,
         )
         runtime_ms += elapsed_ms
@@ -87,7 +96,7 @@ def judge_submission(
                 message=error,
                 stdout=_combine_stdout(stdout_chunks),
             )
-        if _normalize_output(output) != _normalize_output(case.output_str):
+        if not _values_equal(output, case.output):
             return JudgeResult(
                 verdict="sample_failed",
                 sample_passed=sample_passed,
@@ -113,11 +122,13 @@ def judge_submission(
 
     hidden_passed = 0
     first_failed_hidden_test: FailedHiddenTest | None = None
+    first_failed_hidden_case: TestCase | None = None
     for case_index, case in enumerate(hidden_tests, start=1):
+        call_inputs = invocation_inputs(case, shared_inputs)
         ok, output, error, elapsed_ms, stdout = _run_case(
             code,
-            case.input_str,
-            sample_cases,
+            call_inputs,
+            contract,
             timeout_seconds,
         )
         runtime_ms += elapsed_ms
@@ -133,17 +144,19 @@ def judge_submission(
                 message=error,
                 stdout=_combine_stdout(stdout_chunks),
                 first_failed_hidden_test=first_failed_hidden_test,
+                first_failed_hidden_case=first_failed_hidden_case,
             )
-        if _normalize_output(output) == _normalize_output(case.output_str):
+        if _values_equal(output, case.output):
             hidden_passed += 1
             continue
 
         if first_failed_hidden_test is None:
             first_failed_hidden_test = FailedHiddenTest(
-                input_str=case.input_str,
-                expected_output=case.output_str,
-                actual_output=output,
+                input_str=format_case_input(case.inputs),
+                expected_output=format_value(case.output),
+                actual_output=format_value(output),
             )
+            first_failed_hidden_case = case
 
     verdict: Verdict = (
         "accepted" if hidden_passed == len(hidden_tests) else "wrong_answer"
@@ -164,19 +177,20 @@ def judge_submission(
         message=message,
         stdout=_combine_stdout(stdout_chunks),
         first_failed_hidden_test=first_failed_hidden_test,
+        first_failed_hidden_case=first_failed_hidden_case,
     )
 
 
 def _run_case(
     code: str,
-    input_str: str,
-    sample_cases: list[tuple[str, str]],
+    inputs: tuple[Any, ...],
+    contract: FunctionContract,
     timeout_seconds: float,
-) -> tuple[bool, str, str, int, str]:
-    queue: mp.Queue[tuple[str, str, str, int, str]] = mp.Queue(maxsize=1)
+) -> tuple[bool, Any, str, int, str]:
+    queue: mp.Queue[tuple[str, Any, str, int, str]] = mp.Queue(maxsize=1)
     proc = mp.Process(
         target=_worker,
-        args=(code, input_str, sample_cases, queue),
+        args=(code, inputs, len(contract.parameter_types), queue),
         daemon=True,
     )
     proc.start()
@@ -202,9 +216,9 @@ def _run_case(
 
 def _worker(
     code: str,
-    input_str: str,
-    sample_cases: list[tuple[str, str]],
-    queue: mp.Queue[tuple[str, str, str, int, str]],
+    inputs: tuple[Any, ...],
+    expected_arity: int,
+    queue: mp.Queue[tuple[str, Any, str, int, str]],
 ) -> None:
     started = perf_counter()
     stdout_capture = io.StringIO()
@@ -216,21 +230,21 @@ def _worker(
 
             solution_candidate = namespace.get("solution")
             if not callable(solution_candidate):
-                raise TypeError("Missing solution(input_str, sample_cases) function")
-            solution = cast(
-                Callable[[str, list[tuple[str, str]]], object], solution_candidate
-            )
+                raise TypeError("Missing solution function")
+            solution = cast(Callable[..., object], solution_candidate)
 
             signature = inspect.signature(solution)
-            if len(signature.parameters) != 2:
-                raise TypeError("solution must take exactly two arguments")
+            if len(signature.parameters) != expected_arity:
+                raise TypeError(
+                    f"solution must take exactly {expected_arity} argument"
+                    f"{'s' if expected_arity != 1 else ''}"
+                )
 
-            output = solution(input_str, sample_cases)
-            if not isinstance(output, str):
-                raise TypeError("solution must return a string")
+            output = solution(*inputs)
+            normalized_output = _normalize_value(output)
 
         elapsed_ms = int((perf_counter() - started) * 1000)
-        queue.put(("ok", output, "", elapsed_ms, stdout_capture.getvalue()))
+        queue.put(("ok", normalized_output, "", elapsed_ms, stdout_capture.getvalue()))
     except BaseException as exc:  # noqa: BLE001
         elapsed_ms = int((perf_counter() - started) * 1000)
         queue.put(
@@ -244,9 +258,30 @@ def _worker(
         )
 
 
-def _normalize_output(value: str) -> str:
-    stripped_lines = [line.rstrip() for line in value.strip().splitlines()]
-    return "\n".join(stripped_lines)
+def _values_equal(actual: Any, expected: Any) -> bool:
+    return _normalize_value(actual) == _normalize_value(expected)
+
+
+def _normalize_value(value: Any) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (str, int, float)):
+        return value
+    if isinstance(value, tuple):
+        return [_normalize_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_value(item)
+            for key, item in sorted(value.items(), key=lambda kv: str(kv[0]))
+        }
+    if isinstance(value, set):
+        return sorted((_normalize_value(item) for item in value), key=repr)
+    raise TypeError(
+        "Unsupported return type from solution. "
+        "Use primitives, lists, tuples, dicts, or sets."
+    )
 
 
 def _append_stdout(

@@ -303,7 +303,10 @@ class MemoryStore:
             time_limit_seconds=time_limit_seconds,
             puzzle=puzzle,
             created_at=time(),
-            players={user.id: MatchPlayer(user_id=user.id) for user in members},
+            players={
+                user.id: MatchPlayer(user_id=user.id, hint_level=1, hints_used={1})
+                for user in members
+            },
         )
 
         self.matches[match.id] = match
@@ -322,15 +325,11 @@ class MemoryStore:
             code=code,
             sample_tests=match.puzzle.sample_tests,
             hidden_tests=match.puzzle.hidden_tests,
+            contract=match.puzzle.contract,
+            shared_inputs=match.puzzle.shared_inputs,
         )
 
-        if result.first_failed_hidden_test is None:
-            player.last_failed_hidden_test = None
-        else:
-            player.last_failed_hidden_test = TestCase(
-                input_str=result.first_failed_hidden_test.input_str,
-                output_str=result.first_failed_hidden_test.expected_output,
-            )
+        player.last_failed_hidden_test = result.first_failed_hidden_case
 
         now = time()
         if result.hidden_passed >= player.hidden_passed:
@@ -353,6 +352,8 @@ class MemoryStore:
             code=code,
             sample_tests=match.puzzle.sample_tests,
             hidden_tests=match.puzzle.hidden_tests,
+            contract=match.puzzle.contract,
+            shared_inputs=match.puzzle.shared_inputs,
             include_hidden_tests=False,
         )
 
@@ -387,6 +388,7 @@ class MemoryStore:
                     *match.puzzle.hidden_tests,
                 ],
                 seed=random.randint(1, 10**9),
+                template_key=match.puzzle.template_key,
             )
             match.puzzle.hidden_tests.append(replacement)
 

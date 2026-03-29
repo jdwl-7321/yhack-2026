@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import os
 from pathlib import Path
 from typing import Any, cast
@@ -8,14 +7,19 @@ from typing import Any, cast
 from flask import Flask, jsonify, request, session
 
 from constants import THEMES
-from puzzle import TestCase, generator_schema
+from judge import JudgeResult
+from puzzle import (
+    TestCase,
+    format_case_input,
+    format_value,
+    generator_schema,
+    invocation_inputs,
+    solution_scaffold,
+    to_json_value,
+)
 from store import Match, MemoryStore, Party, SqliteStore, User
 from domain_types import Difficulty, Mode
 
-SOLUTION_SCAFFOLD = (
-    "def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:\n"
-    '    return ""\n'
-)
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
 
 
@@ -68,7 +72,8 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         raw_user_id = session.get("user_id")
         current_user_id = raw_user_id if isinstance(raw_user_id, str) else None
         raw_limit = request.args.get("limit")
-        limit = _optional_int(raw_limit) if raw_limit is not None else 8
+        limit_value = _optional_int(raw_limit) if raw_limit is not None else None
+        limit = 8 if limit_value is None else limit_value
         return jsonify(data.leaderboard(limit=limit, current_user_id=current_user_id))
 
     @app.route("/api/generator/schema", methods=["GET"])
@@ -229,7 +234,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         )
         return jsonify(
             {
-                **asdict(result),
+                **_judge_result_payload(result),
                 "sample_tests": _sample_tests_payload(
                     data.get_match(match_id=match_id)
                 ),
@@ -247,7 +252,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         )
         return jsonify(
             {
-                **asdict(result),
+                **_judge_result_payload(result),
                 "sample_tests": _sample_tests_payload(
                     data.get_match(match_id=match_id)
                 ),
@@ -262,7 +267,15 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             match_id=match_id,
             user_id=payload_user_id(payload),
         )
-        return jsonify({"sample_tests": _sample_tests_payload_from_cases(sample_tests)})
+        match = data.get_match(match_id=match_id)
+        return jsonify(
+            {
+                "sample_tests": _sample_tests_payload_from_cases(
+                    sample_tests,
+                    shared_inputs=match.puzzle.shared_inputs,
+                )
+            }
+        )
 
     @app.route("/api/matches/<match_id>/hint", methods=["POST"])
     def hint(match_id: str) -> Any:
@@ -362,16 +375,54 @@ def _match_payload(
         "time_limit_seconds": match.time_limit_seconds,
         "created_at": match.created_at,
         "prompt": match.puzzle.prompt,
-        "scaffold": SOLUTION_SCAFFOLD,
+        "free_hint": match.puzzle.hint_level_1,
+        "scaffold": solution_scaffold(match.puzzle.contract),
         "sample_tests": sample_tests if include_samples else [],
         "standings": store.standings(match_id=match.id),
     }
     return payload
 
 
-def _sample_tests_payload(match: Match) -> list[dict[str, str]]:
-    return _sample_tests_payload_from_cases(match.puzzle.sample_tests)
+def _sample_tests_payload(match: Match) -> list[dict[str, Any]]:
+    return _sample_tests_payload_from_cases(
+        match.puzzle.sample_tests,
+        shared_inputs=match.puzzle.shared_inputs,
+    )
 
 
-def _sample_tests_payload_from_cases(cases: list[TestCase]) -> list[dict[str, str]]:
-    return [{"input": case.input_str, "output": case.output_str} for case in cases]
+def _sample_tests_payload_from_cases(
+    cases: list[TestCase],
+    *,
+    shared_inputs: tuple[Any, ...] = (),
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "input": format_case_input(case.inputs),
+            "output": format_value(case.output),
+            "inputs": to_json_value(list(invocation_inputs(case, shared_inputs))),
+            "expected": to_json_value(case.output),
+        }
+        for case in cases
+    ]
+
+
+def _judge_result_payload(result: JudgeResult) -> dict[str, Any]:
+    return {
+        "verdict": result.verdict,
+        "sample_passed": result.sample_passed,
+        "sample_total": result.sample_total,
+        "hidden_passed": result.hidden_passed,
+        "hidden_total": result.hidden_total,
+        "runtime_ms": result.runtime_ms,
+        "message": result.message,
+        "stdout": result.stdout,
+        "first_failed_hidden_test": (
+            None
+            if result.first_failed_hidden_test is None
+            else {
+                "input_str": result.first_failed_hidden_test.input_str,
+                "expected_output": result.first_failed_hidden_test.expected_output,
+                "actual_output": result.first_failed_hidden_test.actual_output,
+            }
+        ),
+    }

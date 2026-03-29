@@ -68,6 +68,7 @@
     difficulty: Difficulty;
     time_limit_seconds: number;
     prompt: string;
+    free_hint: string;
     scaffold: string;
     sample_tests: Array<{ input: string; output: string }>;
     standings: Standing[];
@@ -177,7 +178,7 @@
   };
 
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-  const FALLBACK_THEME = "String manipulation (unix-like text processing)";
+  const FALLBACK_THEME = "Cryptography";
   const INDENT = "    ";
   const LEADERBOARD_LIMIT = 10;
   const PARTY_LIMIT_MIN = 2;
@@ -1350,6 +1351,7 @@
       standings = payload.standings;
       syncSessionElo(payload.standings);
       code = payload.scaffold;
+      hints = payload.free_hint ? [payload.free_hint] : [];
       activeView = "arena";
       updateAccountStats((current) => ({
         ...current,

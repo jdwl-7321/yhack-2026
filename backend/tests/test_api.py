@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from app import create_app
 from constants import THEMES
@@ -33,22 +33,35 @@ def _start_single_player_match(client: Any, *, seed: int = 3) -> tuple[dict, dic
     return user, match
 
 
-def _sample_only_solution(sample_tests: list[dict[str, str]]) -> str:
+def _sample_only_solution(sample_tests: list[dict[str, Any]]) -> str:
+    if not sample_tests:
+        return "def solution() -> int:\n    return 0\n"
+
+    arity = len(sample_tests[0].get("inputs", []))
+    params = [f"arg{index + 1}" for index in range(arity)]
+    signature = ", ".join(params)
+
     branch_lines: list[str] = []
     for sample in sample_tests:
+        values = sample.get("inputs", [])
+        conditions = [
+            f"{param} == {value!r}" for param, value in zip(params, values, strict=True)
+        ]
+        condition = " and ".join(conditions) if conditions else "True"
         branch_lines.extend(
             [
-                f"    if input_str == {sample['input']!r}:",
-                f"        return {sample['output']!r}",
+                f"    if {condition}:",
+                f"        return {sample['expected']!r}",
             ]
         )
 
     branch_block = "\n".join(branch_lines)
+    fallback = sample_tests[0]["expected"]
     return (
-        "def solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str:\n"
-        "    print('trace', len(input_str))\n"
+        f"def solution({signature}):\n"
+        "    print('trace')\n"
         f"{branch_block}\n"
-        "    return ''\n"
+        f"    return {fallback!r}\n"
     )
 
 
@@ -440,6 +453,8 @@ def test_hint_unlock_sequence_and_submit_flow() -> None:
         json={"seed": 3, "user_id": user["id"]},
     ).get_json()
     assert match is not None
+    assert isinstance(match["free_hint"], str)
+    assert match["free_hint"]
 
     hint1 = client.post(
         f"/api/matches/{match['match_id']}/hint",
@@ -460,7 +475,7 @@ def test_hint_unlock_sequence_and_submit_flow() -> None:
 
     assert hint1.status_code == 200
     assert hint2.status_code == 200
-    assert hint3.status_code == 200
+    assert hint3.status_code == 400
     assert no_more_hints.status_code == 400
 
     hint1_payload = hint1.get_json()
@@ -469,9 +484,9 @@ def test_hint_unlock_sequence_and_submit_flow() -> None:
     assert hint1_payload is not None
     assert hint2_payload is not None
     assert hint3_payload is not None
-    assert hint1_payload["level"] == 1
-    assert hint2_payload["level"] == 2
-    assert hint3_payload["level"] == 3
+    assert hint1_payload["level"] == 2
+    assert hint2_payload["level"] == 3
+    assert hint3_payload == {"error": "All hints already used"}
 
     result = client.post(
         f"/api/matches/{match['match_id']}/submit",
@@ -530,10 +545,11 @@ def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
 
         latest_samples = promoted["sample_tests"]
         assert len(latest_samples) <= 4
-        assert {
-            "input": failed["input_str"],
-            "output": failed["expected_output"],
-        } in latest_samples
+        assert any(
+            sample["input"] == failed["input_str"]
+            and sample["output"] == failed["expected_output"]
+            for sample in latest_samples
+        )
 
     refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
     assert refreshed_match is not None
@@ -569,29 +585,36 @@ def test_ranked_submit_auto_finishes_and_updates_elo() -> None:
     assert match is not None
 
     def _accepted_submission(
-        code: str, sample_tests: Any, hidden_tests: Any
+        code: str,
+        sample_tests: Any,
+        hidden_tests: Any,
+        contract: Any,
+        shared_inputs: tuple[Any, ...] = (),
+        timeout_seconds: float = 1.0,
+        include_hidden_tests: bool = True,
     ) -> JudgeResult:
+        hidden_total = len(hidden_tests) if include_hidden_tests else 0
         return JudgeResult(
             verdict="accepted",
             sample_passed=len(sample_tests),
             sample_total=len(sample_tests),
-            hidden_passed=len(hidden_tests),
-            hidden_total=len(hidden_tests),
+            hidden_passed=hidden_total,
+            hidden_total=hidden_total,
             runtime_ms=1,
         )
 
     original_judge_submission = store_module.judge_submission
-    store_module.judge_submission = _accepted_submission
+    store_module.judge_submission = cast(Any, _accepted_submission)
     try:
         submit_payload = client.post(
             f"/api/matches/{match['match_id']}/submit",
             json={
                 "user_id": user["id"],
-                "code": "def solution(input_str: str) -> str:\n    return input_str\n",
+                "code": "def solution(arg1):\n    return arg1\n",
             },
         ).get_json()
     finally:
-        store_module.judge_submission = original_judge_submission
+        store_module.judge_submission = cast(Any, original_judge_submission)
 
     assert submit_payload is not None
     self_row = next(
@@ -632,29 +655,36 @@ def test_sqlite_ranked_elo_persists_after_auto_finish(tmp_path: Path) -> None:
     assert match is not None
 
     def _accepted_submission(
-        code: str, sample_tests: Any, hidden_tests: Any
+        code: str,
+        sample_tests: Any,
+        hidden_tests: Any,
+        contract: Any,
+        shared_inputs: tuple[Any, ...] = (),
+        timeout_seconds: float = 1.0,
+        include_hidden_tests: bool = True,
     ) -> JudgeResult:
+        hidden_total = len(hidden_tests) if include_hidden_tests else 0
         return JudgeResult(
             verdict="accepted",
             sample_passed=len(sample_tests),
             sample_total=len(sample_tests),
-            hidden_passed=len(hidden_tests),
-            hidden_total=len(hidden_tests),
+            hidden_passed=hidden_total,
+            hidden_total=hidden_total,
             runtime_ms=1,
         )
 
     original_judge_submission = store_module.judge_submission
-    store_module.judge_submission = _accepted_submission
+    store_module.judge_submission = cast(Any, _accepted_submission)
     try:
         submit_payload = first_client.post(
             f"/api/matches/{match['match_id']}/submit",
             json={
                 "user_id": user["id"],
-                "code": "def solution(input_str: str) -> str:\n    return input_str\n",
+                "code": "def solution(arg1):\n    return arg1\n",
             },
         ).get_json()
     finally:
-        store_module.judge_submission = original_judge_submission
+        store_module.judge_submission = cast(Any, original_judge_submission)
 
     assert submit_payload is not None
     updated_elo = next(

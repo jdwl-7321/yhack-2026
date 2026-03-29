@@ -44,7 +44,7 @@ uvx ty check src tests
 - Zen, casual, and ranked mode start flow
 - Ranked mode fallback to casual if a guest joins
 - Hardcoded theme catalog and seeded puzzle generation
-- Hidden/sampled tests with `solution(input_str: str, sample_cases: list[tuple[str, str]]) -> str` contract
+- Hidden/sampled tests with per-puzzle typed function signatures (e.g. `solution(arg1: list[int], arg2: int) -> tuple[int, int]`)
 - Two-level hints (`level 2` reveals sampled variable values)
 - Ranked placement + ELO delta calculation with hint gain multipliers
 - Frontend single-page playable loop with editor and verdict feedback
