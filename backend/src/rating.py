@@ -18,6 +18,11 @@ _HINT_GAIN_MULTIPLIER = {
     3: 0.7,
 }
 
+_MATCHMAKING_BASE_WINDOW = 150
+_MATCHMAKING_STEP_SECONDS = 15.0
+_MATCHMAKING_STEP_WINDOW = 50
+_MATCHMAKING_MAX_WINDOW = 600
+
 
 @dataclass(frozen=True, slots=True)
 class RankedResult:
@@ -43,6 +48,17 @@ def assign_ranked_difficulty(avg_elo: float) -> Difficulty:
     if avg_elo < 1300:
         return "hard"
     return "expert"
+
+
+def ranked_matchmaking_window(wait_seconds: float) -> int:
+    if wait_seconds <= 0:
+        return _MATCHMAKING_BASE_WINDOW
+
+    steps = int(wait_seconds // _MATCHMAKING_STEP_SECONDS)
+    return min(
+        _MATCHMAKING_MAX_WINDOW,
+        _MATCHMAKING_BASE_WINDOW + (steps * _MATCHMAKING_STEP_WINDOW),
+    )
 
 
 def order_ranked_results(results: list[RankedResult]) -> list[RankedResult]:

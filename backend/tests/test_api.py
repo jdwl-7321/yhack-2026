@@ -275,6 +275,95 @@ def test_ranked_party_falls_back_to_casual_with_guest() -> None:
     assert match["mode"] == "casual"
 
 
+def test_ranked_queue_matches_registered_players_by_elo() -> None:
+    app = create_app(MemoryStore())
+    first_client = app.test_client()
+    second_client = app.test_client()
+
+    first_register = first_client.post(
+        "/api/auth/register",
+        json={"name": "RankedOne", "password": "secret123"},
+    )
+    second_register = second_client.post(
+        "/api/auth/register",
+        json={"name": "RankedTwo", "password": "secret123"},
+    )
+    assert first_register.status_code == 200
+    assert second_register.status_code == 200
+
+    store = cast(MemoryStore, app.config["store"])
+    first_user = first_register.get_json()["user"]
+    second_user = second_register.get_json()["user"]
+    store.users[first_user["id"]].elo = 1040
+    store.users[second_user["id"]].elo = 1095
+
+    queued = first_client.post("/api/ranked/queue", json={"seed": 13})
+    assert queued.status_code == 200
+    queued_payload = queued.get_json()
+    assert queued_payload is not None
+    assert queued_payload["status"] == "queued"
+    assert queued_payload["queued_players"] == 1
+    assert queued_payload["match"] is None
+
+    matched = second_client.post("/api/ranked/queue", json={"seed": 13})
+    assert matched.status_code == 200
+    matched_payload = matched.get_json()
+    assert matched_payload is not None
+    assert matched_payload["status"] == "matched"
+    assert matched_payload["match"]["mode"] == "ranked"
+    assert matched_payload["match"]["difficulty"] == "medium"
+
+    first_status = first_client.get("/api/ranked/queue")
+    assert first_status.status_code == 200
+    first_payload = first_status.get_json()
+    assert first_payload is not None
+    assert first_payload["status"] == "matched"
+    assert first_payload["match"]["match_id"] == matched_payload["match"]["match_id"]
+    assert {
+        row["name"] for row in first_payload["match"]["standings"]
+    } == {"RankedOne", "RankedTwo"}
+
+
+def test_ranked_queue_rejects_guest_accounts() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    guest = client.post("/api/users", json={"name": "Guesty", "guest": True}).get_json()
+    assert guest is not None
+
+    with client.session_transaction() as session_data:
+        session_data["user_id"] = guest["id"]
+
+    response = client.post("/api/ranked/queue")
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "Ranked matchmaking requires a registered account"
+    }
+
+
+def test_ranked_queue_leave_clears_entry() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "QueueExit", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    join = client.post("/api/ranked/queue")
+    assert join.status_code == 200
+    assert join.get_json()["status"] == "queued"
+
+    leave = client.post("/api/ranked/queue/leave")
+    assert leave.status_code == 200
+    assert leave.get_json()["status"] == "idle"
+
+    status = client.get("/api/ranked/queue")
+    assert status.status_code == 200
+    assert status.get_json()["status"] == "idle"
+
+
 def test_casual_party_join_code_and_member_limit_are_enforced() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()

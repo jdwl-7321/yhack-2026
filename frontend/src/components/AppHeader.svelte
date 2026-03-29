@@ -90,16 +90,12 @@
 
   function closeQuickSettings(): void {
     quickSettingsOpen = false;
-    quickSettingsQuery = "";
-    quickSettingsIndex = 0;
   }
 
   function openQuickSettings(): void {
     quickSettingsOpen = true;
     themeMenuOpen = false;
     accountMenuOpen = false;
-    quickSettingsQuery = "";
-    quickSettingsIndex = 0;
     void tick().then(() => {
       quickSettingsInputEl?.focus();
       quickSettingsInputEl?.select();

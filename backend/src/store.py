@@ -22,6 +22,7 @@ from rating import (
     assign_ranked_difficulty,
     elo_deltas,
     order_ranked_results,
+    ranked_matchmaking_window,
     resolve_mode,
 )
 from domain_types import Difficulty, Mode
@@ -83,12 +84,24 @@ class Match:
     finished: bool = False
 
 
+@dataclass(slots=True)
+class RankedQueueEntry:
+    user_id: str
+    queued_elo: int
+    joined_at: float
+    last_seen_at: float
+    match_id: str | None = None
+
+
 class MemoryStore:
+    _RANKED_QUEUE_STALE_SECONDS = 20.0
+
     def __init__(self) -> None:
         self.users: dict[str, User] = {}
         self.user_name_index: dict[str, str] = {}
         self.parties: dict[str, Party] = {}
         self.matches: dict[str, Match] = {}
+        self.ranked_queue: dict[str, RankedQueueEntry] = {}
         self._ranked_used_themes: set[str] = set()
 
     def create_user(
@@ -337,6 +350,64 @@ class MemoryStore:
         party.active_match_id = match.id
         return match
 
+    def join_ranked_queue(
+        self,
+        *,
+        user_id: str,
+        seed: int | None = None,
+    ) -> RankedQueueEntry:
+        user = self._require_user(user_id)
+        if user.guest:
+            raise ValueError("Ranked matchmaking requires a registered account")
+        if self._active_match_for_user(user_id) is not None:
+            raise ValueError("Finish your current match before queueing again")
+
+        now = time()
+        self._purge_stale_ranked_queue(now=now)
+        existing = self.ranked_queue.get(user_id)
+        if existing is not None:
+            existing.queued_elo = user.elo
+            existing.last_seen_at = now
+            if existing.match_id is not None:
+                match = self.matches.get(existing.match_id)
+                if match is not None and not match.finished:
+                    return existing
+                self.ranked_queue.pop(user_id, None)
+                existing = None
+
+        if existing is None:
+            existing = RankedQueueEntry(
+                user_id=user_id,
+                queued_elo=user.elo,
+                joined_at=now,
+                last_seen_at=now,
+            )
+            self.ranked_queue[user_id] = existing
+
+        self._attempt_ranked_match(entry=existing, seed=seed, now=now)
+        return self.ranked_queue[user_id]
+
+    def ranked_queue_status(self, *, user_id: str) -> RankedQueueEntry | None:
+        now = time()
+        self._purge_stale_ranked_queue(now=now)
+        entry = self.ranked_queue.get(user_id)
+        if entry is None:
+            return None
+
+        entry.queued_elo = self._require_user(user_id).elo
+        entry.last_seen_at = now
+        return entry
+
+    def leave_ranked_queue(self, *, user_id: str) -> None:
+        entry = self.ranked_queue.get(user_id)
+        if entry is None:
+            return
+        if entry.match_id is not None:
+            match = self.matches.get(entry.match_id)
+            if match is not None and not match.finished:
+                raise ValueError("A ranked match is already ready for you")
+        self.ranked_queue.pop(user_id, None)
+
     def get_match(self, *, match_id: str) -> Match:
         return self._require_match(match_id)
 
@@ -472,6 +543,9 @@ class MemoryStore:
         for user_id, delta in deltas.items():
             self.users[user_id].elo += delta
 
+        for user_id in match.players:
+            self.ranked_queue.pop(user_id, None)
+
         match.rating_deltas = deltas
         return deltas
 
@@ -590,6 +664,105 @@ class MemoryStore:
         )
         if all_players_done:
             self.finish_match(match_id=match.id)
+
+    def _attempt_ranked_match(
+        self,
+        *,
+        entry: RankedQueueEntry,
+        seed: int | None,
+        now: float,
+    ) -> Match | None:
+        if entry.match_id is not None:
+            match = self.matches.get(entry.match_id)
+            if match is not None and not match.finished:
+                return match
+            entry.match_id = None
+
+        best_candidate: RankedQueueEntry | None = None
+        best_score: tuple[int, float, str] | None = None
+        for candidate in self.ranked_queue.values():
+            if candidate.user_id == entry.user_id or candidate.match_id is not None:
+                continue
+
+            elo_gap = abs(entry.queued_elo - candidate.queued_elo)
+            entry_wait = max(0.0, now - entry.joined_at)
+            candidate_wait = max(0.0, now - candidate.joined_at)
+            max_gap = max(
+                ranked_matchmaking_window(entry_wait),
+                ranked_matchmaking_window(candidate_wait),
+            )
+            if elo_gap > max_gap:
+                continue
+
+            score = (elo_gap, candidate.joined_at, candidate.user_id)
+            if best_score is None or score < best_score:
+                best_candidate = candidate
+                best_score = score
+
+        if best_candidate is None:
+            return None
+
+        match = self._create_ranked_match(
+            user_ids=[entry.user_id, best_candidate.user_id],
+            seed=seed,
+        )
+        entry.match_id = match.id
+        entry.last_seen_at = now
+        best_candidate.match_id = match.id
+        best_candidate.last_seen_at = now
+        return match
+
+    def _create_ranked_match(
+        self,
+        *,
+        user_ids: list[str],
+        seed: int | None,
+    ) -> Match:
+        members = [self._require_user(user_id) for user_id in user_ids]
+        avg_elo = sum(member.elo for member in members) / max(1, len(members))
+        difficulty = assign_ranked_difficulty(avg_elo)
+        theme = self._choose_next_ranked_theme(seed=seed)
+        match_seed = seed if seed is not None else random.randint(1, 10**9)
+        puzzle = generate_puzzle(
+            theme=theme,
+            difficulty=difficulty,
+            seed=match_seed,
+        )
+
+        match = Match(
+            id=f"m_{uuid.uuid4().hex[:10]}",
+            party_code="",
+            mode="ranked",
+            theme=theme,
+            difficulty=difficulty,
+            time_limit_seconds=3600,
+            puzzle=puzzle,
+            created_at=time(),
+            players={
+                user.id: MatchPlayer(user_id=user.id, hint_level=1, hints_used={1})
+                for user in members
+            },
+        )
+        self.matches[match.id] = match
+        return match
+
+    def _active_match_for_user(self, user_id: str) -> Match | None:
+        for match in self.matches.values():
+            if match.finished:
+                continue
+            if user_id in match.players:
+                return match
+        return None
+
+    def _purge_stale_ranked_queue(self, *, now: float) -> None:
+        stale_user_ids = [
+            user_id
+            for user_id, entry in self.ranked_queue.items()
+            if entry.match_id is None
+            and now - entry.last_seen_at > self._RANKED_QUEUE_STALE_SECONDS
+        ]
+        for user_id in stale_user_ids:
+            self.ranked_queue.pop(user_id, None)
 
     @staticmethod
     def _normalize_name(name: str) -> str:
