@@ -13,7 +13,7 @@
   export let busy = false;
   export let timerText = "00:00";
   export let keybindMode: KeybindMode = "normal";
-  export let editorFontSize = "default";
+  export let editorFontSize = 14;
   export let lineNumbers = "1";
   export let editorScrollLeft = 0;
   export let highlightedCode = "";
@@ -155,11 +155,7 @@
       <section class="editor-panel">
           <div
             class="editor-container"
-            style={`--editor-font-size: ${editorFontSize === "compact"
-              ? "0.82rem"
-              : editorFontSize === "large"
-                ? "1rem"
-                : "0.9rem"}`}
+            style={`--editor-font-size: ${editorFontSize}px;`}
           >
             <div class="editor-stack">
               {#if keybindMode === "vim"}

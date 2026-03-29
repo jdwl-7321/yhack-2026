@@ -1,9 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { basicSetup, EditorView } from "codemirror";
-  import { indentLess, insertTab } from "@codemirror/commands";
+  import { EditorState } from "@codemirror/state";
+  import { indentLess, indentMore } from "@codemirror/commands";
   import { keymap } from "@codemirror/view";
-  import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+  import {
+    HighlightStyle,
+    indentUnit,
+    syntaxHighlighting,
+  } from "@codemirror/language";
   import { python as cmPython } from "@codemirror/lang-python";
   import { tags } from "@lezer/highlight";
   import { getCM, Vim, vim } from "@replit/codemirror-vim";
@@ -31,6 +36,7 @@
     ConsoleType,
     Difficulty,
     EditorAction,
+    EditorFontFamily,
     EditorFontSize,
     EditorSnapshot,
     EditorThemePalette,
@@ -64,10 +70,15 @@
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
   const KEYBIND_MODE_STORAGE_KEY = "yhack.keybind-mode";
   const CUSTOM_SHORTCUTS_STORAGE_KEY = "yhack.custom-shortcuts";
+  const EDITOR_FONT_FAMILY_STORAGE_KEY = "yhack.editor-font-family";
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
+  const DEFAULT_EDITOR_FONT_FAMILY: EditorFontFamily = "roboto-mono";
+  const DEFAULT_EDITOR_FONT_SIZE = 14;
+  const MIN_EDITOR_FONT_SIZE = 12;
+  const MAX_EDITOR_FONT_SIZE = 22;
   const APPEARANCE_MODE_ORDER: AppearanceMode[] = ["system", "light", "dark"];
   const ACCOUNT_RECENT_RUN_LIMIT = 6;
   const ACCOUNT_RECORDED_MATCH_LIMIT = 30;
@@ -79,6 +90,40 @@
   };
   const themeInfoById = new Map(
     bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
+  );
+  const editorFontFamilyOptions: Array<{
+    id: EditorFontFamily;
+    label: string;
+    cssValue: string;
+  }> = [
+    {
+      id: "roboto-mono",
+      label: "Roboto Mono",
+      cssValue: "'Roboto Mono', 'Fira Code', 'JetBrains Mono', monospace",
+    },
+    {
+      id: "fira-code",
+      label: "Fira Code",
+      cssValue: "'Fira Code', 'Roboto Mono', 'JetBrains Mono', monospace",
+    },
+    {
+      id: "jetbrains-mono",
+      label: "JetBrains Mono",
+      cssValue: "'JetBrains Mono', 'Roboto Mono', 'Fira Code', monospace",
+    },
+    {
+      id: "source-code-pro",
+      label: "Source Code Pro",
+      cssValue: "'Source Code Pro', 'Roboto Mono', 'Fira Code', monospace",
+    },
+    {
+      id: "ibm-plex-mono",
+      label: "IBM Plex Mono",
+      cssValue: "'IBM Plex Mono', 'Roboto Mono', 'Fira Code', monospace",
+    },
+  ];
+  const editorFontFamilyById = new Map(
+    editorFontFamilyOptions.map((option) => [option.id, option]),
   );
   const vimHighlightStyle = HighlightStyle.define([
     {
@@ -161,7 +206,8 @@
     ...DEFAULT_CUSTOM_SHORTCUTS,
   };
   let customShortcutError = "";
-  let editorFontSize: EditorFontSize = "default";
+  let editorFontFamily: EditorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
+  let editorFontSize: EditorFontSize = DEFAULT_EDITOR_FONT_SIZE;
   let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
     DEFAULT_DARK_EDITOR_THEME;
   let availableEditorThemes = bundledThemesInfo.filter(
@@ -977,9 +1023,48 @@
     applyEditorChange(target, nextCode, cursor);
   }
 
-  function indentSelection(target: HTMLTextAreaElement): void {
+  function selectedLineBounds(
+    source: string,
+    selectionStart: number,
+    selectionEnd: number,
+  ): { start: number; end: number } {
+    const start = source.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+    const safeEnd = selectionEnd > selectionStart && source[selectionEnd - 1] === "\n"
+      ? selectionEnd - 1
+      : selectionEnd;
+    const nextBreak = source.indexOf("\n", safeEnd);
+    const end = nextBreak === -1 ? source.length : nextBreak;
+    return { start, end };
+  }
+
+  function removableIndentLength(line: string): number {
+    const indentMatch = line.match(/^[\t ]+/)?.[0] ?? "";
+    if (indentMatch.length === 0) {
+      return 0;
+    }
+    return Math.min(INDENT.length, indentMatch.length);
+  }
+
+  function indentSelection(
+    target: HTMLTextAreaElement,
+    direction: 1 | -1 = 1,
+  ): void {
     const { selectionStart, selectionEnd } = target;
     if (selectionStart === selectionEnd) {
+      if (direction < 0) {
+        const bounds = lineBounds(code, selectionStart);
+        const line = code.slice(bounds.start, bounds.end);
+        const removable = removableIndentLength(line);
+        if (removable === 0) {
+          return;
+        }
+        const nextCode =
+          `${code.slice(0, bounds.start)}${line.slice(removable)}${code.slice(bounds.end)}`;
+        const cursor = Math.max(bounds.start, selectionStart - removable);
+        applyEditorChange(target, nextCode, cursor);
+        return;
+      }
+
       const nextCode =
         `${code.slice(0, selectionStart)}${INDENT}${code.slice(selectionEnd)}`;
       const cursor = selectionStart + INDENT.length;
@@ -987,15 +1072,22 @@
       return;
     }
 
-    const selection = code.slice(selectionStart, selectionEnd);
-    const indented = `${INDENT}${selection.replace(/\n/g, `\n${INDENT}`)}`;
+    const bounds = selectedLineBounds(code, selectionStart, selectionEnd);
+    const selection = code.slice(bounds.start, bounds.end);
+    const transformed = selection
+      .split("\n")
+      .map((line) =>
+        direction > 0
+          ? `${INDENT}${line}`
+          : line.slice(removableIndentLength(line)))
+      .join("\n");
     const nextCode =
-      `${code.slice(0, selectionStart)}${indented}${code.slice(selectionEnd)}`;
+      `${code.slice(0, bounds.start)}${transformed}${code.slice(bounds.end)}`;
     applyEditorChange(
       target,
       nextCode,
-      selectionStart,
-      selectionStart + indented.length,
+      bounds.start,
+      bounds.start + transformed.length,
     );
   }
 
@@ -1189,7 +1281,7 @@
 
     if (event.key === "Tab") {
       event.preventDefault();
-      indentSelection(target);
+      indentSelection(target, event.shiftKey ? -1 : 1);
       return true;
     }
 
@@ -1733,19 +1825,61 @@
     persistCustomShortcuts();
   }
 
+  function clampEditorFontSize(value: number): number {
+    if (!Number.isFinite(value)) {
+      return DEFAULT_EDITOR_FONT_SIZE;
+    }
+    return Math.min(
+      MAX_EDITOR_FONT_SIZE,
+      Math.max(MIN_EDITOR_FONT_SIZE, Math.round(value)),
+    );
+  }
+
+  function editorFontFamilyCssValue(
+    family: EditorFontFamily = editorFontFamily,
+  ): string {
+    return editorFontFamilyById.get(family)?.cssValue ??
+      editorFontFamilyById.get(DEFAULT_EDITOR_FONT_FAMILY)?.cssValue ??
+      "'Roboto Mono', monospace";
+  }
+
+  function applyEditorTypography(): void {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const root = document.documentElement;
+    root.style.setProperty("--editor-font-family", editorFontFamilyCssValue());
+    root.style.setProperty("--editor-font-size", `${editorFontSize}px`);
+  }
+
+  function setEditorFontFamily(family: EditorFontFamily): void {
+    if (!editorFontFamilyById.has(family)) {
+      return;
+    }
+    editorFontFamily = family;
+    localStorage.setItem(EDITOR_FONT_FAMILY_STORAGE_KEY, family);
+    applyEditorTypography();
+  }
+
   function setEditorFontSize(size: EditorFontSize): void {
-    editorFontSize = size;
-    localStorage.setItem(EDITOR_FONT_SIZE_STORAGE_KEY, size);
+    editorFontSize = clampEditorFontSize(size);
+    localStorage.setItem(
+      EDITOR_FONT_SIZE_STORAGE_KEY,
+      String(editorFontSize),
+    );
+    applyEditorTypography();
   }
 
   function editorFontSizeLabel(size: EditorFontSize = editorFontSize): string {
-    if (size === "compact") {
-      return "Compact";
-    }
-    if (size === "large") {
-      return "Large";
-    }
-    return "Default";
+    return `${clampEditorFontSize(size)} px`;
+  }
+
+  function editorFontFamilyLabel(
+    family: EditorFontFamily = editorFontFamily,
+  ): string {
+    return editorFontFamilyById.get(family)?.label ??
+      editorFontFamilyById.get(DEFAULT_EDITOR_FONT_FAMILY)?.label ??
+      "Roboto Mono";
   }
 
   function customShortcutLabel(action: EditorAction): string {
@@ -1775,7 +1909,7 @@
         run: (view) => {
           const cm = getCM(view);
           if (cm?.state.vim?.insertMode) {
-            insertTab(view);
+            indentMore(view);
             return true;
           }
           if (cm) {
@@ -1847,6 +1981,8 @@
       extensions: [
         vim({ status: true }),
         basicSetup,
+        EditorState.tabSize.of(INDENT.length),
+        indentUnit.of(INDENT),
         cmPython(),
         syntaxHighlighting(vimHighlightStyle),
         createVimActionKeymap(),
@@ -2731,14 +2867,27 @@
       }
     }
 
-    const savedEditorFontSize = localStorage.getItem(EDITOR_FONT_SIZE_STORAGE_KEY);
+    const savedEditorFontFamily = localStorage.getItem(
+      EDITOR_FONT_FAMILY_STORAGE_KEY,
+    );
     if (
-      savedEditorFontSize === "compact" ||
-      savedEditorFontSize === "default" ||
-      savedEditorFontSize === "large"
+      savedEditorFontFamily === "roboto-mono" ||
+      savedEditorFontFamily === "fira-code" ||
+      savedEditorFontFamily === "jetbrains-mono" ||
+      savedEditorFontFamily === "source-code-pro" ||
+      savedEditorFontFamily === "ibm-plex-mono"
     ) {
-      editorFontSize = savedEditorFontSize;
+      editorFontFamily = savedEditorFontFamily;
     }
+
+    const savedEditorFontSize = localStorage.getItem(
+      EDITOR_FONT_SIZE_STORAGE_KEY,
+    );
+    if (savedEditorFontSize) {
+      editorFontSize = clampEditorFontSize(Number(savedEditorFontSize));
+    }
+
+    applyEditorTypography();
 
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
     syncThemeState();
@@ -2921,7 +3070,13 @@
       {activeEditorTheme}
       {availableEditorThemes}
       {setEditorTheme}
+      {editorFontFamily}
+      {editorFontFamilyOptions}
+      {setEditorFontFamily}
+      {editorFontFamilyLabel}
       {editorFontSize}
+      editorFontSizeMin={MIN_EDITOR_FONT_SIZE}
+      editorFontSizeMax={MAX_EDITOR_FONT_SIZE}
       {setEditorFontSize}
       {editorFontSizeLabel}
       bind:passwordCurrent
