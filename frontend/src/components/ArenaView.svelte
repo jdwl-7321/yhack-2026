@@ -184,7 +184,7 @@
       });
     }
   }
-  $: actionLocked = !!match?.locked;
+  $: actionLocked = !!match && (match.locked || match.finished);
 </script>
 
 <main id="race-view">
@@ -241,7 +241,9 @@
 
     {#if actionLocked}
       <p class="flash notice">
-        Lobby closed by leader. Timer stopped and submissions are disabled.
+        {match.finished
+          ? "Review mode. This completed match is read-only and submissions are disabled."
+          : "Lobby closed by leader. Timer stopped and submissions are disabled."}
       </p>
     {/if}
 
@@ -363,7 +365,7 @@
             style={`--editor-font-size: ${editorFontSize}px;`}
           >
             <div class="editor-stack">
-              {#if keybindMode === "vim"}
+              {#if keybindMode === "vim" && !actionLocked}
                 <div class="vim-editor-host" bind:this={vimEditorHostEl}></div>
               {:else}
                 <pre
@@ -382,6 +384,7 @@
                   spellcheck="false"
                   autocomplete="off"
                   wrap="off"
+                  readonly={actionLocked}
                   on:input={handleEditorInput}
                   on:keydown={handleEditorKeydown}
                   on:scroll={syncEditorScroll}
@@ -469,7 +472,7 @@
               type="button"
               class="btn result-followup"
               on:click={addFirstFailedSampleTest}
-              disabled={busy}
+              disabled={busy || actionLocked}
             >
               Add first failed sample to samples
             </button>
@@ -479,7 +482,7 @@
               type="button"
               class="btn result-followup"
               on:click={promoteFailedTest}
-              disabled={busy}
+              disabled={busy || actionLocked}
             >
               Add first failed test to samples
             </button>

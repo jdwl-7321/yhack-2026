@@ -261,6 +261,16 @@
   let accountRankLabel = "Unranked";
   let accountPercentileLabel = "No ranked result yet";
   let accountRankedWinLabel = "0/0";
+  let lastArenaSnapshot: {
+    match: MatchPayload;
+    code: string;
+    hints: string[];
+    testResult: JudgePayload | null;
+    submitResult: JudgePayload | null;
+    standings: Standing[];
+    consoleEntries: ConsoleEntry[];
+    timerText: string;
+  } | null = null;
 
   function emptyAccountStats(): AccountStats {
     return {
@@ -463,6 +473,7 @@
     }
 
     return {
+      match_id: match.match_id,
       reason,
       mode: match.mode,
       theme: match.theme,
@@ -472,9 +483,69 @@
     };
   }
 
+  function cloneStandings(rows: Standing[]): Standing[] {
+    return rows.map((row) => ({ ...row }));
+  }
+
+  function cloneMatchPayload(payload: MatchPayload): MatchPayload {
+    return {
+      ...payload,
+      sample_tests: payload.sample_tests.map((sample) => ({ ...sample })),
+      standings: cloneStandings(payload.standings),
+    };
+  }
+
+  function cloneJudgePayload(payload: JudgePayload | null): JudgePayload | null {
+    if (!payload) {
+      return null;
+    }
+
+    return {
+      ...payload,
+      first_failed_hidden_test: payload.first_failed_hidden_test
+        ? { ...payload.first_failed_hidden_test }
+        : null,
+      sample_tests: payload.sample_tests.map((sample) => ({ ...sample })),
+      standings: cloneStandings(payload.standings),
+    };
+  }
+
+  function saveArenaSnapshot(currentMatch: MatchPayload, rows: Standing[]): void {
+    lastArenaSnapshot = {
+      match: cloneMatchPayload({
+        ...currentMatch,
+        standings: cloneStandings(rows),
+      }),
+      code,
+      hints: [...hints],
+      testResult: cloneJudgePayload(testResult),
+      submitResult: cloneJudgePayload(submitResult),
+      standings: cloneStandings(rows),
+      consoleEntries: consoleEntries.map((entry) => ({ ...entry })),
+      timerText,
+    };
+  }
+
+  function arenaReadOnlyReason(currentMatch: MatchPayload | null): string | null {
+    if (!currentMatch) {
+      return null;
+    }
+    if (currentMatch.finished) {
+      return "This completed match is in read-only review mode.";
+    }
+    if (currentMatch.locked) {
+      return "This match has been closed.";
+    }
+    return null;
+  }
+
   function showPostMatch(reason: string, rows: Standing[]): void {
     const outcome = currentStanding(rows)?.solved ? "solved" : "forfeit";
     recordCompletedMatch(outcome, rows);
+
+    if (match) {
+      saveArenaSnapshot(match, rows);
+    }
 
     const nextPostMatch = buildPostMatchState(reason, rows);
     if (!nextPostMatch) {
@@ -910,6 +981,7 @@
 
   function loadMatchIntoArena(payload: MatchPayload, consoleMessage: string): void {
     clearRankedQueueState();
+    lastArenaSnapshot = null;
     match = payload;
     postMatch = null;
     testResult = null;
@@ -1209,6 +1281,9 @@
 
   function handleEditorInput(event: Event): void {
     if (applyingEditorHistory) {
+      return;
+    }
+    if (arenaReadOnlyReason(match)) {
       return;
     }
     const target = event.currentTarget as HTMLTextAreaElement;
@@ -1684,13 +1759,38 @@
       activeView = "home";
       return;
     }
-    if (match && !match.locked && !timerInterval) {
+
+    if (!match && lastArenaSnapshot) {
+      match = cloneMatchPayload(lastArenaSnapshot.match);
+      code = lastArenaSnapshot.code;
+      hints = [...lastArenaSnapshot.hints];
+      testResult = cloneJudgePayload(lastArenaSnapshot.testResult);
+      submitResult = cloneJudgePayload(lastArenaSnapshot.submitResult);
+      standings = cloneStandings(lastArenaSnapshot.standings);
+      consoleEntries = lastArenaSnapshot.consoleEntries.map((entry) => ({
+        ...entry,
+      }));
+      timerText = lastArenaSnapshot.timerText;
+      resetEditorHistory(lastArenaSnapshot.code);
+      clearTimer();
+    }
+
+    if (!match) {
+      notice = "Arena replay is no longer available for this match.";
+      activeView = "postmatch";
+      return;
+    }
+
+    if (match && !match.finished && !match.locked && !timerInterval) {
       startTimer(remainingSecondsForMatch(match));
     }
     activeView = "arena";
     error = "";
     notice = "";
-    setLiveStatus("Live match in progress", "ok");
+    setLiveStatus(
+      match.finished ? "Reviewing completed match" : "Live match in progress",
+      "ok",
+    );
     accountMenuOpen = false;
   }
 
@@ -2366,6 +2466,12 @@
     if (!match || !sessionUser || !submitResult || submitResult.verdict !== "sample_failed") {
       return;
     }
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Add sample blocked: match is read-only.", "error");
+      return;
+    }
 
     const failedSampleIndex = submitResult.sample_passed;
     const failedSample = submitResult.sample_tests[failedSampleIndex];
@@ -2473,6 +2579,7 @@
       activeView = "home";
       match = null;
       postMatch = null;
+      lastArenaSnapshot = null;
       party = null;
       clearRankedQueueState();
       clearTimer();
@@ -3037,9 +3144,10 @@
     if (!match || !sessionUser) {
       return;
     }
-    if (match.locked) {
-      error = "This match has been closed.";
-      appendConsole("Submission blocked: match has been closed.", "error");
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Submission blocked: match is read-only.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -3100,9 +3208,10 @@
     if (!match || !sessionUser) {
       return;
     }
-    if (match.locked) {
-      error = "This match has been closed.";
-      appendConsole("Sample run blocked: match has been closed.", "error");
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Sample run blocked: match is read-only.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -3150,9 +3259,10 @@
     if (!match || !sessionUser || !submitResult?.first_failed_hidden_test) {
       return;
     }
-    if (match.locked) {
-      error = "This match has been closed.";
-      appendConsole("Promotion blocked: match has been closed.", "error");
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Promotion blocked: match is read-only.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -3208,6 +3318,12 @@
     if (!match || !sessionUser) {
       return;
     }
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Add sample blocked: match is read-only.", "error");
+      return;
+    }
     const currentMatchId = match.match_id;
     busy = true;
     error = "";
@@ -3234,6 +3350,12 @@
     if (!match || !sessionUser) {
       return;
     }
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Update sample blocked: match is read-only.", "error");
+      return;
+    }
     const currentMatchId = match.match_id;
     busy = true;
     error = "";
@@ -3258,6 +3380,12 @@
     if (!match || !sessionUser) {
       return;
     }
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Delete sample blocked: match is read-only.", "error");
+      return;
+    }
     const currentMatchId = match.match_id;
     busy = true;
     error = "";
@@ -3280,9 +3408,10 @@
     if (!match || !sessionUser) {
       return;
     }
-    if (match.locked) {
-      error = "This match has been closed.";
-      appendConsole("Hint request blocked: match has been closed.", "error");
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Hint request blocked: match is read-only.", "error");
       return;
     }
     busy = true;
@@ -3314,9 +3443,10 @@
     if (!match || !sessionUser) {
       return;
     }
-    if (match.locked) {
-      error = "This match has been closed.";
-      appendConsole("Forfeit blocked: match has been closed.", "error");
+    const readOnlyReason = arenaReadOnlyReason(match);
+    if (readOnlyReason) {
+      error = readOnlyReason;
+      appendConsole("Forfeit blocked: match is read-only.", "error");
       return;
     }
     busy = true;
@@ -3714,7 +3844,7 @@
     <PostMatchView
       {postMatch}
       {sessionUser}
-      matchId={match?.match_id ?? null}
+      matchId={postMatch?.match_id ?? null}
       {notice}
       {error}
       {showHome}
