@@ -2665,6 +2665,9 @@
     initializeVimEditor();
     syncVimEditorDoc();
   }
+  $: if (keybindMode === "vim" && !vimEditorHostEl) {
+    destroyVimEditor();
+  }
   $: if (keybindMode !== "vim") {
     destroyVimEditor();
   }
