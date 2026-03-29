@@ -1,10 +1,41 @@
 <script lang="ts">
   import type { LeaderboardEntry, SessionUser } from "../app-types";
 
+  type LeaderboardProfilePreview = {
+    imageUrl: string;
+    initials: string;
+    accountType: string;
+    rankLabel: string;
+    percentileLabel: string;
+    statusLabel: string;
+    eloLabel: string;
+    solveRateLabel: string;
+    rankedWinsLabel: string;
+    bestHiddenLabel: string;
+    sampleRunsLabel: string;
+    trackedRunsLabel: string;
+  };
+
   export let leaderboard: LeaderboardEntry[] = [];
   export let sessionUser: SessionUser | null = null;
   export let leaderboardCurrentUser: LeaderboardEntry | null = null;
   export let leaderboardTotalPlayers = 0;
+  export let accountInitials: (name: string) => string = () => "EN";
+  export let leaderboardProfilePreview: (entry: LeaderboardEntry) => LeaderboardProfilePreview =
+    (entry) => ({
+      imageUrl: "",
+      initials: accountInitials(entry.name),
+      accountType: entry.guest ? "Guest session" : "Registered account",
+      rankLabel: `#${entry.placement}`,
+      percentileLabel: "Top 100%",
+      statusLabel: "Ranked",
+      eloLabel: `${entry.elo}`,
+      solveRateLabel: "--",
+      rankedWinsLabel: "--",
+      bestHiddenLabel: "--",
+      sampleRunsLabel: "--",
+      trackedRunsLabel: "--",
+    });
   export let leaderboardPercentile: (placement: number) => string = () => "Top 100%";
   export let leaderboardRowNote: (entry: LeaderboardEntry) => string = () => "Ranked";
   export let loadLeaderboard: () => void | Promise<void> = () => {};
@@ -78,6 +109,7 @@
 
         <div class="leaderboard-table-body">
           {#each leaderboard as row}
+            {@const profile = leaderboardProfilePreview(row)}
             <article
               class="leaderboard-table leaderboard-table-row"
               class:current={row.user_id === sessionUser?.id}
@@ -89,7 +121,78 @@
                 {row.placement}
               </span>
               <span class="leaderboard-cell player">
-                <strong>{row.name}</strong>
+                <button type="button" class="leaderboard-profile-trigger">
+                  <span class="leaderboard-avatar" aria-hidden={!profile.imageUrl}>
+                    {#if profile.imageUrl}
+                      <img
+                        class="avatar-image"
+                        src={profile.imageUrl}
+                        alt={`${row.name} profile photo`}
+                      />
+                    {:else}
+                      {accountInitials(row.name)}
+                    {/if}
+                  </span>
+                  <strong>{row.name}</strong>
+                  <span class="leaderboard-profile-card">
+                    <span class="leaderboard-profile-head">
+                      <span class="leaderboard-profile-avatar" aria-hidden={!profile.imageUrl}>
+                        {#if profile.imageUrl}
+                          <img
+                            class="avatar-image"
+                            src={profile.imageUrl}
+                            alt={`${row.name} profile photo`}
+                          />
+                        {:else}
+                          {profile.initials}
+                        {/if}
+                      </span>
+                      <span class="leaderboard-profile-copy">
+                        <span class="eyebrow">Profile</span>
+                        <strong>{row.name}</strong>
+                        <small>{profile.accountType}</small>
+                      </span>
+                    </span>
+                    <span class="leaderboard-profile-grid">
+                      <span>
+                        <small>Rank</small>
+                        <strong>{profile.rankLabel}</strong>
+                      </span>
+                      <span>
+                        <small>ELO</small>
+                        <strong>{profile.eloLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Percentile</small>
+                        <strong>{profile.percentileLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Status</small>
+                        <strong>{profile.statusLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Solve rate</small>
+                        <strong>{profile.solveRateLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Ranked wins</small>
+                        <strong>{profile.rankedWinsLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Best hidden</small>
+                        <strong>{profile.bestHiddenLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Sample runs</small>
+                        <strong>{profile.sampleRunsLabel}</strong>
+                      </span>
+                      <span>
+                        <small>Tracked runs</small>
+                        <strong>{profile.trackedRunsLabel}</strong>
+                      </span>
+                    </span>
+                  </span>
+                </button>
               </span>
               <span class="leaderboard-cell score">{row.elo}</span>
               <span class="leaderboard-cell percentile">

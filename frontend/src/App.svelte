@@ -598,6 +598,58 @@
     };
   }
 
+  function storedAccountStatsForUser(userId: string): AccountStats | null {
+    if (userId === sessionUser?.id) {
+      return accountStats;
+    }
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const saved = localStorage.getItem(accountStatsStorageKey(userId));
+    if (!saved) {
+      return null;
+    }
+
+    try {
+      return normalizeAccountStats(JSON.parse(saved));
+    } catch {
+      return null;
+    }
+  }
+
+  function leaderboardProfileImage(userId: string): string {
+    if (userId === sessionUser?.id) {
+      return profileImageUrl;
+    }
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return localStorage.getItem(profileImageStorageKey(userId)) ?? "";
+  }
+
+  function leaderboardProfilePreview(entry: LeaderboardEntry) {
+    const stats = storedAccountStatsForUser(entry.user_id);
+    const solveRate = stats && stats.matchesStarted > 0
+      ? `${Math.round((stats.matchesSolved / stats.matchesStarted) * 100)}%`
+      : "--";
+
+    return {
+      imageUrl: leaderboardProfileImage(entry.user_id),
+      initials: accountInitials(entry.name),
+      accountType: entry.guest ? "Guest session" : "Registered account",
+      rankLabel: `#${entry.placement}`,
+      percentileLabel: leaderboardPercentile(entry.placement),
+      statusLabel: leaderboardRowNote(entry),
+      eloLabel: `${entry.elo}`,
+      solveRateLabel: solveRate,
+      rankedWinsLabel: stats ? `${stats.rankedWins}/${stats.rankedFinished}` : "--",
+      bestHiddenLabel: stats ? `${stats.bestHiddenPassed}` : "--",
+      sampleRunsLabel: stats ? `${stats.sampleRuns}` : "--",
+      trackedRunsLabel: stats ? `${stats.recentRuns.length}` : "--",
+    };
+  }
+
   function saveArenaSnapshot(currentMatch: MatchPayload, rows: Standing[]): void {
     lastArenaSnapshot = {
       match: cloneMatchPayload({
@@ -4012,6 +4064,8 @@
       {sessionUser}
       {leaderboardCurrentUser}
       {leaderboardTotalPlayers}
+      {accountInitials}
+      {leaderboardProfilePreview}
       {leaderboardPercentile}
       {leaderboardRowNote}
       {loadLeaderboard}

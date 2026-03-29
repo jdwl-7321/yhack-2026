@@ -249,6 +249,7 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/LeaderboardView.svelte`
   - Ranked leaderboard display and refresh.
+  - Rows show profile avatars and a hover/focus profile card with ladder stats plus any locally cached run stats/profile photo available in the current browser.
 
 - `frontend/src/components/PostMatchView.svelte`
   - End-of-match summary and final standings board.
