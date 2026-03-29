@@ -70,9 +70,11 @@
     match_id: string;
     party_code: string;
     mode: Mode;
+    finished: boolean;
     theme: string;
     difficulty: Difficulty;
     time_limit_seconds: number;
+    created_at: number;
     prompt: string;
     scaffold: string;
     sample_tests: Array<{ input: string; output: string }>;
@@ -94,10 +96,23 @@
     leader_id: string;
     member_limit: number;
     is_full: boolean;
+    active_match_id: string | null;
+    active_match_finished: boolean | null;
     settings: PartySettingsPayload;
     members: SessionUser[];
     invite_link: string;
   };
+
+  type PostMatchState = {
+    reason: string;
+    mode: Mode;
+    theme: string;
+    difficulty: Difficulty;
+    time_limit_seconds: number;
+    standings: Standing[];
+  };
+
+  type LiveStatusTone = "neutral" | "ok" | "warn";
 
   type FailedHiddenTest = {
     input_str: string;
@@ -267,6 +282,7 @@
 
   let themes = [FALLBACK_THEME];
   let match: MatchPayload | null = null;
+  let postMatch: PostMatchState | null = null;
   let standings: Standing[] = [];
   let leaderboard: LeaderboardEntry[] = [];
   let leaderboardCurrentUser: LeaderboardEntry | null = null;
@@ -283,6 +299,11 @@
   let timerText = "00:00";
   let timeRemaining = 0;
   let timerInterval: ReturnType<typeof setInterval> | null = null;
+  let timerExpiredHandled = false;
+  let liveSocket: WebSocket | null = null;
+  let liveSocketReady = false;
+  let liveSocketRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let liveSocketSubscribedChannels = new Set<string>();
 
   let highlightedCode = "";
 
@@ -463,6 +484,293 @@
       ),
     }));
   }
+
+  function buildPostMatchState(reason: string, rows: Standing[]): PostMatchState | null {
+    if (!match) {
+      return null;
+    }
+
+    return {
+      reason,
+      mode: match.mode,
+      theme: match.theme,
+      difficulty: match.difficulty,
+      time_limit_seconds: match.time_limit_seconds,
+      standings: rows,
+    };
+  }
+
+  function showPostMatch(reason: string, rows: Standing[]): void {
+    const outcome = currentStanding(rows)?.solved ? "solved" : "forfeit";
+    recordCompletedMatch(outcome, rows);
+
+    const nextPostMatch = buildPostMatchState(reason, rows);
+    if (!nextPostMatch) {
+      return;
+    }
+
+    postMatch = nextPostMatch;
+    standings = rows;
+    clearTimer();
+    setLiveStatus("Post-match board ready", "ok");
+    activeView = "postmatch";
+  }
+
+  function postMatchWinner(rows: Standing[]): Standing | null {
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  function postMatchSolvedCount(rows: Standing[]): number {
+    return rows.filter((row) => row.solved).length;
+  }
+
+  function postMatchForfeitCount(rows: Standing[]): number {
+    return rows.filter((row) => row.forfeited).length;
+  }
+
+  function setLiveStatus(text: string, tone: LiveStatusTone = "neutral"): void {
+    liveStatusText = text;
+    liveStatusTone = tone;
+  }
+
+  function websocketBaseUrl(): string {
+    if (typeof window === "undefined") {
+      return "ws://localhost:5000";
+    }
+
+    const apiUrl = API_BASE
+      ? new URL(API_BASE, window.location.origin)
+      : new URL(window.location.origin);
+    const protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${apiUrl.host}`;
+  }
+
+  function liveSocketUrl(): string {
+    return `${websocketBaseUrl()}/ws/events`;
+  }
+
+  function desiredLiveChannels(): Set<string> {
+    const channels = new Set<string>();
+    if (party) {
+      channels.add(`party:${party.code}`);
+    }
+    if (match) {
+      channels.add(`match:${match.match_id}`);
+    }
+    return channels;
+  }
+
+  function clearLiveSocketRetry(): void {
+    if (liveSocketRetryTimer) {
+      clearTimeout(liveSocketRetryTimer);
+      liveSocketRetryTimer = null;
+    }
+  }
+
+  function sendLiveSocketMessage(payload: Record<string, string>): void {
+    if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    liveSocket.send(JSON.stringify(payload));
+  }
+
+  function disconnectLiveSocket(): void {
+    clearLiveSocketRetry();
+    liveSocketSubscribedChannels = new Set();
+    liveSocketReady = false;
+    if (liveSocket) {
+      try {
+        liveSocket.close();
+      } catch {
+        // ignore close errors
+      }
+      liveSocket = null;
+    }
+  }
+
+  function scheduleLiveSocketReconnect(): void {
+    if (liveSocketRetryTimer || !sessionUser || (!party && !match)) {
+      return;
+    }
+    liveSocketRetryTimer = setTimeout(() => {
+      liveSocketRetryTimer = null;
+      connectLiveSocket();
+    }, 1000);
+  }
+
+  function syncLiveSocketSubscriptions(): void {
+    if (!liveSocketReady || !liveSocket) {
+      return;
+    }
+
+    const desired = desiredLiveChannels();
+    for (const channel of Array.from(liveSocketSubscribedChannels)) {
+      if (!desired.has(channel)) {
+        sendLiveSocketMessage({ action: "unsubscribe", channel });
+        liveSocketSubscribedChannels.delete(channel);
+      }
+    }
+    for (const channel of desired) {
+      if (!liveSocketSubscribedChannels.has(channel)) {
+        sendLiveSocketMessage({ action: "subscribe", channel });
+        liveSocketSubscribedChannels.add(channel);
+      }
+    }
+  }
+
+  async function handleLivePartyUpdate(
+    nextParty: PartyPayload,
+    eventName: string,
+  ): Promise<void> {
+    if (!sessionUser) {
+      return;
+    }
+
+    const previousParty = party;
+    const stillMember = nextParty.members.some((member) => member.id === sessionUser.id);
+    if (!stillMember) {
+      if (previousParty && previousParty.code === nextParty.code) {
+        party = null;
+        joinCodeInput = "";
+        setLiveStatus("You were removed from the party", "warn");
+        notice = "You were removed from the party.";
+      }
+      return;
+    }
+
+    applyParty(nextParty);
+
+    if (previousParty) {
+      if (nextParty.members.length > previousParty.members.length) {
+        setLiveStatus("A new member joined", "ok");
+      } else if (nextParty.members.length < previousParty.members.length) {
+        setLiveStatus("A member left or was kicked", "warn");
+      }
+    }
+
+    if (eventName === "settings_updated") {
+      setLiveStatus("Host updated party setup", "ok");
+    }
+
+    if (nextParty.active_match_id && (!match || match.match_id !== nextParty.active_match_id)) {
+      setLiveStatus("Host started the match", "ok");
+      await openMatchFromLobby(nextParty.active_match_id);
+    }
+  }
+
+  async function handleLiveMatchUpdate(
+    nextMatch: MatchPayload,
+    eventName: string,
+  ): Promise<void> {
+    if (!sessionUser) {
+      return;
+    }
+
+    if (!match || match.match_id !== nextMatch.match_id) {
+      if (party && party.active_match_id === nextMatch.match_id && !nextMatch.finished) {
+        await openMatchFromLobby(nextMatch.match_id);
+      }
+      return;
+    }
+
+    const previous = match;
+    match = {
+      ...nextMatch,
+      scaffold: previous.scaffold,
+      sample_tests: previous.sample_tests,
+    };
+    standings = nextMatch.standings;
+    syncSessionElo(nextMatch.standings);
+
+    if (nextMatch.finished) {
+      setLiveStatus("Match finished", "ok");
+      showPostMatch("Match complete", nextMatch.standings);
+      return;
+    }
+
+    if (eventName === "submission") {
+      setLiveStatus("Standings updated from a submission", "ok");
+    }
+    if (eventName === "forfeit") {
+      setLiveStatus("A player forfeited", "warn");
+    }
+  }
+
+  function handleLiveSocketMessage(raw: string): void {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+
+    const type = payload.type;
+    if (type === "party.updated" && payload.party) {
+      void handleLivePartyUpdate(
+        payload.party as PartyPayload,
+        String(payload.event ?? "updated"),
+      );
+      return;
+    }
+
+    if (type === "match.updated" && payload.match) {
+      void handleLiveMatchUpdate(
+        payload.match as MatchPayload,
+        String(payload.event ?? "updated"),
+      );
+      return;
+    }
+  }
+
+  function connectLiveSocket(): void {
+    if (!sessionUser) {
+      return;
+    }
+
+    if (liveSocket && (liveSocket.readyState === WebSocket.OPEN || liveSocket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    clearLiveSocketRetry();
+    const ws = new WebSocket(liveSocketUrl());
+    liveSocket = ws;
+
+    ws.addEventListener("open", () => {
+      if (liveSocket !== ws) {
+        return;
+      }
+      liveSocketReady = true;
+      syncLiveSocketSubscriptions();
+      sendLiveSocketMessage({ action: "ping", channel: "" });
+    });
+
+    ws.addEventListener("message", (event) => {
+      handleLiveSocketMessage(String(event.data));
+    });
+
+    ws.addEventListener("close", () => {
+      if (liveSocket !== ws) {
+        return;
+      }
+      liveSocket = null;
+      liveSocketReady = false;
+      liveSocketSubscribedChannels = new Set();
+      if (sessionUser && (party || match)) {
+        setLiveStatus("Reconnecting live channel...", "warn");
+        scheduleLiveSocketReconnect();
+      }
+    });
+  }
+
+  function syncLiveSocket(): void {
+    if (!sessionUser || (!party && !match)) {
+      disconnectLiveSocket();
+      return;
+    }
+
+    connectLiveSocket();
+    syncLiveSocketSubscriptions();
+  }
   let lineNumbersEl: HTMLPreElement | null = null;
   let lineNumbers = "1";
   let editorScrollLeft = 0;
@@ -486,6 +794,8 @@
   let isPartyMode = false;
   let isPartyLeader = false;
   let canEditPartySetup = true;
+  let liveStatusText = "Idle";
+  let liveStatusTone: LiveStatusTone = "neutral";
 
   function raceModeIcon(value: Mode): string {
     if (value === "ranked") {
@@ -515,19 +825,83 @@
       clearInterval(timerInterval);
       timerInterval = null;
     }
+    timerExpiredHandled = false;
   }
 
   function startTimer(seconds: number): void {
     clearTimer();
     timeRemaining = Math.max(0, seconds);
     timerText = formatDuration(timeRemaining);
+    timerExpiredHandled = false;
+    if (timeRemaining <= 0) {
+      timerExpiredHandled = true;
+      void finishMatch("Time limit reached");
+      return;
+    }
     timerInterval = setInterval(() => {
       timeRemaining = Math.max(0, timeRemaining - 1);
       timerText = formatDuration(timeRemaining);
       if (timeRemaining <= 0) {
         clearTimer();
+        if (!timerExpiredHandled) {
+          timerExpiredHandled = true;
+          void finishMatch("Time limit reached");
+        }
       }
     }, 1000);
+  }
+
+  function remainingSecondsForMatch(payload: MatchPayload): number {
+    const elapsed = Math.floor(Date.now() / 1000 - payload.created_at);
+    return Math.max(0, payload.time_limit_seconds - elapsed);
+  }
+
+  async function finishMatch(reason: string): Promise<void> {
+    if (!match || !sessionUser) {
+      return;
+    }
+
+    try {
+      const payload = await api<{ standings: Standing[] }>(
+        `/api/matches/${match.match_id}/finish`,
+        {
+          method: "POST",
+          body: JSON.stringify({ user_id: sessionUser.id }),
+        },
+      );
+      syncSessionElo(payload.standings);
+      setLiveStatus("Match finished", "ok");
+      showPostMatch(reason, payload.standings);
+    } catch (err) {
+      error = toErrorMessage(err);
+    }
+  }
+
+  async function openMatchFromLobby(matchId: string): Promise<void> {
+    const payload = await api<MatchPayload>(`/api/matches/${matchId}`);
+    match = payload;
+    postMatch = null;
+    testResult = null;
+    submitResult = null;
+    hints = [];
+    standings = payload.standings;
+    mode = payload.mode;
+    difficulty = payload.difficulty;
+    selectedTheme = payload.theme;
+    timeLimitSeconds = payload.time_limit_seconds;
+    syncSessionElo(payload.standings);
+
+    if (payload.finished) {
+      showPostMatch("Match complete", payload.standings);
+      return;
+    }
+
+    activeView = "arena";
+    startTimer(remainingSecondsForMatch(payload));
+    code = payload.scaffold;
+    resetConsole();
+    setLiveStatus("Match started", "ok");
+    appendConsole(`Joined live match: ${payload.theme}`, "system");
   }
 
   function resetConsole(): void {
@@ -1091,6 +1465,9 @@
     activeView = "home";
     error = "";
     notice = "";
+    if (!party) {
+      setLiveStatus("Idle", "neutral");
+    }
     accountMenuOpen = false;
   }
 
@@ -1102,6 +1479,7 @@
     activeView = "arena";
     error = "";
     notice = "";
+    setLiveStatus("Live match in progress", "ok");
     accountMenuOpen = false;
   }
 
@@ -1606,6 +1984,7 @@
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
+      cache: "no-store",
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       ...init,
     });
@@ -1676,7 +2055,11 @@
       accountStats = emptyAccountStats();
       accountMenuOpen = false;
       activeView = "home";
+      match = null;
+      postMatch = null;
       party = null;
+      clearTimer();
+      disconnectLiveSocket();
       return;
     }
     sessionUser = payload.user;
@@ -1721,6 +2104,7 @@
       accountMenuOpen = false;
       activeView = "home";
       match = null;
+      postMatch = null;
       party = null;
       joinCodeInput = "";
       standings = [];
@@ -1730,6 +2114,7 @@
       code = "";
       resetEditorHistory("");
       clearTimer();
+      disconnectLiveSocket();
       timerText = "00:00";
       notice = "Signed out.";
       resetConsole();
@@ -1810,6 +2195,8 @@
       });
 
       applyParty(payload);
+      setLiveStatus("Party live. Waiting for members...", "neutral");
+      syncLiveSocket();
       notice = `Party created. Share code ${payload.join_code}.`;
     } catch (err) {
       error = toErrorMessage(err);
@@ -1819,7 +2206,7 @@
   }
 
   async function refreshPartyLobby(): Promise<void> {
-    if (!party) {
+    if (!party || !sessionUser) {
       return;
     }
 
@@ -1827,8 +2214,23 @@
     error = "";
     notice = "";
     try {
-      const payload = await api<PartyPayload>(`/api/parties/${party.code}`);
+      const payload = await api<PartyPayload>(`/api/parties/${party.code}?t=${Date.now()}`);
+      const stillMember = payload.members.some((member) => member.id === sessionUser.id);
+      if (!stillMember) {
+        party = null;
+        joinCodeInput = "";
+        setLiveStatus("You were removed from the party", "warn");
+        notice = "You were removed from the party.";
+        return;
+      }
+
       applyParty(payload);
+      setLiveStatus("Lobby synced", "ok");
+      if (payload.active_match_id && (!match || match.match_id !== payload.active_match_id)) {
+        setLiveStatus("Host started the match", "ok");
+        await openMatchFromLobby(payload.active_match_id);
+        return;
+      }
       notice = "Party refreshed.";
     } catch (err) {
       error = toErrorMessage(err);
@@ -1860,6 +2262,8 @@
       });
       applyParty(payload);
       joinCodeInput = payload.join_code;
+      setLiveStatus("Joined lobby. Waiting for host...", "neutral");
+      syncLiveSocket();
       notice = `Joined party ${payload.join_code}.`;
     } catch (err) {
       error = toErrorMessage(err);
@@ -1902,6 +2306,7 @@
         }),
       });
       applyParty(payload);
+      setLiveStatus(`Party limit set to ${payload.member_limit}`, "ok");
       notice = `Party limit set to ${payload.member_limit}.`;
     } catch (err) {
       error = toErrorMessage(err);
@@ -1932,6 +2337,7 @@
         },
       );
       applyParty(payload);
+      setLiveStatus("Party setup updated", "ok");
       notice = "Party setup updated.";
     } catch (err) {
       error = toErrorMessage(err);
@@ -1954,6 +2360,7 @@
         body: JSON.stringify({ user_id: sessionUser.id, member_id: memberId }),
       });
       applyParty(payload);
+      setLiveStatus("Member removed", "warn");
       notice = "Member removed from party.";
     } catch (err) {
       error = toErrorMessage(err);
@@ -1965,6 +2372,8 @@
   function clearPartyLobby(): void {
     party = null;
     joinCodeInput = "";
+    syncLiveSocket();
+    setLiveStatus("Idle", "neutral");
     notice = "Lobby closed.";
   }
 
@@ -1978,6 +2387,7 @@
     busy = true;
     error = "";
     notice = "";
+    postMatch = null;
     testResult = null;
     submitResult = null;
     hints = [];
@@ -2021,6 +2431,7 @@
       code = payload.scaffold;
       resetEditorHistory(payload.scaffold);
       activeView = "arena";
+      setLiveStatus("Live match in progress", "ok");
       updateAccountStats((current) => ({
         ...current,
         matchesStarted: current.matchesStarted + 1,
@@ -2030,7 +2441,7 @@
         party = null;
       }
 
-      startTimer(payload.time_limit_seconds);
+      startTimer(remainingSecondsForMatch(payload));
       resetConsole();
       appendConsole(`Match loaded: ${payload.theme}`, "system");
       if (payload.mode !== requestedMode) {
@@ -2069,11 +2480,14 @@
   async function startRace(nextMode: Mode): Promise<void> {
     if (party && party.mode !== nextMode) {
       party = null;
+      setLiveStatus("Idle", "neutral");
     }
     mode = nextMode;
     if (nextMode === "casual" || nextMode === "ranked") {
+      setLiveStatus("Pick create or join to go live", "neutral");
       notice = "Create a party or enter a join code to continue.";
     } else {
+      setLiveStatus("Solo mode", "neutral");
       notice = "";
     }
   }
@@ -2267,6 +2681,13 @@
   $: isPartyMode = mode === "casual" || mode === "ranked";
   $: isPartyLeader = !!party && !!sessionUser && party.leader_id === sessionUser.id;
   $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
+  $: {
+    sessionUser;
+    party;
+    match;
+    activeView;
+    syncLiveSocket();
+  }
 
   $: if (mode === "ranked") {
     timeLimitSeconds = 3600;
@@ -2439,6 +2860,7 @@
 
     return () => {
       clearTimer();
+      disconnectLiveSocket();
       destroyVimEditor();
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener("change", mediaListener);
@@ -2879,16 +3301,21 @@
               <div class="party-lobby">
                 <div class="party-lobby-head">
                   <h3>Party Lobby</h3>
-                  {#if party}
-                    <button
-                      type="button"
-                      class="btn"
-                      on:click={refreshPartyLobby}
-                      disabled={busy}
-                    >
-                      <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
-                    </button>
-                  {/if}
+                  <div class="party-live-head-actions">
+                    <span class={`live-status-badge ${liveStatusTone}`}>
+                      <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
+                    </span>
+                    {#if party}
+                      <button
+                        type="button"
+                        class="btn"
+                        on:click={refreshPartyLobby}
+                        disabled={busy}
+                      >
+                        <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
+                      </button>
+                    {/if}
+                  </div>
                 </div>
 
                 {#if party}
@@ -3563,6 +3990,79 @@
           {/if}
         </section>
       </section>
+    </main>
+  {:else if activeView === "postmatch"}
+    <main id="postmatch-view">
+      {#if !postMatch}
+        <section class="race-empty">
+          <p>No completed match data yet.</p>
+          <button type="button" class="btn primary" on:click={showHome}
+            >Back Home</button
+          >
+        </section>
+      {:else}
+        <section class="postmatch-hero">
+          <div>
+            <p class="eyebrow">Match complete</p>
+            <h1>{postMatch.mode.toUpperCase()} Results</h1>
+            <p class="postmatch-subtitle">
+              {postMatch.reason} · {postMatch.theme} · {postMatch.difficulty}
+            </p>
+          </div>
+          <div class="postmatch-actions">
+            <button type="button" class="btn" on:click={showHome}>Home</button>
+            <button type="button" class="btn" on:click={showArena} disabled={!match}
+              >View Arena</button
+            >
+          </div>
+        </section>
+
+        <section class="postmatch-stats-grid">
+          <article class="postmatch-stat-card">
+            <span class="eyebrow">Winner</span>
+            <strong>{postMatchWinner(postMatch.standings)?.name ?? "No winner"}</strong>
+          </article>
+          <article class="postmatch-stat-card">
+            <span class="eyebrow">Solved</span>
+            <strong>{postMatchSolvedCount(postMatch.standings)}/{postMatch.standings.length}</strong>
+          </article>
+          <article class="postmatch-stat-card">
+            <span class="eyebrow">Forfeits</span>
+            <strong>{postMatchForfeitCount(postMatch.standings)}</strong>
+          </article>
+          <article class="postmatch-stat-card">
+            <span class="eyebrow">Time Limit</span>
+            <strong>{formatDuration(postMatch.time_limit_seconds)}</strong>
+          </article>
+        </section>
+
+        <section class="postmatch-board">
+          <div class="standings-head">
+            <h3>Final board</h3>
+          </div>
+          <div class="standings-list">
+            {#each postMatch.standings as row}
+              <article class="standing-row">
+                <span class="mono">#{row.placement}</span>
+                <span class="name">{row.name}</span>
+                <span class="mono">hidden {row.hidden_passed}</span>
+                <span class="mono">hint {row.hint_level}</span>
+                <span class="mono">ELO {row.elo}</span>
+                <span class="mono delta">{formatRatingDelta(row.rating_delta)}</span>
+                <span class="state" class:ok={row.solved} class:bad={!row.solved}>
+                  {row.forfeited ? "FORFEIT" : row.solved ? "SOLVED" : "OPEN"}
+                </span>
+              </article>
+            {/each}
+          </div>
+        </section>
+      {/if}
+      {#if notice}
+        <p class="flash notice">{notice}</p>
+      {/if}
+      {#if error}
+        <p class="flash error">{error}</p>
+      {/if}
     </main>
   {:else}
     <main id="race-view">

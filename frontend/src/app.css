@@ -682,6 +682,36 @@ select:focus {
   font-size: 0.9rem;
 }
 
+.party-live-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.live-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg-color);
+  color: var(--sub-color);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+}
+
+.live-status-badge.ok {
+  border-color: color-mix(in srgb, var(--main-color) 45%, var(--panel-border) 55%);
+  color: var(--main-color);
+}
+
+.live-status-badge.warn {
+  border-color: color-mix(in srgb, var(--error) 45%, var(--panel-border) 55%);
+  color: var(--error);
+}
+
 .party-code-row,
 .party-limit-row {
   display: flex;
@@ -762,6 +792,12 @@ select:focus {
   gap: 1rem;
 }
 
+#postmatch-view {
+  flex: 1;
+  display: grid;
+  gap: 1rem;
+}
+
 #leaderboard-view {
   flex: 1;
   display: grid;
@@ -776,6 +812,64 @@ select:focus {
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
+}
+
+.postmatch-hero,
+.postmatch-stat-card,
+.postmatch-board {
+  background: var(--sub-alt-color);
+  border: 1px solid var(--panel-border);
+  border-radius: 0.9rem;
+  box-shadow: var(--panel-shadow);
+}
+
+.postmatch-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 1.1rem 1.2rem;
+  flex-wrap: wrap;
+}
+
+.postmatch-hero h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 2.4vw, 2rem);
+}
+
+.postmatch-subtitle {
+  margin: 0.35rem 0 0;
+  color: var(--sub-color);
+  font-size: 0.86rem;
+}
+
+.postmatch-actions {
+  display: inline-flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.postmatch-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.7rem;
+}
+
+.postmatch-stat-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem;
+}
+
+.postmatch-stat-card strong {
+  color: var(--text-color);
+  font-size: 1.1rem;
+}
+
+.postmatch-board {
+  padding: 1rem;
+  display: grid;
+  gap: 0.65rem;
 }
 
 .test-config {
