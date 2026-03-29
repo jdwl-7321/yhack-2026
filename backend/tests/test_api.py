@@ -95,6 +95,39 @@ def test_auth_session_register_login_logout() -> None:
     assert client.get("/api/auth/session").get_json()["authenticated"] is True
 
 
+def test_authenticated_user_can_change_password() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "Ada", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    change = client.post(
+        "/api/auth/password",
+        json={"current_password": "secret123", "new_password": "newsecret456"},
+    )
+    assert change.status_code == 200
+    assert change.get_json() == {"ok": True}
+
+    client.post("/api/auth/logout")
+
+    old_login = client.post(
+        "/api/auth/login",
+        json={"name": "Ada", "password": "secret123"},
+    )
+    assert old_login.status_code == 400
+    assert old_login.get_json() == {"error": "Invalid credentials"}
+
+    new_login = client.post(
+        "/api/auth/login",
+        json={"name": "Ada", "password": "newsecret456"},
+    )
+    assert new_login.status_code == 200
+
+
 def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     db_path = tmp_path / "auth.sqlite3"
 
@@ -118,6 +151,38 @@ def test_sqlite_auth_persists_between_app_instances(tmp_path: Path) -> None:
     assert session_payload is not None
     assert session_payload["authenticated"] is True
     assert session_payload["user"]["name"] == "PersistedUser"
+
+
+def test_sqlite_changed_password_persists_between_app_instances(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth-password.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+    register = first_client.post(
+        "/api/auth/register",
+        json={"name": "ResetUser", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    changed = first_client.post(
+        "/api/auth/password",
+        json={"current_password": "secret123", "new_password": "reset456"},
+    )
+    assert changed.status_code == 200
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    failed_old = second_client.post(
+        "/api/auth/login",
+        json={"name": "ResetUser", "password": "secret123"},
+    )
+    assert failed_old.status_code == 400
+
+    login = second_client.post(
+        "/api/auth/login",
+        json={"name": "ResetUser", "password": "reset456"},
+    )
+    assert login.status_code == 200
 
 
 def test_create_party_uses_authenticated_session_user() -> None:
@@ -426,6 +491,55 @@ def test_only_party_leader_can_start_match() -> None:
         json={"user_id": leader["id"], "seed": 45},
     )
     assert started.status_code == 200
+
+
+def test_party_reports_active_match_and_blocks_second_live_start() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    assert leader is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 600,
+            "member_limit": 4,
+            "seed": 50,
+        },
+    ).get_json()
+    assert party is not None
+
+    started = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 50},
+    )
+    assert started.status_code == 200
+    started_payload = started.get_json()
+    assert started_payload is not None
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}")
+    assert refreshed_party.status_code == 200
+    refreshed_payload = refreshed_party.get_json()
+    assert refreshed_payload is not None
+    assert refreshed_payload["active_match_id"] == started_payload["match_id"]
+    assert refreshed_payload["active_match_finished"] is False
+
+    second_start = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 50},
+    )
+    assert second_start.status_code == 400
+    assert second_start.get_json() == {
+        "error": "This party already has an active match"
+    }
 
 
 def test_hint_unlock_sequence_and_submit_flow() -> None:
