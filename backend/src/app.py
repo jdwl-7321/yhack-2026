@@ -124,13 +124,19 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             },
         )
 
-    def publish_match_update(match: Match, *, event: str) -> None:
+    def publish_match_update(
+        match: Match, *, event: str, include_samples: bool = False
+    ) -> None:
         event_hub.publish(
             channel=_match_channel(match.id),
             payload={
                 "type": "match.updated",
                 "event": event,
-                "match": _match_payload(data, match, include_samples=False),
+                "match": _match_payload(
+                    data,
+                    match,
+                    include_samples=include_samples,
+                ),
             },
         )
 
@@ -459,6 +465,61 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             }
         )
 
+    @app.route("/api/matches/<match_id>/sample-tests", methods=["POST"])
+    def manage_sample_tests(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        action = str(payload.get("action", "")).strip().lower()
+        user_id = payload_user_id(payload)
+
+        if action == "add":
+            raw_inputs = payload.get("inputs")
+            if not isinstance(raw_inputs, list):
+                raise ValueError("inputs must be a list")
+
+            sample_tests = data.add_sample_test(
+                match_id=match_id,
+                user_id=user_id,
+                inputs=raw_inputs,
+            )
+        elif action == "update":
+            raw_index = payload.get("index")
+            if raw_index is None:
+                raise ValueError("index is required")
+            raw_inputs = payload.get("inputs")
+            if not isinstance(raw_inputs, list):
+                raise ValueError("inputs must be a list")
+
+            sample_tests = data.update_sample_test(
+                match_id=match_id,
+                user_id=user_id,
+                index=int(raw_index),
+                inputs=raw_inputs,
+            )
+        elif action == "delete":
+            raw_index = payload.get("index")
+            if raw_index is None:
+                raise ValueError("index is required")
+
+            sample_tests = data.delete_sample_test(
+                match_id=match_id,
+                user_id=user_id,
+                index=int(raw_index),
+            )
+        else:
+            raise ValueError("action must be one of: add, update, delete")
+
+        match = data.get_match(match_id=match_id)
+        publish_match_update(match, event="sample_tests_updated", include_samples=True)
+        return jsonify(
+            {
+                "sample_tests": _sample_tests_payload_from_cases(
+                    sample_tests,
+                    shared_inputs=match.puzzle.shared_inputs,
+                ),
+                "standings": data.standings(match_id=match_id),
+            }
+        )
+
     @app.route("/api/matches/<match_id>/hint", methods=["POST"])
     def hint(match_id: str) -> Any:
         payload = request.get_json(silent=True) or {}
@@ -565,6 +626,7 @@ def _match_payload(
         "time_limit_seconds": match.time_limit_seconds,
         "created_at": match.created_at,
         "prompt": match.puzzle.prompt,
+        "template_key": match.puzzle.template_key,
         "free_hint": match.puzzle.hint_level_1,
         "scaffold": solution_scaffold(match.puzzle.contract),
         "sample_tests": sample_tests if include_samples else [],
@@ -590,6 +652,7 @@ def _sample_tests_payload_from_cases(
             "input": format_case_input(case.inputs),
             "output": format_value(case.output),
             "inputs": to_json_value(list(invocation_inputs(case, shared_inputs))),
+            "primary_inputs": to_json_value(list(case.inputs)),
             "expected": to_json_value(case.output),
         }
         for case in cases

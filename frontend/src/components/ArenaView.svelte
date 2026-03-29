@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tick } from "svelte";
+
   import type {
     ConsoleEntry,
     JudgePayload,
@@ -34,6 +36,12 @@
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
   export let showHome: () => void = () => {};
   export let raceModeIcon: (value: MatchPayload["mode"]) => string = () => "fa-mountain";
+  export let addSampleTest: (inputsText: string) => void | Promise<void> = () => {};
+  export let updateSampleTest: (
+    index: number,
+    inputsText: string,
+  ) => void | Promise<void> = () => {};
+  export let deleteSampleTest: (index: number) => void | Promise<void> = () => {};
   export let promoteFailedTest: () => void | Promise<void> = () => {};
   export let requestHint: () => void | Promise<void> = () => {};
   export let forfeit: () => void | Promise<void> = () => {};
@@ -43,6 +51,110 @@
   export let handleEditorKeydown: (event: KeyboardEvent) => void = () => {};
   export let syncEditorScroll: (event: Event) => void = () => {};
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
+
+  let sampleInputDrafts: string[] = [];
+  let sampleDraftMatchId: string | null = null;
+  let sampleDraftSignature = "";
+  let sampleInputEls: Array<HTMLTextAreaElement | null> = [];
+  let newSampleInputEl: HTMLTextAreaElement | null = null;
+  let committingNewSample = false;
+
+  const DEFAULT_NEW_SAMPLE_INPUTS = "arg1 = null";
+  let newSampleInputs = DEFAULT_NEW_SAMPLE_INPUTS;
+  let samplesAreEditable = true;
+
+  const lockedSampleInputTemplates = new Set<string>([
+    "crypto-shift-inference-v2",
+    "crypto-substitution-inference-v2",
+  ]);
+
+  function asJsonText(value: unknown): string {
+    const rendered = JSON.stringify(value);
+    return rendered ?? "null";
+  }
+
+  function formatInputDraft(values: unknown[]): string {
+    return values
+      .map((value, index) => `arg${index + 1} = ${asJsonText(value)}`)
+      .join("\n");
+  }
+
+  $: samplesAreEditable =
+    !!match && !lockedSampleInputTemplates.has(match.template_key);
+
+  function resizeSampleTextarea(textarea: HTMLTextAreaElement | null): void {
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }
+
+  function resizeAllSampleTextareas(): void {
+    for (const textarea of sampleInputEls) {
+      resizeSampleTextarea(textarea);
+    }
+    resizeSampleTextarea(newSampleInputEl);
+  }
+
+  function saveSampleOnBlur(index: number): void {
+    if (busy || !match) {
+      return;
+    }
+
+    const draft = sampleInputDrafts[index] ?? "[]";
+    const currentInputs = match.sample_tests[index]?.primary_inputs ?? [];
+    if (draft === formatInputDraft(currentInputs)) {
+      return;
+    }
+
+    void updateSampleTest(index, draft);
+  }
+
+  async function commitNewSample(): Promise<void> {
+    if (committingNewSample || busy || !match) {
+      return;
+    }
+
+    const draft = newSampleInputs.trim();
+    if (!draft) {
+      return;
+    }
+
+    const previousSampleCount = match.sample_tests.length;
+    committingNewSample = true;
+    try {
+      await addSampleTest(newSampleInputs);
+      await tick();
+      if ((match?.sample_tests.length ?? 0) > previousSampleCount) {
+        newSampleInputs = DEFAULT_NEW_SAMPLE_INPUTS;
+        await tick();
+        resizeSampleTextarea(newSampleInputEl);
+      }
+    } finally {
+      committingNewSample = false;
+    }
+  }
+
+  $: if (match) {
+    const nextSignature = JSON.stringify(
+      match.sample_tests.map((sample) => sample.primary_inputs)
+    );
+    const shouldResetDrafts =
+      sampleDraftMatchId !== match.match_id || sampleDraftSignature !== nextSignature;
+    if (shouldResetDrafts) {
+      sampleInputDrafts = match.sample_tests.map((sample) =>
+        formatInputDraft(sample.primary_inputs)
+      );
+      sampleDraftMatchId = match.match_id;
+      sampleDraftSignature = nextSignature;
+      void tick().then(() => {
+        sampleInputEls = sampleInputEls.slice(0, sampleInputDrafts.length);
+        resizeAllSampleTextareas();
+      });
+    }
+  }
 </script>
 
 <main id="race-view">
@@ -110,11 +222,68 @@
                   <span class="sample-head">Output</span>
                   {#each match.sample_tests as sample, index}
                     <span class="sample-index">{index + 1}</span>
-                    <pre class="sample-cell">{sample.input}</pre>
-                    <pre class="sample-cell">{sample.output}</pre>
+                    {#if samplesAreEditable}
+                      <textarea
+                        class="sample-cell sample-input-edit"
+                        rows="1"
+                        bind:value={sampleInputDrafts[index]}
+                        bind:this={sampleInputEls[index]}
+                        spellcheck="false"
+                        on:input={(event) =>
+                          resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
+                        on:blur={() => saveSampleOnBlur(index)}
+                      ></textarea>
+                    {:else}
+                      <pre class="sample-cell">{sampleInputDrafts[index]}</pre>
+                    {/if}
+                    <div class="sample-cell sample-output-cell">
+                      <pre>{sample.output}</pre>
+                      {#if samplesAreEditable}
+                        <button
+                          type="button"
+                          class="sample-delete-button"
+                          on:click={() => void deleteSampleTest(index)}
+                          disabled={busy}
+                          title="Delete sample"
+                        >
+                          <i class="fas fa-trash" aria-hidden="true"></i>
+                        </button>
+                      {/if}
+                    </div>
                   {/each}
+
+                  {#if samplesAreEditable}
+                    <span class="sample-index sample-index-add">+</span>
+                    <textarea
+                      class="sample-cell sample-input-edit"
+                      rows="1"
+                      bind:value={newSampleInputs}
+                      bind:this={newSampleInputEl}
+                      spellcheck="false"
+                      placeholder="Use arg1 = ..., arg2 = ... and click away to add"
+                      on:input={(event) =>
+                        resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
+                      on:blur={() => void commitNewSample()}
+                    ></textarea>
+                    <div class="sample-cell sample-output-hint">
+                      <span>Output auto-generated on add</span>
+                      <button
+                        type="button"
+                        class="btn"
+                        on:click={() => void commitNewSample()}
+                        disabled={busy}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  {/if}
                 </div>
               </div>
+              {#if !samplesAreEditable}
+                <p class="sample-lock-note">
+                  Sample inputs are locked for this template because shared examples are auto-generated.
+                </p>
+              {/if}
             </section>
           {:else}
             <p class="standings-empty">No sample tests available.</p>

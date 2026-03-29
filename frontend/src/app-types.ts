@@ -52,6 +52,14 @@ export type LeaderboardPayload = {
   total_players: number;
 };
 
+export type SampleTest = {
+  input: string;
+  output: string;
+  inputs: unknown[];
+  primary_inputs: unknown[];
+  expected: unknown;
+};
+
 export type MatchPayload = {
   match_id: string;
   party_code: string;
@@ -62,9 +70,10 @@ export type MatchPayload = {
   time_limit_seconds: number;
   created_at: number;
   prompt: string;
+  template_key: string;
   free_hint: string;
   scaffold: string;
-  sample_tests: Array<{ input: string; output: string }>;
+  sample_tests: SampleTest[];
   standings: Standing[];
 };
 
@@ -117,7 +126,7 @@ export type JudgePayload = {
   message: string;
   stdout: string;
   first_failed_hidden_test: FailedHiddenTest | null;
-  sample_tests: Array<{ input: string; output: string }>;
+  sample_tests: SampleTest[];
   standings: Standing[];
 };
 

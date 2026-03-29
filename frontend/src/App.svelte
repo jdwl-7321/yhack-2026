@@ -43,6 +43,7 @@
     Mode,
     PartyPayload,
     PostMatchState,
+    SampleTest,
     SessionPayload,
     SessionUser,
     ShikiThemeDefinition,
@@ -568,10 +569,14 @@
     }
 
     const previous = match;
+    const nextSamples =
+      eventName === "sample_tests_updated" && nextMatch.sample_tests.length > 0
+        ? nextMatch.sample_tests
+        : previous.sample_tests;
     match = {
       ...nextMatch,
       scaffold: previous.scaffold,
-      sample_tests: previous.sample_tests,
+      sample_tests: nextSamples,
     };
     standings = nextMatch.standings;
     syncSessionElo(nextMatch.standings);
@@ -1896,6 +1901,64 @@
       .slice(0, 6);
   }
 
+  function parseSampleInputs(raw: string): unknown[] {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      throw new Error("Inputs cannot be empty.");
+    }
+
+    if (!trimmed.startsWith("arg")) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        throw new Error("Inputs must be valid JSON.");
+      }
+      if (!Array.isArray(parsed)) {
+        throw new Error("Inputs must be a JSON array of positional arguments.");
+      }
+      return parsed;
+    }
+
+    const indexedValues = new Map<number, unknown>();
+    for (const line of trimmed.split(/\r?\n/u)) {
+      const normalized = line.trim();
+      if (!normalized) {
+        continue;
+      }
+      const match = /^arg(\d+)\s*=\s*(.+)$/u.exec(normalized);
+      if (!match) {
+        throw new Error("Use `arg1 = ...`, `arg2 = ...` input format.");
+      }
+
+      const position = Number(match[1]);
+      if (!Number.isInteger(position) || position < 1) {
+        throw new Error("Argument indexes must start at arg1.");
+      }
+
+      let parsedValue: unknown;
+      try {
+        parsedValue = JSON.parse(match[2]);
+      } catch {
+        throw new Error(`arg${position} must contain a valid JSON value.`);
+      }
+      indexedValues.set(position, parsedValue);
+    }
+
+    if (indexedValues.size === 0) {
+      throw new Error("Inputs cannot be empty.");
+    }
+
+    const ordered: unknown[] = [];
+    for (let argIndex = 1; argIndex <= indexedValues.size; argIndex += 1) {
+      if (!indexedValues.has(argIndex)) {
+        throw new Error("Arguments must be contiguous (`arg1`, `arg2`, ...).");
+      }
+      ordered.push(indexedValues.get(argIndex));
+    }
+    return ordered;
+  }
+
   function applyParty(partyPayload: PartyPayload): void {
     party = partyPayload;
     mode = partyPayload.mode;
@@ -2537,7 +2600,7 @@
     notice = "";
     try {
       const payload = await api<{
-        sample_tests: Array<{ input: string; output: string }>;
+        sample_tests: SampleTest[];
       }>(`/api/matches/${currentMatchId}/promote-failed-test`, {
         method: "POST",
         body: JSON.stringify({}),
@@ -2551,6 +2614,100 @@
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Promotion failed: ${toErrorMessage(err)}`, "error");
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveSampleTests(
+    currentMatchId: string,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const payload = await api<{ sample_tests: SampleTest[]; standings: Standing[] }>(
+      `/api/matches/${currentMatchId}/sample-tests`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (match?.match_id === currentMatchId) {
+      match = {
+        ...match,
+        sample_tests: payload.sample_tests,
+      };
+    }
+    standings = payload.standings;
+    syncSessionElo(payload.standings);
+  }
+
+  async function addSampleTest(inputsText: string): Promise<void> {
+    if (!match || !sessionUser) {
+      return;
+    }
+    const currentMatchId = match.match_id;
+    busy = true;
+    error = "";
+
+    try {
+      const inputs = parseSampleInputs(inputsText);
+      await saveSampleTests(currentMatchId, {
+        action: "add",
+        inputs,
+      });
+      appendConsole("Added sample test.", "system");
+    } catch (err) {
+      error = toErrorMessage(err);
+      appendConsole(`Add sample failed: ${toErrorMessage(err)}`, "error");
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function updateSampleTest(
+    index: number,
+    inputsText: string,
+  ): Promise<void> {
+    if (!match || !sessionUser) {
+      return;
+    }
+    const currentMatchId = match.match_id;
+    busy = true;
+    error = "";
+
+    try {
+      const inputs = parseSampleInputs(inputsText);
+      await saveSampleTests(currentMatchId, {
+        action: "update",
+        index,
+        inputs,
+      });
+      appendConsole(`Updated sample ${index + 1}.`, "system");
+    } catch (err) {
+      error = toErrorMessage(err);
+      appendConsole(`Update sample failed: ${toErrorMessage(err)}`, "error");
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function deleteSampleTest(index: number): Promise<void> {
+    if (!match || !sessionUser) {
+      return;
+    }
+    const currentMatchId = match.match_id;
+    busy = true;
+    error = "";
+
+    try {
+      await saveSampleTests(currentMatchId, {
+        action: "delete",
+        index,
+      });
+      appendConsole(`Deleted sample ${index + 1}.`, "system");
+    } catch (err) {
+      error = toErrorMessage(err);
+      appendConsole(`Delete sample failed: ${toErrorMessage(err)}`, "error");
     } finally {
       busy = false;
     }
@@ -2975,6 +3132,9 @@
       {launchConfiguredMatch}
       {showHome}
       {raceModeIcon}
+      {addSampleTest}
+      {updateSampleTest}
+      {deleteSampleTest}
       {promoteFailedTest}
       {requestHint}
       {forfeit}

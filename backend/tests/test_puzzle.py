@@ -70,6 +70,11 @@ def test_generate_puzzle_is_seed_deterministic() -> None:
     ]
 
 
+def test_generate_puzzle_starts_with_three_samples() -> None:
+    puzzle = generate_puzzle(theme="Algorithms", difficulty="easy", seed=77)
+    assert len(puzzle.sample_tests) == 3
+
+
 def test_hint_templates_render_human_readable_text() -> None:
     first = generate_puzzle(
         theme=THEMES[0],
@@ -93,12 +98,18 @@ def test_hint_templates_render_human_readable_text() -> None:
 
 
 def test_two_sum_contract_uses_typed_parameters() -> None:
-    puzzle = generate_puzzle(
-        theme="Algorithms",
-        difficulty="easy",
-        seed=321,
-    )
+    puzzle = None
+    for seed in range(1, 80):
+        candidate = generate_puzzle(
+            theme="Algorithms",
+            difficulty="easy",
+            seed=seed,
+        )
+        if candidate.template_key == "algorithms-index-pair-v2":
+            puzzle = candidate
+            break
 
+    assert puzzle is not None
     assert puzzle.contract.parameter_types == ("list[int]", "int")
     assert puzzle.contract.return_type == "tuple[int, int]"
 
@@ -167,8 +178,20 @@ def test_cryptography_lsb_template_contract() -> None:
     assert len(outputs) == len(puzzle.sample_tests)
 
 
+@pytest.mark.parametrize("difficulty", ["easy", "medium", "hard", "expert"])
+def test_algorithms_theme_covers_all_difficulties(difficulty: Difficulty) -> None:
+    puzzle = generate_puzzle(theme="Algorithms", difficulty=difficulty, seed=53)
+    assert puzzle.theme == "Algorithms"
+
+
+@pytest.mark.parametrize("difficulty", ["easy", "medium", "hard", "expert"])
+def test_numeric_theme_covers_all_difficulties(difficulty: Difficulty) -> None:
+    puzzle = generate_puzzle(theme="Numeric", difficulty=difficulty, seed=91)
+    assert puzzle.theme == "Numeric"
+
+
 def test_requested_categories_exist_in_theme_catalog() -> None:
-    expected = {"Cryptography", "Algorithms", "Search", "Numeric"}
+    expected = {"Cryptography", "Algorithms", "Numeric"}
     assert expected.issubset(set(THEMES))
 
 

@@ -963,8 +963,7 @@ select:focus {
 }
 
 .samples-scroll {
-  max-height: 260px;
-  overflow: auto;
+  overflow: hidden;
   border-radius: 0.45rem;
   background-color: var(--bg-color);
 }
@@ -973,7 +972,6 @@ select:focus {
   display: grid;
   grid-template-columns: 3rem minmax(0, 1fr) minmax(0, 1fr);
   align-items: stretch;
-  min-width: 520px;
 }
 
 .sample-head {
@@ -1014,6 +1012,84 @@ select:focus {
   line-height: 1.4;
   border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
   border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+}
+
+.sample-input-edit {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border-top: none;
+  border-right: none;
+  resize: none;
+  min-height: calc(1.4em + 0.2rem);
+  overflow: hidden;
+  color: var(--main-color);
+  font-size: 0.83rem;
+  line-height: 1.4;
+  font-family: var(--font-family);
+  outline: none;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+.sample-input-edit::placeholder {
+  color: var(--sub-color);
+}
+
+.sample-delete-button {
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--error-color) 18%, transparent);
+  color: var(--error-color);
+  width: 1.45rem;
+  height: 1.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sample-delete-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sample-index-add {
+  font-weight: 700;
+}
+
+.sample-output-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sample-output-cell pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--main-color);
+  flex: 1;
+}
+
+.sample-lock-note {
+  margin: 0;
+  color: var(--sub-color);
+  font-size: 0.72rem;
+}
+
+.sample-output-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  color: var(--sub-color);
+}
+
+.sample-output-hint .btn {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.74rem;
 }
 
 .hint-stack {
@@ -2062,6 +2138,11 @@ footer a:hover {
 
   .game-layout {
     grid-template-columns: 1fr;
+  }
+
+  .sample-output-hint {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   #leaderboard-view {
