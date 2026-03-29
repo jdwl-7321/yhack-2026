@@ -2571,13 +2571,20 @@
   }
 
   function leaderboardPercentile(placement: number): string {
-    if (leaderboardTotalPlayers <= 1) {
+    if (leaderboardTotalPlayers <= 0) {
       return "Top 100%";
     }
-    const percentile = Math.round(
-      (1 - (placement - 1) / (leaderboardTotalPlayers - 1)) * 100,
+    if (leaderboardTotalPlayers === 1) {
+      return "Top 1%";
+    }
+    const normalizedPlacement = Math.min(
+      Math.max(1, placement),
+      leaderboardTotalPlayers,
     );
-    return `Top ${Math.max(1, percentile)}%`;
+    const percentile = Math.ceil(
+      (normalizedPlacement / leaderboardTotalPlayers) * 100,
+    );
+    return `Top ${Math.max(1, Math.min(100, percentile))}%`;
   }
 
   function leaderboardRowNote(entry: LeaderboardEntry): string {
