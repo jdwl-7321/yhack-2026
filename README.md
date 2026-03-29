@@ -1,15 +1,42 @@
-# yhack-2026 prototype
+# Enigma
 
-Initial full-stack prototype for the PLAN.md game loop.
+Enigma is a coding game built around hidden-rule puzzles.
 
-## Stack
+Instead of reading a normal problem statement, you look at example input and output behavior, figure out the pattern, and write Python code that matches it.
 
-- Backend: Flask + Python (managed with `uv`)
-- Frontend: Svelte + TypeScript (Vite)
+Live site: [play-enigma.xyz](https://play-enigma.xyz)
 
-## Quick start
+## How It Works
 
-### 1) Backend
+Every match starts with a puzzle instance and a Python editor.
+
+You are shown:
+
+- sample inputs
+- sample outputs
+- the behavior your code needs to match
+
+From there, your job is to infer the rule, write a solution, and test whether your code matches what the puzzle is doing.
+
+If your code passes the visible checks, it is then run against hidden tests. You can also use hints, keep iterating, or forfeit the run.
+
+## Game Modes
+
+### Zen
+
+Zen is the solo mode. It is meant for practice, experimentation, and getting used to the puzzle format without any pressure.
+
+### Casual
+
+Casual is for playing with other people in a more relaxed setting. It is useful for friend lobbies, custom settings, and shared puzzle runs without rating pressure.
+
+### Ranked
+
+Ranked is the competitive mode. Players race on the same puzzle, solve order matters, and results affect rating.
+
+## Local Development
+
+### Backend
 
 ```bash
 cd backend
@@ -17,11 +44,9 @@ uv sync
 uv run yhack-backend
 ```
 
-The API runs on `http://localhost:5000`.
-Auth accounts now persist in SQLite at `backend/data/yhack.sqlite3` by default.
-Override with `YHACK_DB_PATH=/custom/path.sqlite3`.
+This starts the backend at `http://localhost:5000`.
 
-### 2) Frontend
+### Frontend
 
 ```bash
 cd frontend
@@ -29,11 +54,13 @@ npm install
 npm run dev
 ```
 
-The Vite dev server runs on `http://localhost:5173` and proxies `/api` to Flask.
+This starts the frontend at `http://localhost:5173`.
 
-## Production deploy (single host)
+Requests to `/api` are proxied to the backend during local development.
 
-1) Build the frontend:
+## Production
+
+### Build the frontend
 
 ```bash
 cd frontend
@@ -41,24 +68,25 @@ npm install
 npm run build
 ```
 
-2) Install backend deps and run Gunicorn on local port `6767`:
+### Run the backend
 
 ```bash
 cd backend
 uv sync
-YHACK_SECRET_KEY="replace-me" ./src/run-gunicorn.sh
+NOUS_API_KEY="replace-me" ./src/run-gunicorn.sh
 ```
 
-Notes:
-- The backend serves the built frontend from `frontend/dist` by default.
-- Override frontend build location with `YHACK_FRONTEND_DIST=/absolute/path/to/dist`.
-- `run-gunicorn.sh` binds to `127.0.0.1:6767` by default (overrides: `YHACK_GUNICORN_HOST`, `YHACK_GUNICORN_PORT`, `YHACK_GUNICORN_THREADS`, `YHACK_GUNICORN_TIMEOUT`).
-- `run-gunicorn.sh` enforces `YHACK_GUNICORN_WORKERS=1` because parties, ranked queue entries, and live matches are in-memory and are not shared across worker processes.
+By default:
 
-3) Nginx TLS reverse proxy config lives at `deploy/nginx/play-enigma.xyz.conf`.
-   Copy/symlink it into your Nginx site config directory and reload Nginx.
+- the backend serves the built frontend from `frontend/dist`
+- `run-gunicorn.sh` binds to `127.0.0.1:6767`
+- the nginx config for the live site is in `deploy/nginx/play-enigma.xyz.conf`
 
-## Python quality checks
+If needed, you can change the frontend build path with `YHACK_FRONTEND_DIST=/absolute/path/to/dist`.
+
+## Checks
+
+### Backend
 
 ```bash
 cd backend
@@ -66,13 +94,23 @@ uv run pytest
 uvx ty check src tests
 ```
 
-## Prototype features
+### Frontend
 
-- Zen, casual, and ranked mode start flow
-- Ranked mode fallback to casual if a guest joins
-- Hardcoded theme catalog and seeded puzzle generation
-- Hidden/sampled tests with per-puzzle typed function signatures (e.g. `solution(arg1: list[int], arg2: int) -> tuple[int, int]`)
-- Two-level hints (`level 2` reveals sampled variable values)
-- Ranked placement + ELO delta calculation with hint gain multipliers
-- Frontend single-page playable loop with editor and verdict feedback
-- UI theme setting: `light`, `dark`, `system`
+```bash
+cd frontend
+npm run build
+```
+
+## Current State
+
+This project is still a prototype, but the main loop is already there:
+
+- account login and guest flows
+- Zen, Casual, and Ranked modes
+- puzzle generation and judging
+- hints and forfeits
+- match results and replay flow
+- leaderboard and profile views
+- editor customization and theme settings
+
+It is already playable at [play-enigma.xyz](https://play-enigma.xyz).
