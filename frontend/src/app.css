@@ -90,6 +90,7 @@ header {
   margin-bottom: 2rem;
   padding-top: 1rem;
   gap: 1rem;
+  flex-wrap: nowrap;
 }
 
 .logo {
@@ -103,6 +104,8 @@ header {
   color: inherit;
   font-family: inherit;
   padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .logo-mark {
@@ -124,12 +127,16 @@ header {
   font-weight: 700;
   font-size: 1.8rem;
   letter-spacing: -1px;
+  white-space: nowrap;
 }
 
 nav {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .nav-icon {
@@ -2581,6 +2588,49 @@ footer a:hover {
 }
 
 @media (max-width: 760px) {
+  header {
+    gap: 0.75rem;
+  }
+
+  .logo {
+    gap: 0.55rem;
+  }
+
+  .logo-mark {
+    font-size: 1.65rem;
+  }
+
+  .logo-mark-question {
+    font-size: 1.18rem;
+  }
+
+  .logo .text {
+    font-size: 1.55rem;
+  }
+
+  nav {
+    gap: 0.35rem;
+  }
+
+  .nav-icon {
+    font-size: 1.05rem;
+    padding: 0.28rem;
+  }
+
+  .nav-mode-button {
+    gap: 0.35rem;
+    height: 2rem;
+    padding: 0 0.62rem;
+    font-size: 0.75rem;
+  }
+
+  .nav-theme-button {
+    width: 2rem;
+    height: 2rem;
+  }
+}
+
+@media (max-width: 620px) {
   header {
     flex-direction: column;
     align-items: flex-start;
