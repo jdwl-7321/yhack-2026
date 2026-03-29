@@ -7,10 +7,11 @@ from domain_types import Difficulty, JsonScalar
 from puzzle import FunctionContract, TestCase
 from puzzles.ai_generated_common import (
     ai_case_factory,
+    ai_contract_factory,
     ai_expected_output,
+    ai_shared_input_factory,
     ai_variable_factory,
 )
-from puzzles.common import sample_pairs_shared_inputs
 
 template_key = "ai-generated-medium-v1"
 theme = "AI"
@@ -33,6 +34,10 @@ def variable_factory(
     return ai_variable_factory(rng, difficulty)
 
 
+def contract_factory(variables: dict[str, JsonScalar]) -> FunctionContract:
+    return ai_contract_factory(variables)
+
+
 def case_factory(
     rng: random.Random, difficulty: Difficulty, params: dict[str, JsonScalar]
 ) -> TestCase:
@@ -42,7 +47,7 @@ def case_factory(
 def shared_input_factory(
     params: dict[str, JsonScalar], sample_tests: list[TestCase]
 ) -> tuple[Any, ...]:
-    return sample_pairs_shared_inputs(params, sample_tests)
+    return ai_shared_input_factory(params, sample_tests)
 
 
 def expected_output_for_primary_inputs(

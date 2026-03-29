@@ -124,7 +124,7 @@ Top-level layout:
     - runtime hooks: `variable_factory`, `case_factory`, `shared_input_factory`, `expected_output_for_primary_inputs`
   - `backend/src/puzzles/common.py` contains shared helper/validation functions used by puzzle modules.
   - `backend/src/puzzles/ai_generated_common.py` powers the AI theme runtime: picks a random general subtheme (`Cryptography`/`Numeric`/`Algorithms`), uses a broader set of non-legacy operation families (instead of Caesar/monoalphabetic/LIS-style repeats), optionally calls NOUS (`NOUS_API_KEY`) for prompt/hint/operation copy, validates/falls back safely, and computes deterministic I/O generation for supported operations.
-  - AI theme templates are split per difficulty (`ai_generated_easy_v1_puzzle.py`, `ai_generated_medium_v1_puzzle.py`, `ai_generated_hard_v1_puzzle.py`, `ai_generated_expert_v1_puzzle.py`) and share a fixed inference contract `solution(arg1, samples)` where `samples` is auto-built from visible pairs.
+  - AI theme templates are split per difficulty (`ai_generated_easy_v1_puzzle.py`, `ai_generated_medium_v1_puzzle.py`, `ai_generated_hard_v1_puzzle.py`, `ai_generated_expert_v1_puzzle.py`) and use dynamic typed contracts (`arg1`/return can be `str`, `int`, or `list[int]`) while keeping `solution(arg1, samples)` and auto-built visible sample pairs.
 
 - `backend/src/judge.py`
   - Sandbox-ish execution for user code using a child process per case (`multiprocessing`).

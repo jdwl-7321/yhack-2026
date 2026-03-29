@@ -43,6 +43,17 @@ def sample_pairs_shared_scalar_inputs(
     return (pairs,)
 
 
+def sample_pairs_shared_json_inputs(
+    _params: dict[str, JsonScalar], sample_tests: list[Any]
+) -> tuple[Any, ...]:
+    pairs: list[tuple[Any, Any]] = []
+    for case in sample_tests:
+        if len(case.inputs) != 1:
+            raise ValueError("Expected one primary input for sample-pair context")
+        pairs.append((case.inputs[0], case.output))
+    return (pairs,)
+
+
 def is_scalar(value: Any) -> bool:
     return isinstance(value, (str, int, float, bool))
 

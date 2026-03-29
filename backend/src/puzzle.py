@@ -71,6 +71,7 @@ CaseFactory = Callable[[random.Random, Difficulty, dict[str, JsonScalar]], TestC
 VariableFactory = Callable[[random.Random, Difficulty], dict[str, JsonScalar]]
 SharedInputFactory = Callable[[dict[str, JsonScalar], list[TestCase]], tuple[Any, ...]]
 ExpectedOutputFactory = Callable[..., Any]
+ContractFactory = Callable[[dict[str, JsonScalar]], FunctionContract]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,7 @@ class _Template:
     hint_level_2: str
     hint_level_3: str
     contract: FunctionContract
+    contract_factory: ContractFactory | None
     case_factory: CaseFactory
     variable_factory: VariableFactory
     shared_input_factory: SharedInputFactory
@@ -288,6 +290,14 @@ def _build_puzzle_instance(
     hint_level_3: str,
 ) -> PuzzleInstance:
     params = template.variable_factory(rng, difficulty)
+    resolved_contract = (
+        template.contract_factory(params)
+        if template.contract_factory is not None
+        else template.contract
+    )
+    if not isinstance(resolved_contract, FunctionContract):
+        raise ValueError("Template contract_factory must return FunctionContract")
+
     sample_tests = _build_cases(
         template,
         params,
@@ -314,12 +324,12 @@ def _build_puzzle_instance(
         "difficulty": difficulty,
         "variables": params,
         "contract": {
-            "parameter_types": list(template.contract.parameter_types),
-            "return_type": template.contract.return_type,
+            "parameter_types": list(resolved_contract.parameter_types),
+            "return_type": resolved_contract.return_type,
             "parameter_names": (
                 None
-                if template.contract.parameter_names is None
-                else list(template.contract.parameter_names)
+                if resolved_contract.parameter_names is None
+                else list(resolved_contract.parameter_names)
             ),
         },
         "shared_inputs": to_json_value(list(shared_inputs)),
@@ -354,7 +364,7 @@ def _build_puzzle_instance(
         hint_level_2=_render_text_template(hint_level_2, params),
         hint_level_3=_render_text_template(hint_level_3, params),
         variables=params,
-        contract=template.contract,
+        contract=resolved_contract,
         template_key=template.key,
         shared_inputs=shared_inputs,
         fingerprint=fingerprint,
@@ -927,6 +937,10 @@ def _load_template(module_name: str, source_path: Path) -> _Template:
     ):
         raise ValueError(f"Template module {module_name} has invalid callables")
 
+    contract_factory_attr = getattr(module, "contract_factory", None)
+    if contract_factory_attr is not None and not callable(contract_factory_attr):
+        raise ValueError(f"Template module {module_name} has invalid contract_factory")
+
     distinct_sample_outputs = bool(getattr(module, "distinct_sample_outputs", False))
 
     return _Template(
@@ -937,6 +951,9 @@ def _load_template(module_name: str, source_path: Path) -> _Template:
         hint_level_2=hint_level_2,
         hint_level_3=hint_level_3,
         contract=contract,
+        contract_factory=cast(ContractFactory, contract_factory_attr)
+        if contract_factory_attr is not None
+        else None,
         case_factory=cast(CaseFactory, case_factory),
         variable_factory=cast(VariableFactory, variable_factory),
         shared_input_factory=cast(SharedInputFactory, shared_input_factory),

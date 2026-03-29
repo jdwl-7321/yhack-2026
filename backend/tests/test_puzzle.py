@@ -226,14 +226,35 @@ def test_ai_theme_covers_all_difficulties(
     puzzle = generate_puzzle(theme="AI", difficulty=difficulty, seed=177)
 
     assert puzzle.theme == "AI"
-    assert puzzle.contract.parameter_types == ("str", "list[tuple[str, str]]")
-    assert puzzle.contract.return_type == "str"
+    assert puzzle.contract.parameter_types in {
+        ("str", "list[tuple[str, str]]"),
+        ("int", "list[list[int]]"),
+        ("list[int]", "list[tuple[list[int], int]]"),
+        ("list[int]", "list[tuple[list[int], list[int]]]"),
+    }
+    assert puzzle.contract.return_type in {"str", "int", "list[int]"}
     assert puzzle.contract.parameter_names == ("arg1", "samples")
     assert len(puzzle.sample_tests) == 3
     assert "{{" not in puzzle.prompt
     assert "{{" not in puzzle.hint_level_1
     assert "{{" not in puzzle.hint_level_2
     assert "{{" not in puzzle.hint_level_3
+
+
+def test_ai_theme_uses_natural_input_and_output_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOUS_API_KEY", raising=False)
+    seen_arg_types: set[str] = set()
+    seen_return_types: set[str] = set()
+
+    for seed in range(1, 120):
+        puzzle = generate_puzzle(theme="AI", difficulty="expert", seed=seed)
+        seen_arg_types.add(puzzle.contract.parameter_types[0])
+        seen_return_types.add(puzzle.contract.return_type)
+
+    assert {"str", "int", "list[int]"}.issubset(seen_arg_types)
+    assert {"str", "int", "list[int]"}.issubset(seen_return_types)
 
 
 def test_ai_theme_case_outputs_match_expected_output_helper(

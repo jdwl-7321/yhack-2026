@@ -4,20 +4,43 @@ from dataclasses import dataclass
 import json
 import os
 import random
-import re
 import string
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence, cast
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from domain_types import Difficulty, JsonScalar
-from puzzle import TestCase
-from puzzles.common import require_arity, require_str_value
+from puzzle import FunctionContract, TestCase
+from puzzles.common import (
+    require_arity,
+    require_int_sequence,
+    require_int_value,
+    require_str_value,
+    sample_pairs_shared_inputs,
+    sample_pairs_shared_json_inputs,
+    sample_pairs_shared_scalar_inputs,
+)
 
 _NOUS_DEFAULT_URL = "https://inference-api.nousresearch.com/v1/chat/completions"
 _NOUS_DEFAULT_MODEL = "Hermes-3-Llama-3.1-70B"
 _GENERAL_THEMES = ("Cryptography", "Numeric", "Algorithms")
-_INT_TEXT_PATTERN = re.compile(r"^-?\d+$")
+
+Operation = Literal[
+    "chunk_reverse",
+    "alternating_shift",
+    "rail_fence_encode",
+    "vigenere_keyword",
+    "popcount_affine",
+    "alternating_digit_fold",
+    "digit_square_sum_mod",
+    "nearest_prime_gap",
+    "pairwise_diff_checksum",
+    "rotate_integer_csv",
+    "peak_count",
+    "max_subarray_sum",
+]
+
+Kind = Literal["str->str", "int->int", "list->int", "list->list"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,16 +52,12 @@ class _AiCopy:
     hint_level_3: str
 
 
-_THEME_DIFFICULTY_OPERATIONS: dict[tuple[str, Difficulty], tuple[str, ...]] = {
-    ("Cryptography", "easy"): (
-        "chunk_reverse",
-        "alternating_shift",
-    ),
-    ("Cryptography", "medium"): (
-        "chunk_reverse",
-        "alternating_shift",
-        "rail_fence_encode",
-    ),
+_THEME_DIFFICULTY_OPERATIONS: dict[tuple[str, Difficulty], tuple[Operation, ...]] = {
+    ("Cryptography", "easy"): ("chunk_reverse", "alternating_shift"),
+    (
+        "Cryptography",
+        "medium",
+    ): ("chunk_reverse", "alternating_shift", "rail_fence_encode"),
     ("Cryptography", "hard"): (
         "alternating_shift",
         "rail_fence_encode",
@@ -49,15 +68,11 @@ _THEME_DIFFICULTY_OPERATIONS: dict[tuple[str, Difficulty], tuple[str, ...]] = {
         "vigenere_keyword",
         "alternating_shift",
     ),
-    ("Numeric", "easy"): (
-        "popcount_affine",
-        "alternating_digit_fold",
-    ),
-    ("Numeric", "medium"): (
-        "popcount_affine",
-        "alternating_digit_fold",
-        "digit_square_sum_mod",
-    ),
+    ("Numeric", "easy"): ("popcount_affine", "alternating_digit_fold"),
+    (
+        "Numeric",
+        "medium",
+    ): ("popcount_affine", "alternating_digit_fold", "digit_square_sum_mod"),
     ("Numeric", "hard"): (
         "popcount_affine",
         "digit_square_sum_mod",
@@ -68,10 +83,7 @@ _THEME_DIFFICULTY_OPERATIONS: dict[tuple[str, Difficulty], tuple[str, ...]] = {
         "nearest_prime_gap",
         "popcount_affine",
     ),
-    ("Algorithms", "easy"): (
-        "pairwise_diff_checksum",
-        "rotate_integer_csv",
-    ),
+    ("Algorithms", "easy"): ("pairwise_diff_checksum", "rotate_integer_csv"),
     ("Algorithms", "medium"): (
         "pairwise_diff_checksum",
         "rotate_integer_csv",
@@ -89,81 +101,96 @@ _THEME_DIFFICULTY_OPERATIONS: dict[tuple[str, Difficulty], tuple[str, ...]] = {
     ),
 }
 
-_OPERATION_DESCRIPTIONS = {
-    "chunk_reverse": "Split arg1 into fixed-size blocks and reverse each block.",
-    "alternating_shift": "Shift letters using two alternating Caesar offsets based on letter index parity.",
-    "rail_fence_encode": "Apply rail-fence transposition with a hidden rail count.",
-    "vigenere_keyword": "Shift letters using a repeating hidden keyword.",
-    "popcount_affine": "Treat arg1 as an integer string and return a*bitcount(abs(n)) + b.",
-    "alternating_digit_fold": "Treat arg1 as an integer string and fold digits with alternating +/- signs plus a constant offset.",
-    "digit_square_sum_mod": "Treat arg1 as an integer string and return (sum of squared digits + bias) mod m.",
-    "nearest_prime_gap": "Treat arg1 as an integer string and return distance to the nearest prime.",
-    "pairwise_diff_checksum": "Treat arg1 as CSV integers and return sum(abs(a[i]-a[i-1])) for i>0.",
-    "rotate_integer_csv": "Treat arg1 as CSV integers and rotate left by hidden k positions.",
-    "peak_count": "Treat arg1 as CSV integers and count strict local peaks.",
-    "max_subarray_sum": "Treat arg1 as CSV integers and return maximum contiguous subarray sum.",
+_OPERATION_KIND: dict[Operation, Kind] = {
+    "chunk_reverse": "str->str",
+    "alternating_shift": "str->str",
+    "rail_fence_encode": "str->str",
+    "vigenere_keyword": "str->str",
+    "popcount_affine": "int->int",
+    "alternating_digit_fold": "int->int",
+    "digit_square_sum_mod": "int->int",
+    "nearest_prime_gap": "int->int",
+    "pairwise_diff_checksum": "list->int",
+    "rotate_integer_csv": "list->list",
+    "peak_count": "list->int",
+    "max_subarray_sum": "list->int",
 }
 
-_OPERATION_HINTS = {
+_OPERATION_DESCRIPTIONS: dict[Operation, str] = {
+    "chunk_reverse": "Split text into fixed-size chunks and reverse each chunk.",
+    "alternating_shift": "Shift letters using two alternating offsets by letter position.",
+    "rail_fence_encode": "Apply rail-fence transposition using a hidden rail count.",
+    "vigenere_keyword": "Shift letters by a repeating hidden keyword.",
+    "popcount_affine": "Return a*bitcount(abs(n)) + b for integer arg1.",
+    "alternating_digit_fold": "Fold digits of abs(n) with alternating + / - signs, then add offset.",
+    "digit_square_sum_mod": "Return (sum(square(digits(abs(n)))) + bias) mod m.",
+    "nearest_prime_gap": "Return the distance from n to the nearest prime number.",
+    "pairwise_diff_checksum": "Return sum(abs(arr[i] - arr[i-1])) over a list of integers.",
+    "rotate_integer_csv": "Rotate a list of integers left by hidden k.",
+    "peak_count": "Count strict local peaks in a list of integers.",
+    "max_subarray_sum": "Return the maximum contiguous subarray sum.",
+}
+
+_OPERATION_HINTS: dict[Operation, tuple[str, str, str]] = {
     "chunk_reverse": (
-        "arg1 is transformed in equal-sized chunks, and each chunk is handled independently.",
-        "The same chunk size is reused for every case in this match.",
-        "Infer the block size from samples, then reverse each block and keep order of blocks.",
+        "arg1 is text transformed block-by-block.",
+        "A single chunk size is reused for all cases in the match.",
+        "Infer chunk size from samples, then reverse each chunk independently.",
     ),
     "alternating_shift": (
-        "Only alphabetic characters shift; punctuation and spaces remain unchanged.",
-        "Two offsets alternate as you walk through letters (even/odd letter index).",
-        "Infer both offsets from samples, then apply alternating shifts in letter order.",
+        "Only letters shift; punctuation and spaces stay unchanged.",
+        "Two shifts alternate as you move across letters.",
+        "Infer both shifts from samples and apply by letter index parity.",
     ),
     "rail_fence_encode": (
-        "Letters are written in a zig-zag pattern across rails, then read row-by-row.",
-        "The rail count is fixed for this match.",
-        "Infer rail count from a sample, reconstruct zig-zag indexing, then encode arg1.",
+        "Characters are written in a zig-zag rail pattern.",
+        "Rail count is fixed for the entire match.",
+        "Infer rails from samples and read row-by-row to encode.",
     ),
     "vigenere_keyword": (
-        "Only alphabetic characters are shifted and case is preserved.",
-        "A fixed keyword repeats over letters and controls per-letter shifts.",
-        "Infer keyword shifts from samples, then repeat those shifts across arg1 letters.",
+        "Only alphabetic characters are shifted; case is preserved.",
+        "A keyword repeats over letters and controls each shift.",
+        "Infer keyword shifts from samples and repeat across arg1.",
     ),
     "popcount_affine": (
-        "arg1 is an integer string and uses absolute value for bit counting.",
-        "A fixed affine transform a*x + b is applied to bitcount(x).",
-        "Compute popcount(abs(n)), infer a and b from samples, then apply the formula.",
+        "arg1 is an integer and abs(arg1) is used.",
+        "Compute bitcount(abs(n)) first, then apply a fixed linear transform.",
+        "Infer a and b from samples and return a*bitcount + b.",
     ),
     "alternating_digit_fold": (
-        "arg1 is an integer string and digit order matters.",
-        "Digits are combined with alternating plus/minus signs, then shifted by one constant.",
-        "Build alternating signed sum from left to right, then apply the fixed offset.",
+        "arg1 is an integer and digit order matters.",
+        "Digits are combined with alternating + / - signs.",
+        "Compute that fold on abs(n) and add one fixed offset.",
     ),
     "digit_square_sum_mod": (
-        "arg1 is an integer string and digits come from abs(n).",
-        "Use squared digits, add one constant bias, then wrap by a fixed modulus.",
-        "Infer modulus and bias from samples, then compute the same transform for arg1.",
+        "arg1 is an integer and uses digits of abs(arg1).",
+        "Square each digit, sum them, then apply fixed bias and modulus.",
+        "Infer bias and modulus from samples and apply to arg1.",
     ),
     "nearest_prime_gap": (
-        "arg1 is an integer string and output is non-negative.",
-        "Output measures how far the value is from the nearest prime number.",
-        "Check primality near n and return the smallest distance to a prime.",
+        "Output is non-negative and based on nearby primes.",
+        "Measure minimum distance between n and any prime.",
+        "Check upward/downward from n until you hit a prime.",
     ),
     "pairwise_diff_checksum": (
-        "arg1 is a comma-separated integer list.",
-        "The result is based on differences between neighboring items only.",
-        "Sum absolute adjacent differences across the list.",
+        "arg1 is a list of integers.",
+        "Only adjacent differences are used.",
+        "Sum absolute adjacent diffs across the list.",
     ),
     "rotate_integer_csv": (
-        "arg1 is a comma-separated integer list and output keeps the same list length.",
-        "A fixed left-rotation amount k is reused for all cases.",
-        "Infer k from samples, rotate left, and emit comma-separated integers.",
+        "arg1 is a list of integers and output is a list of integers.",
+        "A fixed left-rotation amount k is reused for this match.",
+        "Infer k from samples, rotate left, return the new list.",
     ),
     "peak_count": (
-        "arg1 is a comma-separated integer list.",
-        "Count values that are strictly greater than immediate neighbors.",
-        "Handle edges with one neighbor and interior points with two neighbors.",
+        "arg1 is a list of integers.",
+        "A peak is strictly greater than immediate neighbor(s).",
+        "Count edge/internal peaks with strict comparisons.",
     ),
     "max_subarray_sum": (
-        "arg1 is a comma-separated integer list and output is a single integer string.",
-        "The answer is the best sum among all contiguous subarrays.",
-        "Use a running-best dynamic scan (Kadane-style) to find the maximum sum.",
+        "arg1 is a list of integers and output is one integer.",
+        "The result is the best sum over all contiguous subarrays.",
+        "Use a running-best scan (Kadane style) to compute efficiently.",
     ),
 }
 
@@ -183,7 +210,7 @@ def ai_variable_factory(
         fallback_operation=fallback_operation,
     )
     operation = (
-        ai_copy.operation
+        cast_operation(ai_copy.operation)
         if ai_copy.operation in allowed_operations
         else fallback_operation
     )
@@ -195,7 +222,7 @@ def ai_variable_factory(
     )
     prompt = _normalize_copy_text(ai_copy.prompt, fallback=prompt, max_len=900)
     if "samples" not in prompt:
-        prompt = f"{prompt} Use `samples` as visible (input, output) examples."
+        prompt = f"{prompt} `samples` contains visible examples."
     hint_1 = _normalize_copy_text(ai_copy.hint_level_1, fallback=hint_1, max_len=260)
     hint_2 = _normalize_copy_text(ai_copy.hint_level_2, fallback=hint_2, max_len=260)
     hint_3 = _normalize_copy_text(ai_copy.hint_level_3, fallback=hint_3, max_len=260)
@@ -216,6 +243,51 @@ def ai_variable_factory(
         "hint_level_2_text": hint_2,
         "hint_level_3_text": hint_3,
     }
+
+
+def ai_contract_factory(variables: dict[str, JsonScalar]) -> FunctionContract:
+    operation = _operation_name(variables)
+    kind = _OPERATION_KIND[operation]
+
+    if kind == "str->str":
+        return FunctionContract(
+            parameter_types=("str", "list[tuple[str, str]]"),
+            return_type="str",
+            parameter_names=("arg1", "samples"),
+        )
+
+    if kind == "int->int":
+        return FunctionContract(
+            parameter_types=("int", "list[list[int]]"),
+            return_type="int",
+            parameter_names=("arg1", "samples"),
+        )
+
+    if kind == "list->int":
+        return FunctionContract(
+            parameter_types=("list[int]", "list[tuple[list[int], int]]"),
+            return_type="int",
+            parameter_names=("arg1", "samples"),
+        )
+
+    return FunctionContract(
+        parameter_types=("list[int]", "list[tuple[list[int], list[int]]]"),
+        return_type="list[int]",
+        parameter_names=("arg1", "samples"),
+    )
+
+
+def ai_shared_input_factory(
+    params: dict[str, JsonScalar],
+    sample_tests: list[TestCase],
+) -> tuple[Any, ...]:
+    operation = _operation_name(params)
+    kind = _OPERATION_KIND[operation]
+    if kind == "str->str":
+        return sample_pairs_shared_inputs(params, sample_tests)
+    if kind == "int->int":
+        return sample_pairs_shared_scalar_inputs(params, sample_tests)
+    return sample_pairs_shared_json_inputs(params, sample_tests)
 
 
 def ai_case_factory(
@@ -247,19 +319,23 @@ def ai_expected_output(
     primary_inputs: Sequence[Any],
 ) -> Any:
     require_arity(primary_inputs, expected=1)
-    arg1 = require_str_value(primary_inputs[0], label="arg1")
+    operation = _operation_name(variables)
     return _apply_operation(
-        operation=_operation_name(variables),
-        arg1=arg1,
+        operation=operation,
+        arg1=primary_inputs[0],
         operation_params=_operation_params(variables),
     )
 
 
-def _operation_name(variables: dict[str, JsonScalar]) -> str:
+def cast_operation(value: str) -> Operation:
+    return cast(Operation, value)
+
+
+def _operation_name(variables: dict[str, JsonScalar]) -> Operation:
     value = variables.get("operation")
-    if not isinstance(value, str) or value not in _OPERATION_DESCRIPTIONS:
+    if not isinstance(value, str) or value not in _OPERATION_KIND:
         raise ValueError("Invalid AI operation")
-    return value
+    return cast_operation(value)
 
 
 def _operation_params(variables: dict[str, JsonScalar]) -> dict[str, Any]:
@@ -279,93 +355,113 @@ def _operation_params(variables: dict[str, JsonScalar]) -> dict[str, Any]:
 
 def _apply_operation(
     *,
-    operation: str,
-    arg1: str,
+    operation: Operation,
+    arg1: Any,
     operation_params: dict[str, Any],
-) -> str:
+) -> Any:
     if operation == "chunk_reverse":
+        text = require_str_value(arg1, label="arg1")
         size = int(operation_params.get("size", 2))
         if size <= 0:
             raise ValueError("size must be positive")
-        chunks = [arg1[index : index + size] for index in range(0, len(arg1), size)]
+        chunks = [text[index : index + size] for index in range(0, len(text), size)]
         return "".join(chunk[::-1] for chunk in chunks)
 
     if operation == "alternating_shift":
+        text = require_str_value(arg1, label="arg1")
         even_shift = int(operation_params.get("even_shift", 1))
         odd_shift = int(operation_params.get("odd_shift", 2))
-        return _alternating_shift(arg1, even_shift=even_shift, odd_shift=odd_shift)
+        return _alternating_shift(text, even_shift=even_shift, odd_shift=odd_shift)
 
     if operation == "rail_fence_encode":
+        text = require_str_value(arg1, label="arg1")
         rails = int(operation_params.get("rails", 2))
-        return _rail_fence_encode(arg1, rails=rails)
+        return _rail_fence_encode(text, rails=rails)
 
     if operation == "vigenere_keyword":
+        text = require_str_value(arg1, label="arg1")
         keyword = str(operation_params.get("keyword", "abc"))
-        return _vigenere_encode(arg1, keyword=keyword)
+        return _vigenere_encode(text, keyword=keyword)
 
     if operation == "popcount_affine":
-        value = _parse_integer_string(arg1)
+        value = _require_int_input(arg1)
         multiplier = int(operation_params.get("multiplier", 1))
         bias = int(operation_params.get("bias", 0))
-        return str(multiplier * abs(value).bit_count() + bias)
+        return multiplier * abs(value).bit_count() + bias
 
     if operation == "alternating_digit_fold":
-        value = _parse_integer_string(arg1)
+        value = _require_int_input(arg1)
         offset = int(operation_params.get("offset", 0))
         digits = [int(char) for char in str(abs(value))]
         folded = sum(
             digit if index % 2 == 0 else -digit for index, digit in enumerate(digits)
         )
-        return str(folded + offset)
+        return folded + offset
 
     if operation == "digit_square_sum_mod":
-        value = _parse_integer_string(arg1)
+        value = _require_int_input(arg1)
         modulus = int(operation_params.get("modulus", 31))
         bias = int(operation_params.get("bias", 0))
         if modulus <= 1:
             raise ValueError("modulus must be greater than 1")
         score = sum(int(char) ** 2 for char in str(abs(value)))
-        return str((score + bias) % modulus)
+        return (score + bias) % modulus
 
     if operation == "nearest_prime_gap":
-        value = abs(_parse_integer_string(arg1))
-        return str(_nearest_prime_gap(value))
+        value = abs(_require_int_input(arg1))
+        return _nearest_prime_gap(value)
 
     if operation == "pairwise_diff_checksum":
-        sequence = _parse_int_csv(arg1)
-        total = sum(
+        sequence = _require_list_input(arg1)
+        return sum(
             abs(sequence[index] - sequence[index - 1])
             for index in range(1, len(sequence))
         )
-        return str(total)
 
     if operation == "rotate_integer_csv":
-        sequence = _parse_int_csv(arg1)
+        sequence = _require_list_input(arg1)
         left_k = int(operation_params.get("left_k", 1))
         offset = left_k % len(sequence)
-        rotated = sequence[offset:] + sequence[:offset]
-        return _render_int_csv(rotated)
+        return sequence[offset:] + sequence[:offset]
 
     if operation == "peak_count":
-        sequence = _parse_int_csv(arg1)
+        sequence = _require_list_input(arg1)
         peaks = 0
         for index, value in enumerate(sequence):
             left_ok = index == 0 or value > sequence[index - 1]
             right_ok = index == len(sequence) - 1 or value > sequence[index + 1]
             if left_ok and right_ok:
                 peaks += 1
-        return str(peaks)
+        return peaks
 
-    if operation == "max_subarray_sum":
-        sequence = _parse_int_csv(arg1)
-        best = sequence[0]
-        running = sequence[0]
-        for value in sequence[1:]:
-            running = max(value, running + value)
-            best = max(best, running)
-        return str(best)
+    sequence = _require_list_input(arg1)
+    best = sequence[0]
+    running = sequence[0]
+    for value in sequence[1:]:
+        running = max(value, running + value)
+        best = max(best, running)
+    return best
 
-    raise ValueError("Unknown AI operation")
+
+def _require_int_input(value: Any) -> int:
+    return require_int_value(value, label="arg1")
+
+
+def _require_list_input(value: Any) -> list[int]:
+    sequence = require_int_sequence(value, label="arg1")
+    if len(sequence) < 2:
+        raise ValueError("arg1 list must contain at least two integers")
+    return sequence
+
+
+def _shift_ascii_letter(char: str, shift: int) -> str:
+    if "a" <= char <= "z":
+        base = ord("a")
+        return chr(base + ((ord(char) - base + shift) % 26))
+    if "A" <= char <= "Z":
+        base = ord("A")
+        return chr(base + ((ord(char) - base + shift) % 26))
+    return char
 
 
 def _alternating_shift(text: str, *, even_shift: int, odd_shift: int) -> str:
@@ -379,16 +475,6 @@ def _alternating_shift(text: str, *, even_shift: int, odd_shift: int) -> str:
             continue
         chars.append(char)
     return "".join(chars)
-
-
-def _shift_ascii_letter(char: str, shift: int) -> str:
-    if "a" <= char <= "z":
-        base = ord("a")
-        return chr(base + ((ord(char) - base + shift) % 26))
-    if "A" <= char <= "Z":
-        base = ord("A")
-        return chr(base + ((ord(char) - base + shift) % 26))
-    return char
 
 
 def _rail_fence_encode(text: str, *, rails: int) -> str:
@@ -429,34 +515,9 @@ def _vigenere_encode(text: str, *, keyword: str) -> str:
     return "".join(encoded)
 
 
-def _parse_integer_string(raw: str) -> int:
-    candidate = raw.strip()
-    if not _INT_TEXT_PATTERN.fullmatch(candidate):
-        raise ValueError("arg1 must be an integer string")
-    return int(candidate)
-
-
-def _parse_int_csv(raw: str) -> list[int]:
-    tokens = [token.strip() for token in raw.split(",")]
-    if len(tokens) < 2 or any(token == "" for token in tokens):
-        raise ValueError("arg1 must be a comma-separated integer list")
-
-    parsed: list[int] = []
-    for token in tokens:
-        if not _INT_TEXT_PATTERN.fullmatch(token):
-            raise ValueError("arg1 must be a comma-separated integer list")
-        parsed.append(int(token))
-    return parsed
-
-
-def _render_int_csv(values: Sequence[int]) -> str:
-    return ",".join(str(value) for value in values)
-
-
 def _nearest_prime_gap(value: int) -> int:
     if value <= 2:
         return 0 if value == 2 else 1
-
     if _is_prime(value):
         return 0
 
@@ -486,17 +547,13 @@ def _is_prime(candidate: int) -> bool:
 
 def _random_input_for_operation(
     *,
-    operation: str,
+    operation: Operation,
     difficulty: Difficulty,
     operation_params: dict[str, Any],
     rng: random.Random,
-) -> str:
-    if operation in {
-        "chunk_reverse",
-        "alternating_shift",
-        "rail_fence_encode",
-        "vigenere_keyword",
-    }:
+) -> Any:
+    kind = _OPERATION_KIND[operation]
+    if kind == "str->str":
         min_len, max_len = {
             "easy": (8, 16),
             "medium": (14, 24),
@@ -505,34 +562,20 @@ def _random_input_for_operation(
         }[difficulty]
         return _random_text(rng, min_len=min_len, max_len=max_len)
 
-    if operation in {
-        "popcount_affine",
-        "alternating_digit_fold",
-        "digit_square_sum_mod",
-        "nearest_prime_gap",
-    }:
+    if kind == "int->int":
         lower, upper = {
             "easy": (-4_000, 4_000),
             "medium": (-80_000, 80_000),
             "hard": (-600_000, 600_000),
             "expert": (-2_500_000, 2_500_000),
         }[difficulty]
-        return str(rng.randint(lower, upper))
+        return rng.randint(lower, upper)
 
-    if operation in {
-        "pairwise_diff_checksum",
-        "rotate_integer_csv",
-        "peak_count",
-        "max_subarray_sum",
-    }:
-        length = {"easy": 5, "medium": 7, "hard": 9, "expert": 12}[difficulty]
-        if operation == "rotate_integer_csv":
-            left_k = int(operation_params.get("left_k", 1))
-            length = max(length, left_k + 2)
-        sequence = [rng.randint(-45, 45) for _index in range(length)]
-        return _render_int_csv(sequence)
-
-    raise ValueError("Unknown AI operation")
+    length = {"easy": 5, "medium": 7, "hard": 9, "expert": 12}[difficulty]
+    if operation == "rotate_integer_csv":
+        left_k = int(operation_params.get("left_k", 1))
+        length = max(length, left_k + 2)
+    return [rng.randint(-45, 45) for _index in range(length)]
 
 
 def _random_text(rng: random.Random, *, min_len: int, max_len: int) -> str:
@@ -551,32 +594,31 @@ def _random_keyword(rng: random.Random, *, min_len: int, max_len: int) -> str:
 
 
 def _operation_parameters(
-    operation: str,
+    operation: Operation,
     difficulty: Difficulty,
     rng: random.Random,
 ) -> dict[str, int | str]:
     if operation == "chunk_reverse":
         return {
             "size": rng.randint(
-                2, {"easy": 3, "medium": 4, "hard": 5, "expert": 6}[difficulty]
+                2,
+                {"easy": 3, "medium": 4, "hard": 5, "expert": 6}[difficulty],
             )
         }
 
     if operation == "alternating_shift":
-        shift_cap = {"easy": 5, "medium": 10, "hard": 14, "expert": 20}[difficulty]
-        even_shift = rng.randint(1, shift_cap)
-        odd_shift = rng.randint(1, shift_cap)
+        cap = {"easy": 5, "medium": 10, "hard": 14, "expert": 20}[difficulty]
+        even_shift = rng.randint(1, cap)
+        odd_shift = rng.randint(1, cap)
         if difficulty in {"hard", "expert"} and rng.random() < 0.35:
             odd_shift *= -1
-        return {
-            "even_shift": even_shift,
-            "odd_shift": odd_shift,
-        }
+        return {"even_shift": even_shift, "odd_shift": odd_shift}
 
     if operation == "rail_fence_encode":
         return {
             "rails": rng.randint(
-                2, {"easy": 3, "medium": 4, "hard": 5, "expert": 6}[difficulty]
+                2,
+                {"easy": 3, "medium": 4, "hard": 5, "expert": 6}[difficulty],
             )
         }
 
@@ -592,17 +634,20 @@ def _operation_parameters(
     if operation == "popcount_affine":
         return {
             "multiplier": rng.randint(
-                1, {"easy": 3, "medium": 4, "hard": 6, "expert": 8}[difficulty]
+                1,
+                {"easy": 3, "medium": 4, "hard": 6, "expert": 8}[difficulty],
             ),
             "bias": rng.randint(
-                -6, {"easy": 18, "medium": 30, "hard": 55, "expert": 90}[difficulty]
+                -6,
+                {"easy": 18, "medium": 30, "hard": 55, "expert": 90}[difficulty],
             ),
         }
 
     if operation == "alternating_digit_fold":
         return {
             "offset": rng.randint(
-                -20, {"easy": 20, "medium": 40, "hard": 70, "expert": 110}[difficulty]
+                -20,
+                {"easy": 20, "medium": 40, "hard": 70, "expert": 110}[difficulty],
             )
         }
 
@@ -613,38 +658,28 @@ def _operation_parameters(
                 {"easy": 23, "medium": 47, "hard": 97, "expert": 211}[difficulty],
             ),
             "bias": rng.randint(
-                0, {"easy": 12, "medium": 40, "hard": 80, "expert": 150}[difficulty]
+                0,
+                {"easy": 12, "medium": 40, "hard": 80, "expert": 150}[difficulty],
             ),
         }
-
-    if operation == "nearest_prime_gap":
-        return {}
-
-    if operation == "pairwise_diff_checksum":
-        return {}
 
     if operation == "rotate_integer_csv":
         return {
             "left_k": rng.randint(
-                1, {"easy": 2, "medium": 3, "hard": 4, "expert": 5}[difficulty]
+                1,
+                {"easy": 2, "medium": 3, "hard": 4, "expert": 5}[difficulty],
             )
         }
 
-    if operation == "peak_count":
-        return {}
-
-    if operation == "max_subarray_sum":
-        return {}
-
-    raise ValueError("Unknown AI operation")
+    return {}
 
 
 def _build_ai_copy(
     *,
     difficulty: Difficulty,
     general_theme: str,
-    allowed_operations: Sequence[str],
-    fallback_operation: str,
+    allowed_operations: Sequence[Operation],
+    fallback_operation: Operation,
 ) -> _AiCopy:
     fallback_prompt, fallback_hint_1, fallback_hint_2, fallback_hint_3 = _fallback_copy(
         difficulty=difficulty,
@@ -684,13 +719,27 @@ def _fallback_copy(
     *,
     difficulty: Difficulty,
     general_theme: str,
-    operation: str,
+    operation: Operation,
 ) -> tuple[str, str, str, str]:
+    kind = _OPERATION_KIND[operation]
+    if kind == "str->str":
+        typing_copy = "`arg1` is a string and your function returns a string"
+    elif kind == "int->int":
+        typing_copy = "`arg1` is an integer and your function returns an integer"
+    elif kind == "list->int":
+        typing_copy = (
+            "`arg1` is a list of integers and your function returns an integer"
+        )
+    else:
+        typing_copy = (
+            "`arg1` is a list of integers and your function returns a list of integers"
+        )
+
     prompt = (
         f"AI challenge ({general_theme}, {difficulty}). "
-        "You are given `arg1` and visible sample pairs in `samples`. "
-        "Each sample pair follows one hidden deterministic rule, and your goal is to infer that rule. "
-        "Implement `solution(arg1, samples)` so it generalizes beyond the shown examples. "
+        f"In this match, {typing_copy}. "
+        "`samples` contains visible (input, output) examples generated by one hidden deterministic rule. "
+        "Implement `solution(arg1, samples)` to infer and apply that same rule to new inputs. "
         f"Rule family: {_OPERATION_DESCRIPTIONS[operation]}"
     )
     hint_1, hint_2, hint_3 = _OPERATION_HINTS[operation]
@@ -710,7 +759,7 @@ def _fetch_nous_copy(
     *,
     difficulty: Difficulty,
     general_theme: str,
-    allowed_operations: Sequence[str],
+    allowed_operations: Sequence[Operation],
 ) -> _AiCopy | None:
     api_key = os.environ.get("NOUS_API_KEY", "").strip()
     if not api_key:
@@ -732,8 +781,8 @@ def _fetch_nous_copy(
             {
                 "role": "system",
                 "content": (
-                    "You create novel but fair programming puzzle copy for a competitive platform. "
-                    "Do not return markdown. Return valid JSON only."
+                    "You create novel but fair programming puzzle copy. "
+                    "Return valid JSON only and keep the puzzle solvable from visible examples."
                 ),
             },
             {
@@ -815,7 +864,7 @@ def _nous_user_prompt(
     *,
     difficulty: Difficulty,
     general_theme: str,
-    allowed_operations: Sequence[str],
+    allowed_operations: Sequence[Operation],
 ) -> str:
     operation_lines = "\n".join(
         f"- {operation}: {_OPERATION_DESCRIPTIONS[operation]}"
@@ -825,14 +874,14 @@ def _nous_user_prompt(
         "Create one puzzle copy pack for a coding duel match.\n"
         f"General theme: {general_theme}\n"
         f"Difficulty: {difficulty}\n"
-        "The backend already generates all inputs/outputs from one allowed operation.\n"
+        "The backend already generates all input/output data from one allowed operation.\n"
         "Choose exactly one allowed operation and write copy that is novel, interesting, and solvable.\n"
         "Allowed operations:\n"
         f"{operation_lines}\n\n"
         "Output strict JSON only with this schema:\n"
         "{\n"
         '  "operation": "<one allowed operation>",\n'
-        '  "prompt": "<80-150 words, mention solution(arg1, samples) and samples as visible examples>",\n'
+        '  "prompt": "<80-150 words, mention solution(arg1, samples) and that samples are visible examples>",\n'
         '  "hint_level_1": "<short practical hint>",\n'
         '  "hint_level_2": "<more concrete hint>",\n'
         '  "hint_level_3": "<strong hint, still not full direct solution>"\n'
@@ -840,7 +889,7 @@ def _nous_user_prompt(
         "Hard constraints:\n"
         "- Do not use classic repeated puzzle tropes like Caesar cipher, monoalphabetic substitution, two-sum, LIS, GCD, or LCM.\n"
         "- Keep difficulty-appropriate and not impossible.\n"
-        "- Avoid fluff; be clear and specific.\n"
+        "- Keep typing natural for the operation (string/int/list[int]).\n"
         "- No markdown fences and no extra keys."
     )
 
