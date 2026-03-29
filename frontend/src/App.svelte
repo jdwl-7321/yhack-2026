@@ -1860,8 +1860,11 @@
     });
 
     const cm = getCM(vimEditorView);
-    if (cm) {
-      Vim.setOption("pcre", false, cm);
+    if (cm?.state.vim) {
+      const vimCm = cm as typeof cm & {
+        state: typeof cm.state & { vim: NonNullable<typeof cm.state.vim> };
+      };
+      Vim.setOption("pcre", false, vimCm);
     }
   }
 
