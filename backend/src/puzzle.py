@@ -226,7 +226,7 @@ def generate_puzzle(
         params,
         rng,
         difficulty,
-        count=2,
+        count=3,
         distinct_outputs=_samples_require_distinct_outputs(template.key),
     )
     shared_inputs = template.shared_input_factory(params, sample_tests)
@@ -355,6 +355,99 @@ def invocation_inputs(case: TestCase, shared_inputs: Sequence[Any]) -> tuple[Any
     return (*case.inputs, *shared_inputs)
 
 
+def expected_output_for_primary_inputs(
+    *,
+    template_key: str,
+    variables: dict[str, JsonScalar],
+    primary_inputs: Sequence[Any],
+) -> Any:
+    if template_key == "crypto-xor-byte-inference-v1":
+        _require_arity(primary_inputs, expected=1)
+        value = _require_int_value(primary_inputs[0], label="value")
+        key = _require_variable_int(variables, name="key")
+        return _solve_xor_byte(value, key)
+
+    if template_key == "crypto-shift-inference-v2":
+        _require_arity(primary_inputs, expected=1)
+        text = _require_str_value(primary_inputs[0], label="text")
+        shift = _require_variable_int(variables, name="shift")
+        return _solve_caesar(text, shift)
+
+    if template_key == "crypto-substitution-inference-v2":
+        _require_arity(primary_inputs, expected=1)
+        text = _require_str_value(primary_inputs[0], label="text")
+        source = _require_variable_str(variables, name="source")
+        target = _require_variable_str(variables, name="target")
+        return _solve_substitution(text, source, target)
+
+    if template_key == "crypto-lsb-steganography-v1":
+        _require_arity(primary_inputs, expected=1)
+        values = _require_int_sequence(primary_inputs[0], label="numbers")
+        return _decode_lsb_ascii(values)
+
+    if template_key == "algorithms-index-pair-v2":
+        _require_arity(primary_inputs, expected=2)
+        values = _require_int_sequence(primary_inputs[0], label="values")
+        target = _require_int_value(primary_inputs[1], label="target")
+        pairs = _two_sum_pairs(values, target)
+        if len(pairs) != 1:
+            raise ValueError(
+                "two-sum samples must contain exactly one valid index pair"
+            )
+        return pairs[0]
+
+    if template_key == "datastructures-bracket-structure-v2":
+        _require_arity(primary_inputs, expected=1)
+        text = _require_str_value(primary_inputs[0], label="source")
+        return _is_balanced_brackets(text)
+
+    if template_key == "greedy-interval-selection-v2":
+        _require_arity(primary_inputs, expected=1)
+        intervals = _require_intervals(primary_inputs[0])
+        return _max_non_overlapping(intervals)
+
+    if template_key == "strings-window-length-v2":
+        _require_arity(primary_inputs, expected=1)
+        text = _require_str_value(primary_inputs[0], label="text")
+        return _longest_unique_substring(text)
+
+    if template_key == "search-grid-navigation-v2":
+        _require_arity(primary_inputs, expected=1)
+        grid = _require_str_sequence(primary_inputs[0], label="grid")
+        return _maze_shortest_path(grid)
+
+    if template_key == "numeric-gcd-value-v1":
+        _require_arity(primary_inputs, expected=2)
+        left = _require_int_value(primary_inputs[0], label="a")
+        right = _require_int_value(primary_inputs[1], label="b")
+        return math.gcd(left, right)
+
+    if template_key == "numeric-lcm-value-v1":
+        _require_arity(primary_inputs, expected=2)
+        left = _require_int_value(primary_inputs[0], label="a")
+        right = _require_int_value(primary_inputs[1], label="b")
+        return _lcm(left, right)
+
+    if template_key == "numeric-prime-number-v1":
+        _require_arity(primary_inputs, expected=1)
+        value = _require_int_value(primary_inputs[0], label="n")
+        return _is_prime(value)
+
+    if template_key == "numeric-total-factor-count-v1":
+        _require_arity(primary_inputs, expected=1)
+        values = _require_int_sequence(primary_inputs[0], label="values")
+        return _total_factor_count(values)
+
+    if template_key == "numeric-linear-transform-v1":
+        _require_arity(primary_inputs, expected=1)
+        value = _require_int_value(primary_inputs[0], label="x")
+        a = _require_variable_int(variables, name="a")
+        b = _require_variable_int(variables, name="b")
+        return a * value + b
+
+    raise ValueError("Unsupported puzzle template")
+
+
 def to_json_value(value: Any) -> JsonValue:
     if isinstance(value, (str, int, float, bool)):
         return cast(JsonValue, value)
@@ -368,6 +461,68 @@ def to_json_value(value: Any) -> JsonValue:
         ordered = sorted(value, key=repr)
         return [to_json_value(item) for item in ordered]
     raise TypeError(f"Unsupported puzzle value type: {type(value).__name__}")
+
+
+def _require_arity(values: Sequence[Any], *, expected: int) -> None:
+    if len(values) != expected:
+        raise ValueError(f"inputs must contain exactly {expected} argument(s)")
+
+
+def _require_int_value(value: Any, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _require_str_value(value: Any, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _require_int_sequence(value: Any, *, label: str) -> list[int]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of integers")
+    parsed: list[int] = []
+    for index, item in enumerate(value):
+        parsed.append(_require_int_value(item, label=f"{label}[{index}]"))
+    return parsed
+
+
+def _require_str_sequence(value: Any, *, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of strings")
+    parsed: list[str] = []
+    for index, item in enumerate(value):
+        parsed.append(_require_str_value(item, label=f"{label}[{index}]"))
+    return parsed
+
+
+def _require_intervals(value: Any) -> list[tuple[int, int]]:
+    if not isinstance(value, list):
+        raise ValueError("intervals must be a list")
+    intervals: list[tuple[int, int]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(f"interval[{index}] must be a two-item list")
+        start = _require_int_value(item[0], label=f"interval[{index}][0]")
+        end = _require_int_value(item[1], label=f"interval[{index}][1]")
+        intervals.append((start, end))
+    return intervals
+
+
+def _require_variable_int(variables: dict[str, JsonScalar], *, name: str) -> int:
+    value = variables.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Puzzle variable {name} must be an integer")
+    return value
+
+
+def _require_variable_str(variables: dict[str, JsonScalar], *, name: str) -> str:
+    value = variables.get(name)
+    if not isinstance(value, str):
+        raise ValueError(f"Puzzle variable {name} must be a string")
+    return value
 
 
 def _validate_range(
@@ -890,15 +1045,92 @@ def _case_maze(
     return TestCase(inputs=(lines,), output=_maze_shortest_path(lines))
 
 
-def _case_gcd_lcm(
-    rng: random.Random, difficulty: Difficulty, _params: dict[str, JsonScalar]
-) -> TestCase:
-    span = {"easy": 90, "medium": 260, "hard": 1500, "expert": 7000}[difficulty]
-    left = rng.randint(2, span)
-    right = rng.randint(2, span)
+def _lcm(left: int, right: int) -> int:
     gcd_value = math.gcd(left, right)
-    lcm_value = abs(left * right) // gcd_value
-    return TestCase(inputs=(left, right), output=(gcd_value, lcm_value))
+    return abs(left * right) // gcd_value
+
+
+def _case_gcd_value(
+    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
+) -> TestCase:
+    left = rng.randint(2, 400)
+    right = rng.randint(2, 400)
+    return TestCase(inputs=(left, right), output=math.gcd(left, right))
+
+
+def _case_lcm_value(
+    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
+) -> TestCase:
+    left = rng.randint(2, 90)
+    right = rng.randint(2, 90)
+    return TestCase(inputs=(left, right), output=_lcm(left, right))
+
+
+def _is_prime(value: int) -> bool:
+    if value < 2:
+        return False
+    if value == 2:
+        return True
+    if value % 2 == 0:
+        return False
+    limit = int(math.isqrt(value))
+    for candidate in range(3, limit + 1, 2):
+        if value % candidate == 0:
+            return False
+    return True
+
+
+def _case_prime_number(
+    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
+) -> TestCase:
+    value = rng.randint(2, 5000)
+    return TestCase(inputs=(value,), output=_is_prime(value))
+
+
+def _factor_count(value: int) -> int:
+    normalized = abs(value)
+    if normalized <= 1:
+        return 1
+
+    total = 0
+    limit = int(math.isqrt(normalized))
+    for candidate in range(1, limit + 1):
+        if normalized % candidate != 0:
+            continue
+        partner = normalized // candidate
+        total += 1 if partner == candidate else 2
+    return total
+
+
+def _total_factor_count(values: Sequence[int]) -> int:
+    return sum(_factor_count(value) for value in values)
+
+
+def _case_total_factor_count(
+    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
+) -> TestCase:
+    length = 6
+    values = [rng.randint(2, 6000) for _index in range(length)]
+    return TestCase(inputs=(values,), output=_total_factor_count(values))
+
+
+def _variables_linear_transform(
+    rng: random.Random, _difficulty: Difficulty
+) -> dict[str, JsonScalar]:
+    slope = 0
+    while slope == 0:
+        slope = rng.randint(-15, 15)
+    intercept = rng.randint(-120, 120)
+    return {"a": slope, "b": intercept}
+
+
+def _case_linear_transform(
+    rng: random.Random, _difficulty: Difficulty, params: dict[str, JsonScalar]
+) -> TestCase:
+    value = rng.randint(-400, 400)
+    slope = int(params["a"])
+    intercept = int(params["b"])
+    return TestCase(inputs=(value,), output=slope * value + intercept)
 
 
 def _longest_unique_substring(text: str) -> int:
@@ -1115,56 +1347,11 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_two_sum,
         variable_factory=_no_variables,
         shared_input_factory=_no_shared_inputs,
-    ),
-    _Template(
-        key="search-grid-navigation-v2",
-        theme="Search",
-        prompt=(
-            "Input is a grid made from S, E, ., and #. Return the integer score implied by the samples "
-            "for traversing that grid."
-        ),
-        hint_level_1="Moves are only up, down, left, or right through non-wall cells.",
-        hint_level_2="Think in terms of expanding reachable cells level by level from S.",
-        hint_level_3="Return the fewest moves from S to E, or -1 if E cannot be reached.",
-        contract=FunctionContract(parameter_types=("list[str]",), return_type="int"),
-        case_factory=_case_maze,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-    ),
-    _Template(
-        key="numeric-divisor-multiple-v2",
-        theme="Numeric",
-        prompt=(
-            "Given two positive integers, return a tuple of two derived integers matching the sample pattern."
-        ),
-        hint_level_1="The first output value divides both inputs.",
-        hint_level_2="The second output value is a shared multiple of both inputs.",
-        hint_level_3="Return (gcd(a, b), lcm(a, b)).",
-        contract=FunctionContract(
-            parameter_types=("int", "int"),
-            return_type="tuple[int, int]",
-        ),
-        case_factory=_case_gcd_lcm,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
-    ),
-    _Template(
-        key="strings-window-length-v2",
-        theme="Strings",
-        prompt=(
-            "Given a string, return the integer metric over contiguous segments that is suggested by the samples."
-        ),
-        hint_level_1="Repeated characters force the active segment to shift forward.",
-        hint_level_2="A sliding window with last-seen positions works efficiently.",
-        hint_level_3="Return the length of the longest substring with all distinct characters.",
-        contract=FunctionContract(parameter_types=("str",), return_type="int"),
-        case_factory=_case_longest_unique,
-        variable_factory=_no_variables,
-        shared_input_factory=_no_shared_inputs,
+        difficulties=("easy",),
     ),
     _Template(
         key="datastructures-bracket-structure-v2",
-        theme="Data structures",
+        theme="Algorithms",
         prompt=(
             "Given a bracket string, return a boolean according to the structural validity rule implied by samples."
         ),
@@ -1175,10 +1362,11 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_balanced_brackets,
         variable_factory=_no_variables,
         shared_input_factory=_no_shared_inputs,
+        difficulties=("easy",),
     ),
     _Template(
         key="greedy-interval-selection-v2",
-        theme="Greedy",
+        theme="Algorithms",
         prompt=(
             "Given integer intervals, return the maximum count selected under the non-overlap rule shown by samples."
         ),
@@ -1192,6 +1380,129 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_non_overlapping_count,
         variable_factory=_no_variables,
         shared_input_factory=_no_shared_inputs,
+        difficulties=("medium",),
+    ),
+    _Template(
+        key="strings-window-length-v2",
+        theme="Algorithms",
+        prompt=(
+            "Given a string, return the integer metric over contiguous segments that is suggested by the samples."
+        ),
+        hint_level_1="Repeated characters force the active segment to shift forward.",
+        hint_level_2="A sliding window with last-seen positions works efficiently.",
+        hint_level_3="Return the length of the longest substring with all distinct characters.",
+        contract=FunctionContract(parameter_types=("str",), return_type="int"),
+        case_factory=_case_longest_unique,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("hard",),
+    ),
+    _Template(
+        key="search-grid-navigation-v2",
+        theme="Algorithms",
+        prompt=(
+            "Input is a grid made from S, E, ., and #. Return the integer score implied by the samples "
+            "for traversing that grid."
+        ),
+        hint_level_1="Moves are only up, down, left, or right through non-wall cells.",
+        hint_level_2="Think in terms of expanding reachable cells level by level from S.",
+        hint_level_3="Return the fewest moves from S to E, or -1 if E cannot be reached.",
+        contract=FunctionContract(parameter_types=("list[str]",), return_type="int"),
+        case_factory=_case_maze,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("expert",),
+    ),
+    _Template(
+        key="numeric-gcd-value-v1",
+        theme="Numeric",
+        prompt=(
+            "Given two positive integers, return the largest integer that divides both inputs."
+        ),
+        hint_level_1="The answer always divides both numbers exactly.",
+        hint_level_2="The answer is as large as possible while still dividing both.",
+        hint_level_3="Return gcd(a, b).",
+        contract=FunctionContract(
+            parameter_types=("int", "int"),
+            return_type="int",
+        ),
+        case_factory=_case_gcd_value,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("easy",),
+    ),
+    _Template(
+        key="numeric-lcm-value-v1",
+        theme="Numeric",
+        prompt=(
+            "Given two positive integers, return the smallest positive integer that is a multiple of both."
+        ),
+        hint_level_1="The result must be divisible by both inputs.",
+        hint_level_2="The result is the minimum positive shared multiple.",
+        hint_level_3="Return lcm(a, b).",
+        contract=FunctionContract(
+            parameter_types=("int", "int"),
+            return_type="int",
+        ),
+        case_factory=_case_lcm_value,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("easy",),
+    ),
+    _Template(
+        key="numeric-prime-number-v1",
+        theme="Numeric",
+        prompt=("Given an integer, return whether it is prime."),
+        hint_level_1="Prime numbers are integers greater than 1.",
+        hint_level_2="A prime has exactly two positive divisors: 1 and itself.",
+        hint_level_3="Return True iff n has no divisor in 2..sqrt(n).",
+        contract=FunctionContract(
+            parameter_types=("int",),
+            return_type="bool",
+        ),
+        case_factory=_case_prime_number,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("medium",),
+    ),
+    _Template(
+        key="numeric-total-factor-count-v1",
+        theme="Numeric",
+        prompt=(
+            "Given a list of positive integers, return the total number of positive factors across all numbers in the list."
+        ),
+        hint_level_1="Each integer contributes the count of its own positive divisors.",
+        hint_level_2="Compute divisor counts per value, then sum them.",
+        hint_level_3="Return sum(d(n) for n in values), where d(n) is the divisor count.",
+        contract=FunctionContract(
+            parameter_types=("list[int]",),
+            return_type="int",
+        ),
+        case_factory=_case_total_factor_count,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("hard",),
+    ),
+    _Template(
+        key="numeric-linear-transform-v1",
+        theme="Numeric",
+        prompt=(
+            "A deterministic linear transformation is used across this match. "
+            "`examples` contains visible [input, output] pairs generated by that same hidden rule. "
+            "Implement solution(value, examples) so it applies the same rule to `value`."
+        ),
+        hint_level_1="The hidden rule has the form output = a*x + b.",
+        hint_level_2="The same constants a and b are reused for every case in the match.",
+        hint_level_3="Infer a and b from sample pairs, then compute a*value + b.",
+        contract=FunctionContract(
+            parameter_types=("int", "list[list[int]]"),
+            return_type="int",
+            parameter_names=("value", "samples"),
+        ),
+        case_factory=_case_linear_transform,
+        variable_factory=_variables_linear_transform,
+        shared_input_factory=_sample_pairs_shared_scalar_inputs,
+        difficulties=("expert",),
     ),
 )
 
@@ -1227,11 +1538,16 @@ _THEME_ALIASES = {
     "Algorithms - Two sum indices": "Algorithms",
     "Algorithms - Merge overlapping intervals": "Algorithms",
     "Algorithms - Product of array except self": "Algorithms",
-    "Search - Minimum path length in char maze": "Search",
-    "Search - Knight shortest move count": "Search",
+    "Search - Minimum path length in char maze": "Algorithms",
+    "Search - Knight shortest move count": "Algorithms",
+    "Strings - Longest unique substring length": "Algorithms",
+    "Data structures - Balanced brackets validator": "Algorithms",
+    "Greedy - Non-overlapping interval count": "Algorithms",
     "Numeric - GCD and LCM pair": "Numeric",
+    "Numeric - GCD": "Numeric",
+    "Numeric - LCM": "Numeric",
+    "Numeric - Prime numbers": "Numeric",
+    "Numeric - Total number of factors": "Numeric",
+    "Numeric - AX plus B linear transform": "Numeric",
     "Numeric - Fast modular exponent": "Numeric",
-    "Strings - Longest unique substring length": "Strings",
-    "Data structures - Balanced brackets validator": "Data structures",
-    "Greedy - Non-overlapping interval count": "Greedy",
 }

@@ -63,6 +63,7 @@ Top-level layout:
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
   - Converts domain/store objects into API payloads (`_party_payload`, `_match_payload`, `_judge_result_payload`).
   - Also exposes ranked queue payloads via `_ranked_queue_payload`.
+  - Match payloads include `template_key` so the client can apply template-specific UI behavior.
   - Enables permissive CORS headers for local frontend dev.
   - Defaults to `SqliteStore` using `backend/data/yhack.sqlite3` unless `YHACK_DB_PATH` is set.
 
@@ -73,6 +74,7 @@ Top-level layout:
 
 - `backend/src/constants.py`
   - Canonical theme catalog (`THEMES`) used by generation and mode logic.
+  - Current themes: `Cryptography`, `Algorithms`, `Numeric`.
 
 - `backend/src/rating.py`
   - Mode resolution (`ranked` falls back to `casual` if guests exist).
@@ -85,7 +87,10 @@ Top-level layout:
   - Puzzle generation core.
   - Defines `TestCase`, `FunctionContract`, `PuzzleInstance`, variable schema parsing/sampling.
   - Generates deterministic sample/hidden tests from `theme + difficulty + seed`.
+  - Starts each puzzle with 3 visible sample tests.
   - Maintains template registry (`_TEMPLATES`) and mapping by theme/key.
+  - `Algorithms` now contains classic algorithm/search/string/data-structure/greedy templates with explicit difficulty assignments covering easy/medium/hard/expert.
+  - `Numeric` includes dedicated templates for GCD, LCM, prime checking, total factor-count summation, and linear `a*x + b` inference.
   - Produces `fingerprint` (template/params context) and `signature` (includes all tests) hashes.
   - Renders hints with Jinja templates.
   - Builds solution scaffold from contract.
@@ -113,6 +118,8 @@ Top-level layout:
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
+    - Match participants can add/update/delete visible sample tests during a match.
+    - Custom sample edits validate argument arity against puzzle contract and recompute expected outputs from the active puzzle template; for templates with shared example inputs, clients may send either primary args only or full invocation args (shared suffix is immutable).
     - Ranked theme rotation avoids repeats until all themes are used once.
 
 ## Backend API Quick Reference
@@ -153,6 +160,7 @@ Defined in `backend/src/app.py`:
   - `POST /api/matches/<match_id>/test` (sample tests only)
   - `POST /api/matches/<match_id>/submit` (sample + hidden; includes `finished` in response)
   - `POST /api/matches/<match_id>/promote-failed-test`
+  - `POST /api/matches/<match_id>/sample-tests` (`action=add|update|delete`)
   - `POST /api/matches/<match_id>/hint`
   - `POST /api/matches/<match_id>/forfeit` (includes `finished` in response)
   - `POST /api/matches/<match_id>/finish`
@@ -192,6 +200,7 @@ Defined in `backend/src/app.py`:
     - casual party lifecycle, ranked queue polling, and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
+    - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
     - routing between subviews (`home`, `arena`, `leaderboard`, `settings`, `postmatch`)
@@ -208,7 +217,12 @@ Defined in `backend/src/app.py`:
   - In casual party mode, setup fields and party lobby render in a two-column layout on desktop, with primary action buttons kept in the bottom action row.
 
 - `frontend/src/components/ArenaView.svelte`
-  - Match UI: samples, hints, failed hidden case promotion, editor, console, standings.
+  - Match UI: samples with inline input editing inside the sample grid (save on blur), auto-resizing sample input textareas, output auto-refresh, sample delete/add actions, hints, failed hidden case promotion, editor, console, standings.
+  - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
+  - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
+  - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args used by locked cipher templates.
+  - Submit failure UI surfaces a direct "Add first failed test to samples" action (in the failure card and near submit result status) that triggers hidden-test promotion, and a submit-status action for sample failures that duplicates the first failed sample into the sample list.
+  - Caesar/substitution cryptography templates keep sample inputs read-only because shared example inputs are auto-generated.
 
 - `frontend/src/components/LeaderboardView.svelte`
   - Ranked leaderboard display and refresh.
@@ -274,6 +288,7 @@ Implication: server restart drops active parties/matches but keeps user accounts
 - `frontend/src/App.svelte` is very large; prefer extracting cohesive logic into utilities/components when editing substantial new behavior.
 - `frontend/public/engimga.html` is not part of active app flow; avoid changing it unless explicitly requested.
 - Theme names are validated against `THEMES`; theme/template sync is enforced in `puzzle.py` module initialization.
+- Sample editor input in the frontend supports `argN = <json>` lines (and accepts raw JSON-array format); outputs are recomputed server-side from the active puzzle rule.
 - Judge security is constrained but still process-based Python execution; treat sandbox changes as security-sensitive.
 
 ## Documentation Discipline for Future Agents

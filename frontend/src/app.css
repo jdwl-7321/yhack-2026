@@ -1199,8 +1199,9 @@ select:focus {
 }
 
 .samples-scroll {
-  max-height: 260px;
-  overflow: auto;
+  max-height: 15.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: 0.45rem;
   background-color: var(--bg-color);
 }
@@ -1209,7 +1210,7 @@ select:focus {
   display: grid;
   grid-template-columns: 3rem minmax(0, 1fr) minmax(0, 1fr);
   align-items: stretch;
-  min-width: 520px;
+  border: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
 .sample-head {
@@ -1218,11 +1219,15 @@ select:focus {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 0.6rem 0.7rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 28%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
   background-color: var(--bg-color);
   position: sticky;
   top: 0;
   z-index: 1;
+}
+
+.sample-head + .sample-head {
+  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
 .index-head {
@@ -1231,17 +1236,20 @@ select:focus {
 
 .sample-index {
   display: block;
+  box-sizing: border-box;
   color: var(--sub-color);
   font-size: 0.8rem;
   line-height: 1.4;
   padding: 0.7rem 0.3rem;
   text-align: center;
   border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  align-self: stretch;
 }
 
 .sample-cell {
   display: block;
   margin: 0;
+  box-sizing: border-box;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--main-color);
@@ -1250,6 +1258,85 @@ select:focus {
   line-height: 1.4;
   border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
   border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+}
+
+.sample-input-edit {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  resize: none;
+  min-height: calc(1.4em + 0.2rem);
+  overflow: hidden;
+  color: var(--main-color);
+  font-size: 0.83rem;
+  line-height: 1.4;
+  font-family: var(--font-family);
+  outline: none;
+  padding: 0.7rem;
+  white-space: pre-wrap;
+}
+
+.sample-input-edit::placeholder {
+  color: var(--sub-color);
+}
+
+.sample-delete-button {
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--error-color) 18%, transparent);
+  color: var(--error-color);
+  width: 1.45rem;
+  height: 1.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sample-delete-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sample-index-add {
+  font-weight: 700;
+}
+
+.sample-output-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sample-output-cell pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--main-color);
+  flex: 1;
+}
+
+.sample-lock-note {
+  margin: 0;
+  color: var(--sub-color);
+  font-size: 0.72rem;
+}
+
+.sample-output-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  color: var(--sub-color);
+}
+
+.sample-output-hint .btn {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.74rem;
 }
 
 .hint-stack {
@@ -1595,6 +1682,10 @@ select:focus {
 .result-pill.error {
   color: var(--error-color);
   background: color-mix(in srgb, var(--error-color) 14%, transparent);
+}
+
+.result-followup {
+  margin-top: 0.35rem;
 }
 
 .standings-card {
@@ -2382,6 +2473,11 @@ footer a:hover {
 
   .game-layout {
     grid-template-columns: 1fr;
+  }
+
+  .sample-output-hint {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   #leaderboard-view {

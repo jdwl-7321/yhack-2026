@@ -921,6 +921,66 @@ def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
     assert len(refreshed_match["sample_tests"]) == 4
 
 
+def test_sample_tests_can_be_added_updated_and_deleted() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    user, match = _start_single_player_match(client, seed=17)
+
+    original_samples = match["sample_tests"]
+    assert len(original_samples) == 3
+
+    add_response = client.post(
+        f"/api/matches/{match['match_id']}/sample-tests",
+        json={
+            "user_id": user["id"],
+            "action": "add",
+            "inputs": [original_samples[0]["inputs"][0]],
+        },
+    )
+    assert add_response.status_code == 200
+    add_payload = add_response.get_json()
+    assert add_payload is not None
+    assert len(add_payload["sample_tests"]) == 4
+
+    examples = original_samples[0]["inputs"][1]
+    assert isinstance(examples, list) and examples
+    probe_pair = examples[0]
+    assert isinstance(probe_pair, list) and len(probe_pair) == 2
+    inferred_key = int(probe_pair[0]) ^ int(probe_pair[1])
+    expected_added = (int(original_samples[0]["inputs"][0]) ^ inferred_key) & 0xFF
+    assert add_payload["sample_tests"][-1]["expected"] == expected_added
+
+    updated_value = (int(original_samples[0]["inputs"][0]) + 7) % 256
+    expected_updated = (updated_value ^ inferred_key) & 0xFF
+
+    update_response = client.post(
+        f"/api/matches/{match['match_id']}/sample-tests",
+        json={
+            "user_id": user["id"],
+            "action": "update",
+            "index": 0,
+            "inputs": [updated_value, examples],
+        },
+    )
+    assert update_response.status_code == 200
+    update_payload = update_response.get_json()
+    assert update_payload is not None
+    assert update_payload["sample_tests"][0]["expected"] == expected_updated
+
+    delete_response = client.post(
+        f"/api/matches/{match['match_id']}/sample-tests",
+        json={
+            "user_id": user["id"],
+            "action": "delete",
+            "index": 3,
+        },
+    )
+    assert delete_response.status_code == 200
+    delete_payload = delete_response.get_json()
+    assert delete_payload is not None
+    assert len(delete_payload["sample_tests"]) == 3
+
+
 def test_ranked_theme_rotation_uses_all_themes_before_repeat() -> None:
     data = MemoryStore()
     leader = data.create_user(name="CycleLeader", guest=False, elo=1000)

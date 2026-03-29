@@ -14,6 +14,7 @@ from judge import JudgeResult, judge_submission
 from puzzle import (
     PuzzleInstance,
     TestCase,
+    expected_output_for_primary_inputs,
     generate_additional_hidden_test,
     generate_puzzle,
 )
@@ -527,6 +528,47 @@ class MemoryStore:
         player.last_failed_hidden_test = None
         return match.puzzle.sample_tests
 
+    def add_sample_test(
+        self,
+        *,
+        match_id: str,
+        user_id: str,
+        inputs: list[object],
+    ) -> list[TestCase]:
+        match = self._require_match(match_id)
+        self._require_player(match, user_id)
+        case = self._build_custom_sample_case(match=match, inputs=inputs)
+        match.puzzle.sample_tests.append(case)
+        return match.puzzle.sample_tests
+
+    def update_sample_test(
+        self,
+        *,
+        match_id: str,
+        user_id: str,
+        index: int,
+        inputs: list[object],
+    ) -> list[TestCase]:
+        match = self._require_match(match_id)
+        self._require_player(match, user_id)
+        self._require_sample_test_index(match=match, index=index)
+        case = self._build_custom_sample_case(match=match, inputs=inputs)
+        match.puzzle.sample_tests[index] = case
+        return match.puzzle.sample_tests
+
+    def delete_sample_test(
+        self,
+        *,
+        match_id: str,
+        user_id: str,
+        index: int,
+    ) -> list[TestCase]:
+        match = self._require_match(match_id)
+        self._require_player(match, user_id)
+        self._require_sample_test_index(match=match, index=index)
+        match.puzzle.sample_tests.pop(index)
+        return match.puzzle.sample_tests
+
     def request_hint(self, *, match_id: str, user_id: str) -> tuple[int, str]:
         match = self._require_match(match_id)
         if match.locked:
@@ -818,6 +860,66 @@ class MemoryStore:
         if user is None:
             raise ValueError("User not found")
         return user
+
+    @staticmethod
+    def _require_sample_test_index(*, match: Match, index: int) -> None:
+        if index < 0 or index >= len(match.puzzle.sample_tests):
+            raise ValueError("sample test index out of range")
+
+    @staticmethod
+    def _validate_case_value(value: object) -> None:
+        if isinstance(value, (str, int, float, bool)):
+            return
+        if isinstance(value, list):
+            for item in value:
+                MemoryStore._validate_case_value(item)
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ValueError("sample test object keys must be strings")
+                MemoryStore._validate_case_value(item)
+            return
+        raise ValueError(
+            "sample test values must use JSON-compatible primitives, lists, and objects"
+        )
+
+    @staticmethod
+    def _build_custom_sample_case(
+        *,
+        match: Match,
+        inputs: list[object],
+    ) -> TestCase:
+        primary_arity = len(match.puzzle.contract.parameter_types) - len(
+            match.puzzle.shared_inputs
+        )
+        total_arity = len(match.puzzle.contract.parameter_types)
+        if len(inputs) == total_arity and total_arity != primary_arity:
+            expected_shared_inputs = list(match.puzzle.shared_inputs)
+            provided_shared_inputs = inputs[primary_arity:]
+            if provided_shared_inputs != expected_shared_inputs:
+                raise ValueError("shared sample inputs cannot be edited")
+            primary_inputs = inputs[:primary_arity]
+        elif len(inputs) == primary_arity:
+            primary_inputs = inputs
+        else:
+            raise ValueError(
+                "inputs must contain either primary args only "
+                f"({primary_arity}) or full invocation args ({total_arity})"
+            )
+
+        for value in primary_inputs:
+            MemoryStore._validate_case_value(value)
+
+        try:
+            expected_output = expected_output_for_primary_inputs(
+                template_key=match.puzzle.template_key,
+                variables=match.puzzle.variables,
+                primary_inputs=primary_inputs,
+            )
+        except ValueError:
+            raise ValueError("sample inputs are invalid for this match") from None
+        return TestCase(inputs=tuple(primary_inputs), output=expected_output)
 
     def _require_party(self, code: str) -> Party:
         party = self.parties.get(code)
