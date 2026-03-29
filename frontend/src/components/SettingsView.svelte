@@ -43,6 +43,7 @@
   export let activeEditorTheme: BundledTheme = "github-dark-default";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
+  export let resetThemePreferences: () => void = () => {};
   export let editorFontFamily: EditorFontFamily = "roboto-mono";
   export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];
   export let setEditorFontFamily: (family: EditorFontFamily) => void = () => {};
@@ -438,9 +439,19 @@
               </label>
             </div>
             <p class="settings-helper-copy">
-              Pick the code font and point size that feels best in the live
-              arena editor.
+              Pick the code font and point size that feels best across the
+              editor, settings, and match UI.
             </p>
+          </div>
+
+          <div class="settings-action-row settings-theme-actions">
+            <button
+              type="button"
+              class="btn"
+              on:click={resetThemePreferences}
+            >
+              Reset to defaults
+            </button>
           </div>
         </article>
 

@@ -1848,7 +1848,9 @@
       return;
     }
     const root = document.documentElement;
-    root.style.setProperty("--editor-font-family", editorFontFamilyCssValue());
+    const fontFamily = editorFontFamilyCssValue();
+    root.style.setProperty("--editor-font-family", fontFamily);
+    root.style.setProperty("--font-family", fontFamily);
     root.style.setProperty("--editor-font-size", `${editorFontSize}px`);
   }
 
@@ -1880,6 +1882,23 @@
     return editorFontFamilyById.get(family)?.label ??
       editorFontFamilyById.get(DEFAULT_EDITOR_FONT_FAMILY)?.label ??
       "Roboto Mono";
+  }
+
+  function resetThemePreferences(): void {
+    appearanceMode = "system";
+    lightEditorTheme = DEFAULT_LIGHT_EDITOR_THEME;
+    darkEditorTheme = DEFAULT_DARK_EDITOR_THEME;
+    editorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
+    editorFontSize = DEFAULT_EDITOR_FONT_SIZE;
+
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, appearanceMode);
+    localStorage.setItem(LIGHT_THEME_STORAGE_KEY, lightEditorTheme);
+    localStorage.setItem(DARK_THEME_STORAGE_KEY, darkEditorTheme);
+    localStorage.setItem(EDITOR_FONT_FAMILY_STORAGE_KEY, editorFontFamily);
+    localStorage.setItem(EDITOR_FONT_SIZE_STORAGE_KEY, String(editorFontSize));
+
+    applyEditorTypography();
+    syncThemeState();
   }
 
   function customShortcutLabel(action: EditorAction): string {
@@ -3073,6 +3092,7 @@
       {activeEditorTheme}
       {availableEditorThemes}
       {setEditorTheme}
+      {resetThemePreferences}
       {editorFontFamily}
       {editorFontFamilyOptions}
       {setEditorFontFamily}
