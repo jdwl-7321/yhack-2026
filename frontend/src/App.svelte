@@ -11,198 +11,43 @@
     bundledThemesInfo,
     type BundledTheme,
   } from "shiki/bundle/web";
-
-  type UiTheme = "light" | "dark";
-  type AppearanceMode = UiTheme | "system";
-  type View = "home" | "arena" | "leaderboard" | "postmatch" | "settings";
-  type KeybindMode = "normal" | "vim" | "custom";
-  type VimMode = "insert" | "normal";
-  type EditorAction = "submit" | "test" | "hint" | "forfeit";
-  type EditorFontSize = "compact" | "default" | "large";
-  type AuthMode = "register" | "login";
-  type Mode = "zen" | "casual" | "ranked";
-  type Difficulty = "easy" | "medium" | "hard" | "expert";
-  type ConsoleType = "info" | "system" | "success" | "error";
-
-  type SessionUser = {
-    id: string;
-    name: string;
-    guest: boolean;
-    elo: number;
-  };
-
-  type SessionPayload = {
-    authenticated: boolean;
-    user?: SessionUser;
-  };
-
-  type AuthResponse = {
-    user: SessionUser;
-  };
-
-  type Standing = {
-    placement: number;
-    user_id: string;
-    name: string;
-    elo: number;
-    solved: boolean;
-    hidden_passed: number;
-    hint_level: number;
-    forfeited: boolean;
-    rating_delta: number;
-  };
-
-  type LeaderboardEntry = {
-    placement: number;
-    user_id: string;
-    name: string;
-    elo: number;
-    guest: boolean;
-  };
-
-  type LeaderboardPayload = {
-    leaderboard: LeaderboardEntry[];
-    current_user: LeaderboardEntry | null;
-    total_players: number;
-  };
-
-  type MatchPayload = {
-    match_id: string;
-    party_code: string;
-    mode: Mode;
-    finished: boolean;
-    theme: string;
-    difficulty: Difficulty;
-    time_limit_seconds: number;
-    created_at: number;
-    prompt: string;
-    free_hint: string;
-    scaffold: string;
-    sample_tests: Array<{ input: string; output: string }>;
-    standings: Standing[];
-  };
-
-  type PartySettingsPayload = {
-    theme: string;
-    difficulty: Difficulty;
-    time_limit_seconds: number;
-    seed: number | null;
-  };
-
-  type PartyPayload = {
-    code: string;
-    join_code: string;
-    join_path: string;
-    mode: Mode;
-    leader_id: string;
-    member_limit: number;
-    is_full: boolean;
-    active_match_id: string | null;
-    active_match_finished: boolean | null;
-    settings: PartySettingsPayload;
-    members: SessionUser[];
-    invite_link: string;
-  };
-
-  type PostMatchState = {
-    reason: string;
-    mode: Mode;
-    theme: string;
-    difficulty: Difficulty;
-    time_limit_seconds: number;
-    standings: Standing[];
-  };
-
-  type LiveStatusTone = "neutral" | "ok" | "warn";
-
-  type FailedHiddenTest = {
-    input_str: string;
-    expected_output: string;
-    actual_output: string;
-  };
-
-  type JudgePayload = {
-    verdict: "accepted" | "sample_failed" | "wrong_answer" | "error";
-    sample_passed: number;
-    sample_total: number;
-    hidden_passed: number;
-    hidden_total: number;
-    runtime_ms: number;
-    message: string;
-    stdout: string;
-    first_failed_hidden_test: FailedHiddenTest | null;
-    sample_tests: Array<{ input: string; output: string }>;
-    standings: Standing[];
-  };
-
-  type ConsoleEntry = {
-    id: number;
-    text: string;
-    type: ConsoleType;
-  };
-
-  type EditorSnapshot = {
-    value: string;
-    selectionStart: number;
-    selectionEnd: number;
-  };
-
-  type ShikiThemeDefinition = {
-    colors?: Record<string, string>;
-    tokenColors?: Array<{
-      scope?: string | string[];
-      settings?: {
-        foreground?: string;
-      };
-    }>;
-  };
-
-  type EditorThemePalette = {
-    accent: string;
-    bg: string;
-    surface: string;
-    text: string;
-    mutedText: string;
-    panelBorder: string;
-    consoleBg: string;
-    success: string;
-    error: string;
-    editorBg: string;
-    editorText: string;
-    selection: string;
-    keyword: string;
-    string: string;
-    comment: string;
-    number: string;
-    functionName: string;
-  };
-
-  type AccountOutcome = "solved" | "forfeit";
-
-  type AccountRecentRun = {
-    match_id: string;
-    mode: Mode;
-    theme: string;
-    difficulty: Difficulty;
-    outcome: AccountOutcome;
-    hidden_passed: number;
-    rating_delta: number;
-    at: string;
-  };
-
-  type AccountStats = {
-    matchesStarted: number;
-    matchesSolved: number;
-    rankedFinished: number;
-    rankedWins: number;
-    hintsUsed: number;
-    sampleRuns: number;
-    submissions: number;
-    forfeits: number;
-    bestHiddenPassed: number;
-    recentRuns: AccountRecentRun[];
-    recordedMatchIds: string[];
-  };
+  import AppHeader from "./components/AppHeader.svelte";
+  import HomeView from "./components/HomeView.svelte";
+  import LeaderboardView from "./components/LeaderboardView.svelte";
+  import SettingsView from "./components/SettingsView.svelte";
+  import PostMatchView from "./components/PostMatchView.svelte";
+  import ArenaView from "./components/ArenaView.svelte";
+  import type {
+    AccountOutcome,
+    AccountRecentRun,
+    AccountStats,
+    AppearanceMode,
+    AuthMode,
+    AuthResponse,
+    ConsoleEntry,
+    ConsoleType,
+    Difficulty,
+    EditorAction,
+    EditorFontSize,
+    EditorSnapshot,
+    EditorThemePalette,
+    JudgePayload,
+    KeybindMode,
+    LeaderboardEntry,
+    LeaderboardPayload,
+    LiveStatusTone,
+    MatchPayload,
+    Mode,
+    PartyPayload,
+    PostMatchState,
+    SessionPayload,
+    SessionUser,
+    ShikiThemeDefinition,
+    Standing,
+    UiTheme,
+    View,
+    VimMode,
+  } from "./app-types";
 
   const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
   const FALLBACK_THEME = "Cryptography";
@@ -2875,1475 +2720,184 @@
 </script>
 
 <div id="app-shell">
-  <header>
-    <button type="button" class="logo" on:click={showHome}>
-      <span class="logo-mark" aria-hidden="true">
-        <i class="fas fa-angle-left"></i>
-        <i class="fas fa-question logo-mark-question"></i>
-        <i class="fas fa-angle-right"></i>
-      </span>
-      <span class="text">enigma</span>
-    </button>
-
-    <nav aria-label="Primary">
-      <button
-        type="button"
-        class="nav-icon"
-        class:active={activeView === "home" || activeView === "arena"}
-        on:click={showPlayView}
-        title="Play"
-      >
-        <i class="fas fa-keyboard" aria-hidden="true"></i>
-      </button>
-      <button
-        type="button"
-        class="nav-icon"
-        class:active={activeView === "leaderboard"}
-        on:click={toggleLeaderboardView}
-        title="Leaderboard"
-      >
-        <i class="fas fa-crown" aria-hidden="true"></i>
-      </button>
-      <button type="button" class="nav-icon" title="Info">
-        <i class="fas fa-info" aria-hidden="true"></i>
-      </button>
-      <button
-        type="button"
-        class="nav-icon"
-        class:active={activeView === "settings"}
-        on:click={showSettings}
-        title="Settings"
-      >
-        <i class="fas fa-gear" aria-hidden="true"></i>
-      </button>
-      <button
-        type="button"
-        class="nav-mode-button"
-        title={`Appearance: ${appearanceMode}`}
-        on:click={cycleAppearanceMode}
-      >
-        <i
-          class={`fas ${appearanceMode === "light"
-            ? "fa-sun"
-            : appearanceMode === "dark"
-              ? "fa-moon"
-              : "fa-desktop"}`}
-          aria-hidden="true"
-        ></i>
-        <span>{appearanceMode}</span>
-      </button>
-      <div class="theme-menu-shell" bind:this={themeMenuEl}>
-        <button
-          type="button"
-          class="nav-theme-button"
-          on:click={toggleThemeMenu}
-          title={`${themeStatusText} · ${activeEditorThemeName}`}
-          aria-haspopup="dialog"
-          aria-expanded={themeMenuOpen}
-        >
-          <i class="fas fa-palette" aria-hidden="true"></i>
-        </button>
-
-        {#if themeMenuOpen}
-          <div class="theme-menu" role="dialog" aria-label="Theme settings">
-            <div class="theme-menu-section">
-              <div class="theme-menu-heading">
-                <span class="theme-menu-label">Theme</span>
-                <span class="theme-menu-meta">{themePref} mode</span>
-              </div>
-              <select
-                value={activeEditorTheme}
-                on:change={(event) => {
-                  setEditorTheme(
-                    (event.currentTarget as HTMLSelectElement)
-                      .value as BundledTheme,
-                  );
-                }}
-              >
-                {#each availableEditorThemes as themeOption}
-                  <option value={themeOption.id}>{themeOption.displayName}</option>
-                {/each}
-              </select>
-            </div>
-
-            <p class="theme-menu-summary">
-              Using <strong>{activeEditorThemeName}</strong> across the full {themePref} theme.
-            </p>
-          </div>
-        {/if}
-      </div>
-      <div class="account-menu-shell" bind:this={accountMenuEl}>
-        <button
-          type="button"
-          class="nav-icon"
-          class:active={accountMenuOpen}
-          title="Account"
-          aria-haspopup="dialog"
-          aria-expanded={accountMenuOpen}
-          on:click={toggleAccountMenu}
-        >
-          <i class="fas fa-user" aria-hidden="true"></i>
-        </button>
-
-        {#if accountMenuOpen}
-          <div class="account-menu" role="dialog" aria-label="Account summary">
-            {#if sessionUser}
-              <section class="account-summary-card">
-                <div class="account-avatar">{accountInitials(sessionUser.name)}</div>
-                <div class="account-summary-copy">
-                  <p class="eyebrow">Account</p>
-                  <h2>{sessionUser.name}</h2>
-                  <p class="account-summary-meta">
-                    {sessionUser.guest ? "Guest session" : "Registered account"} · {accountPercentileLabel}
-                  </p>
-                </div>
-                <div class="account-elo-pill">
-                  <span>ELO</span>
-                  <strong>{sessionUser.elo}</strong>
-                </div>
-              </section>
-
-              <section class="account-stat-grid">
-                <article class="account-stat-card">
-                  <span class="eyebrow">Global Rank</span>
-                  <strong>{accountRankLabel}</strong>
-                  <small>{leaderboardTotalPlayers} players tracked</small>
-                </article>
-                <article class="account-stat-card">
-                  <span class="eyebrow">Solve Rate</span>
-                  <strong>{accountSolveRate === null ? "--" : `${accountSolveRate}%`}</strong>
-                  <small>{accountStats.matchesSolved}/{accountStats.matchesStarted} cleared</small>
-                </article>
-                <article class="account-stat-card">
-                  <span class="eyebrow">Ranked Wins</span>
-                  <strong>{accountRankedWinLabel}</strong>
-                  <small>finished ranked runs</small>
-                </article>
-              </section>
-
-              <div class="account-content-grid">
-                <section class="account-card">
-                  <div class="account-card-head">
-                    <div>
-                      <p class="eyebrow">Recent Runs</p>
-                      <h3>Match activity</h3>
-                    </div>
-                    <span>{accountStats.recentRuns.length} tracked</span>
-                  </div>
-
-                  {#if accountStats.recentRuns.length === 0}
-                    <p class="account-empty">Finish a match to start building your recent history.</p>
-                  {:else}
-                    <div class="account-run-list">
-                      {#each accountStats.recentRuns as run}
-                        <article class="account-run-row">
-                          <div>
-                            <strong>{run.mode}</strong>
-                            <p>{run.theme} · {run.difficulty}</p>
-                          </div>
-                          <div class="account-run-meta">
-                            <span class:success-text={run.outcome === "solved"} class:error-text={run.outcome === "forfeit"}>
-                              {run.outcome === "solved" ? "Solved" : "Forfeit"}
-                            </span>
-                            <span>{run.hidden_passed} hidden</span>
-                            <span>{formatRatingDelta(run.rating_delta)} elo</span>
-                            <span>{formatActivityTime(run.at)}</span>
-                          </div>
-                        </article>
-                      {/each}
-                    </div>
-                  {/if}
-                </section>
-
-                <section class="account-card">
-                  <div class="account-card-head">
-                    <div>
-                      <p class="eyebrow">Overview</p>
-                      <h3>Current focus</h3>
-                    </div>
-                  </div>
-
-                  <div class="account-overview-list">
-                    <div class="account-overview-row">
-                      <span>Appearance</span>
-                      <strong>{appearanceMode === "system" ? `System · ${themePref}` : appearanceMode}</strong>
-                    </div>
-                    <div class="account-overview-row">
-                      <span>Theme</span>
-                      <strong>{activeEditorThemeName}</strong>
-                    </div>
-                    <div class="account-overview-row">
-                      <span>Sample runs</span>
-                      <strong>{accountStats.sampleRuns}</strong>
-                    </div>
-                    <div class="account-overview-row">
-                      <span>Hints used</span>
-                      <strong>{accountStats.hintsUsed}</strong>
-                    </div>
-                    <div class="account-overview-row">
-                      <span>Submissions</span>
-                      <strong>{accountStats.submissions}</strong>
-                    </div>
-                    <div class="account-overview-row">
-                      <span>Live race</span>
-                      <strong>{match ? `${match.mode} · ${timerText}` : "No active match"}</strong>
-                    </div>
-                  </div>
-                </section>
-              </div>
-
-              <div class="account-actions">
-                <button type="button" class="btn" on:click={toggleLeaderboardView}>
-                  Leaderboard
-                </button>
-                <button type="button" class="btn" on:click={showHome}>
-                  Home
-                </button>
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={showArena}
-                  disabled={!match || busy}
-                >
-                  Resume Race
-                </button>
-                <button type="button" class="btn primary" on:click={logout} disabled={busy}>
-                  Sign Out
-                </button>
-              </div>
-
-            {:else}
-              <section class="account-card account-empty-card">
-                <p class="eyebrow">Account</p>
-                <h2>Sign in to track your profile</h2>
-                <p class="account-empty">
-                  Your rank, solved matches, and recent activity will show up here once you have an active session.
-                </p>
-                <button
-                  type="button"
-                  class="btn primary"
-                  on:click={() => {
-                    showHome();
-                  }}
-                >
-                  Go to account setup
-                </button>
-              </section>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    </nav>
-  </header>
+  <AppHeader
+    {activeView}
+    {appearanceMode}
+    {themeStatusText}
+    {activeEditorThemeName}
+    {themePref}
+    {activeEditorTheme}
+    {availableEditorThemes}
+    {sessionUser}
+    {accountStats}
+    {accountSolveRate}
+    {accountRankLabel}
+    {accountPercentileLabel}
+    {accountRankedWinLabel}
+    {leaderboardTotalPlayers}
+    matchSummaryLabel={match ? `${match.mode} · ${timerText}` : "No active match"}
+    hasActiveMatch={!!match}
+    {busy}
+    bind:themeMenuOpen
+    bind:accountMenuOpen
+    bind:themeMenuEl
+    bind:accountMenuEl
+    {showHome}
+    {showPlayView}
+    {toggleLeaderboardView}
+    {showSettings}
+    {cycleAppearanceMode}
+    {toggleThemeMenu}
+    {toggleAccountMenu}
+    {setEditorTheme}
+    {accountInitials}
+    {formatActivityTime}
+    {formatRatingDelta}
+    {showArena}
+    {logout}
+  />
 
   {#if activeView === "home"}
-    <main id="home-view">
-      <div class="hero-text">
-        Infer the hidden rule. Write the Python snippet.<br />
-        <span>Defeat your opponents.</span>
-      </div>
-
-      <div class="mode-selector" role="group" aria-label="Play mode">
-        <button
-          type="button"
-          class="mode-card"
-          on:click={() => startRace("zen")}
-          disabled={!sessionUser || busy}
-        >
-          <i class="fas fa-mountain" aria-hidden="true"></i>
-          <h3>Zen Mode</h3>
-          <p>Solo play. No rating. Infinite time.</p>
-        </button>
-
-        <button
-          type="button"
-          class="mode-card"
-          on:click={() => startRace("casual")}
-          disabled={!sessionUser || busy}
-        >
-          <i class="fas fa-user-friends" aria-hidden="true"></i>
-          <h3>Casual Party</h3>
-          <p>Play with friends via link. Custom rules.</p>
-        </button>
-
-        <button
-          type="button"
-          class="mode-card"
-          on:click={() => startRace("ranked")}
-          disabled={!sessionUser || busy}
-        >
-          <i class="fas fa-trophy" aria-hidden="true"></i>
-          <h3>Ranked</h3>
-          <p>Random theme. 1 hour limit. ELO rating.</p>
-        </button>
-      </div>
-
-      <section class="home-panels">
-        {#if !sessionUser}
-          <article class="home-card auth-card">
-            <h2>Account</h2>
-
-            <div class="segmented auth-switch">
-              <button
-                type="button"
-                class:active={authMode === "register"}
-                on:click={() => {
-                  authMode = "register";
-                  error = "";
-                  notice = "";
-                }}
-              >
-                Create account
-              </button>
-              <button
-                type="button"
-                class:active={authMode === "login"}
-                on:click={() => {
-                  authMode = "login";
-                  error = "";
-                  notice = "";
-                }}
-              >
-                Sign in
-              </button>
-            </div>
-
-            <label>
-              <span>Display name</span>
-              <input
-                bind:value={authName}
-                maxlength="24"
-                autocomplete="username"
-              />
-            </label>
-
-            <label>
-              <span>Password</span>
-              <input
-                type="password"
-                bind:value={authPassword}
-                minlength="6"
-                autocomplete={authMode === "login"
-                  ? "current-password"
-                  : "new-password"}
-              />
-            </label>
-
-            <button
-              type="button"
-              class="btn primary wide"
-              on:click={() => authenticate(authMode)}
-              disabled={busy ||
-                authName.trim().length === 0 ||
-                authPassword.length < 6}
-            >
-              {authMode === "register" ? "Create Account" : "Sign In"}
-            </button>
-          </article>
-        {:else}
-          <article class="home-card setup-card">
-            <div class="setup-head">
-              <h2>Match Setup</h2>
-              <p>{sessionUser.name} | ELO {sessionUser.elo}</p>
-            </div>
-
-            <div class="field-grid">
-              <label>
-                <span>Mode</span>
-                <select bind:value={mode} disabled={!!party || busy}>
-                  {#each modeOptions as option}
-                    <option value={option}>{option.toUpperCase()}</option>
-                  {/each}
-                </select>
-              </label>
-
-              <label>
-                <span>Puzzle theme</span>
-                <select
-                  bind:value={selectedTheme}
-                  disabled={mode === "ranked" || !canEditPartySetup || busy}
-                >
-                  {#each themes as theme}
-                    <option value={theme}>{theme}</option>
-                  {/each}
-                </select>
-              </label>
-
-              <label>
-                <span>Difficulty</span>
-                <select
-                  bind:value={difficulty}
-                  disabled={mode === "ranked" || !canEditPartySetup || busy}
-                >
-                  {#each difficultyOptions as option}
-                    <option value={option}>{option.toUpperCase()}</option>
-                  {/each}
-                </select>
-              </label>
-
-              <label>
-                <span>Time (seconds)</span>
-                <input
-                  type="number"
-                  bind:value={timeLimitSeconds}
-                  min="60"
-                  max="7200"
-                  disabled={mode === "ranked" || !canEditPartySetup || busy}
-                />
-              </label>
-
-              <label>
-                <span>Party limit</span>
-                <input
-                  type="number"
-                  bind:value={partyLimit}
-                  min={isPartyMode ? PARTY_LIMIT_MIN : 1}
-                  max={isPartyMode ? PARTY_LIMIT_MAX : 1}
-                  disabled={!isPartyMode || (!isPartyLeader && !!party) || busy}
-                />
-              </label>
-
-            </div>
-
-            {#if isPartyMode}
-              <div class="party-lobby">
-                <div class="party-lobby-head">
-                  <h3>Party Lobby</h3>
-                  <div class="party-live-head-actions">
-                    <span class={`live-status-badge ${liveStatusTone}`}>
-                      <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
-                    </span>
-                    {#if party}
-                      <button
-                        type="button"
-                        class="btn"
-                        on:click={refreshPartyLobby}
-                        disabled={busy}
-                      >
-                        <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
-                      </button>
-                    {/if}
-                  </div>
-                </div>
-
-                {#if party}
-                  <div class="party-code-row mono">
-                    <span class="eyebrow">Join code</span>
-                    <strong>{party.join_code}</strong>
-                    <button
-                      type="button"
-                      class="btn"
-                      on:click={copyPartyInvite}
-                      disabled={busy}
-                    >
-                      <i class="fas fa-copy" aria-hidden="true"></i> Copy code
-                    </button>
-                  </div>
-
-                  {#if isPartyLeader}
-                    <div class="party-limit-row">
-                      <span>
-                        {party.members.length}/{party.member_limit} members
-                      </span>
-                      <div class="party-leader-actions">
-                        {#if party.mode === "casual"}
-                          <button
-                            type="button"
-                            class="btn"
-                            on:click={updatePartySetup}
-                            disabled={busy}
-                          >
-                            Update setup
-                          </button>
-                        {/if}
-                        <button
-                          type="button"
-                          class="btn"
-                          on:click={updatePartyLimit}
-                          disabled={busy}
-                        >
-                          Update limit
-                        </button>
-                      </div>
-                    </div>
-                  {:else}
-                    <p class="party-note">
-                      Waiting for the leader to update settings and start the match.
-                    </p>
-                  {/if}
-
-                  <div class="party-members">
-                    {#each party.members as member}
-                      <article class="party-member-row">
-                        <span class="mono">
-                          {member.name}
-                          {#if member.id === party.leader_id}
-                            <em>(leader)</em>
-                          {/if}
-                        </span>
-                        {#if isPartyLeader && member.id !== party.leader_id}
-                          <button
-                            type="button"
-                            class="btn"
-                            on:click={() => void kickPartyMember(member.id)}
-                            disabled={busy}
-                          >
-                            Kick
-                          </button>
-                        {/if}
-                      </article>
-                    {/each}
-                  </div>
-                {:else}
-                  <div class="party-join-row">
-                    <label>
-                      <span>Join code</span>
-                      <input
-                        value={joinCodeInput}
-                        maxlength="6"
-                        placeholder="ABC123"
-                        on:input={(event) => {
-                          joinCodeInput = normalizePartyCode(
-                            (event.currentTarget as HTMLInputElement).value,
-                          );
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      class="btn"
-                      on:click={joinPartyLobby}
-                      disabled={busy || normalizePartyCode(joinCodeInput).length !== 6}
-                    >
-                      Join Party
-                    </button>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-
-            <div class="home-actions">
-              <button
-                type="button"
-                class="btn primary"
-                on:click={launchConfiguredMatch}
-                disabled={busy || (isPartyMode && !!party && !isPartyLeader)}
-              >
-                {#if mode === "zen"}
-                  {match ? "Restart Match" : "Start Match"}
-                {:else if !party}
-                  Create Party
-                {:else if !isPartyLeader}
-                  Waiting for Leader
-                {:else}
-                  Start Party Match
-                {/if}
-              </button>
-
-              <button
-                type="button"
-                class="btn"
-                on:click={() => {
-                  if (match) {
-                    showArena();
-                  }
-                }}
-                disabled={!match || busy}
-              >
-                Resume Race
-              </button>
-
-              {#if party}
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={clearPartyLobby}
-                  disabled={busy}
-                >
-                  Close Lobby
-                </button>
-              {/if}
-
-              <button
-                type="button"
-                class="btn"
-                on:click={logout}
-                disabled={busy}
-              >
-                Sign Out
-              </button>
-            </div>
-          </article>
-        {/if}
-      </section>
-
-      {#if notice}
-        <p class="flash notice">{notice}</p>
-      {/if}
-      {#if error}
-        <p class="flash error">{error}</p>
-      {/if}
-    </main>
+    <HomeView
+      {sessionUser}
+      {busy}
+      bind:authMode
+      bind:authName
+      bind:authPassword
+      bind:mode
+      bind:difficulty
+      bind:selectedTheme
+      bind:timeLimitSeconds
+      bind:partyLimit
+      bind:joinCodeInput
+      {party}
+      {match}
+      {themes}
+      {modeOptions}
+      {difficultyOptions}
+      {isPartyMode}
+      {isPartyLeader}
+      {canEditPartySetup}
+      {liveStatusText}
+      {liveStatusTone}
+      {notice}
+      {error}
+      partyLimitMin={PARTY_LIMIT_MIN}
+      partyLimitMax={PARTY_LIMIT_MAX}
+      clearFlash={() => {
+        error = "";
+        notice = "";
+      }}
+      {startRace}
+      {authenticate}
+      {updatePartySetup}
+      {updatePartyLimit}
+      {copyPartyInvite}
+      {refreshPartyLobby}
+      {joinPartyLobby}
+      {kickPartyMember}
+      {clearPartyLobby}
+      {launchConfiguredMatch}
+      {showArena}
+      {logout}
+      {normalizePartyCode}
+    />
   {:else if activeView === "leaderboard"}
-    <main id="leaderboard-view">
-      <aside class="leaderboard-sidebar">
-        <section class="leaderboard-filter-card">
-          <p class="eyebrow">Ranked ladder</p>
-          <button type="button" class="leaderboard-filter active">
-            <i class="fas fa-globe" aria-hidden="true"></i>
-            all-time elo
-          </button>
-        </section>
-
-        <section class="leaderboard-filter-card">
-          <p class="eyebrow">Overview</p>
-          <div class="leaderboard-stat">
-            <span>Players</span>
-            <strong>{leaderboardTotalPlayers}</strong>
-          </div>
-          <div class="leaderboard-stat">
-            <span>Your rank</span>
-            <strong
-              >{leaderboardCurrentUser
-                ? `#${leaderboardCurrentUser.placement}`
-                : "Unranked"}</strong
-            >
-          </div>
-          <div class="leaderboard-stat">
-            <span>Your ELO</span>
-            <strong
-              >{leaderboardCurrentUser
-                ? leaderboardCurrentUser.elo
-                : "-"}</strong
-            >
-          </div>
-        </section>
-      </aside>
-
-      <section class="leaderboard-main">
-        <div class="leaderboard-title-row">
-          <div>
-            <p class="eyebrow">All-time</p>
-            <h1>Ranked Leaderboard</h1>
-          </div>
-          <span class="leaderboard-badge">{leaderboardTotalPlayers} players</span>
-        </div>
-
-        <div class="leaderboard-meta">
-          <span>Showing the top ranked players by ELO.</span>
-          <button type="button" class="btn" on:click={() => void loadLeaderboard()}>
-            Refresh
-          </button>
-        </div>
-
-        {#if leaderboard.length === 0}
-          <section class="leaderboard-empty-state">
-            <h2>Leaderboard</h2>
-            <p>Registered players will appear here once ranked runs are completed.</p>
-          </section>
-        {:else}
-          <div class="leaderboard-table-wrap">
-            <div class="leaderboard-table leaderboard-table-head" role="presentation">
-              <span>#</span>
-              <span>player</span>
-              <span>elo</span>
-              <span>percentile</span>
-              <span>status</span>
-            </div>
-
-            <div class="leaderboard-table-body">
-              {#each leaderboard as row}
-                <article
-                  class="leaderboard-table leaderboard-table-row"
-                  class:current={row.user_id === sessionUser?.id}
-                >
-                  <span class="leaderboard-cell rank">
-                    {#if row.placement === 1}
-                      <i class="fas fa-crown" aria-hidden="true"></i>
-                    {/if}
-                    {row.placement}
-                  </span>
-                  <span class="leaderboard-cell player">
-                    <strong>{row.name}</strong>
-                  </span>
-                  <span class="leaderboard-cell score">{row.elo}</span>
-                  <span class="leaderboard-cell percentile">
-                    {leaderboardPercentile(row.placement)}
-                  </span>
-                  <span class="leaderboard-cell note">
-                    {leaderboardRowNote(row)}
-                  </span>
-                </article>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </section>
-    </main>
+    <LeaderboardView
+      {leaderboard}
+      {sessionUser}
+      {leaderboardCurrentUser}
+      {leaderboardTotalPlayers}
+      {leaderboardPercentile}
+      {leaderboardRowNote}
+      {loadLeaderboard}
+    />
   {:else if activeView === "settings"}
-    <main id="settings-view">
-      <aside class="settings-sidebar">
-        <section class="settings-nav-card">
-          <p class="eyebrow">Workspace</p>
-          <h1>Settings</h1>
-          <p class="settings-sidebar-copy">
-            Tune the arena, editor, and account surface so the app matches your
-            workflow.
-          </p>
-
-          <div class="settings-summary-list">
-            <div class="settings-summary-item">
-              <span>Session</span>
-              <strong>{sessionUser ? sessionUser.name : "Guest mode"}</strong>
-            </div>
-            <div class="settings-summary-item">
-              <span>Appearance</span>
-              <strong>{themeStatusText}</strong>
-            </div>
-            <div class="settings-summary-item">
-              <span>Editor theme</span>
-              <strong>{activeEditorThemeName}</strong>
-            </div>
-          </div>
-
-          <nav class="settings-section-nav" aria-label="Settings sections">
-            <a href="#settings-profile" class="settings-section-link">
-              <i class="fas fa-id-badge" aria-hidden="true"></i>
-              <span>Profile</span>
-            </a>
-            <a href="#settings-behavior" class="settings-section-link">
-              <i class="fas fa-keyboard" aria-hidden="true"></i>
-              <span>Behavior</span>
-            </a>
-            <a href="#settings-editor" class="settings-section-link">
-              <i class="fas fa-palette" aria-hidden="true"></i>
-              <span>Editor Theme</span>
-            </a>
-            <a href="#settings-security" class="settings-section-link">
-              <i class="fas fa-lock" aria-hidden="true"></i>
-              <span>Security</span>
-            </a>
-          </nav>
-
-          <button type="button" class="btn primary wide" on:click={showPlayView}>
-            Back to Play
-          </button>
-        </section>
-      </aside>
-
-      <section class="settings-main">
-        <div class="settings-title-row">
-          <div>
-            <p class="eyebrow">Configuration</p>
-          </div>
-          <span class="leaderboard-badge">Local settings</span>
-        </div>
-
-        <section id="settings-profile" class="settings-panel">
-          <div class="settings-panel-heading">
-            <div>
-              <p class="eyebrow">Profile</p>
-              <h3>Pilot Identity</h3>
-            </div>
-            <span class="settings-panel-note">
-              {sessionUser ? "Connected account" : "Offline preview"}
-            </span>
-          </div>
-
-          <div class="settings-profile-grid">
-            <article class="settings-identity-card">
-              <div class="settings-avatar" aria-hidden="true">
-                {userInitial(sessionUser?.name)}
-              </div>
-              <div class="settings-identity-copy">
-                <strong>{sessionUser?.name ?? "Guest challenger"}</strong>
-                <span>
-                  {sessionUser
-                    ? `Current ladder rating: ${sessionUser.elo} ELO`
-                    : "Sign in to persist ranked progress and match history."}
-                </span>
-              </div>
-            </article>
-
-            <div class="settings-stat-grid">
-              <div class="settings-stat-card">
-                <span>Leaderboard rank</span>
-                <strong>
-                  {leaderboardCurrentUser
-                    ? `#${leaderboardCurrentUser.placement}`
-                    : "Unranked"}
-                </strong>
-              </div>
-              <div class="settings-stat-card">
-                <span>Live match</span>
-                <strong>{match ? match.mode.toUpperCase() : "None"}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-action-row">
-            {#if sessionUser}
-              <button type="button" class="btn" on:click={logout} disabled={busy}>
-                <i class="fas fa-right-from-bracket" aria-hidden="true"></i>
-                Sign Out
-              </button>
-            {/if}
-            <button
-              type="button"
-              class="btn"
-              on:click={() => void refreshSession()}
-              disabled={busy}
-            >
-              <i class="fas fa-arrows-rotate" aria-hidden="true"></i>
-              Refresh Session
-            </button>
-          </div>
-        </section>
-
-        <section id="settings-behavior" class="settings-panel">
-          <div class="settings-panel-heading">
-            <div>
-              <p class="eyebrow">Behavior</p>
-              <h3>Keybind Preferences</h3>
-            </div>
-            <span class="settings-panel-note">Editor movement and shortcuts</span>
-          </div>
-
-          <div class="settings-behavior-list">
-            <article class="settings-behavior-row">
-              <div class="settings-behavior-copy">
-                <div class="settings-behavior-label">
-                  <i class="fas fa-star" aria-hidden="true"></i>
-                  <span>Keybind profile</span>
-                </div>
-                <p>
-                  Normal keeps the default editor controls. Vim now uses a real
-                  CodeMirror Vim package instead of custom in-app motion logic.
-                  Custom lets users keep normal typing but tailor action
-                  shortcuts.
-                </p>
-              </div>
-              <div
-                class="settings-toggle-group"
-                role="group"
-                aria-label="Keybind profile"
-              >
-                {#each ["normal", "vim", "custom"] as option}
-                  <button
-                    type="button"
-                    class="settings-toggle-pill"
-                    class:active={keybindMode === option}
-                    on:click={() => setKeybindMode(option as KeybindMode)}
-                  >
-                    {option}
-                  </button>
-                {/each}
-              </div>
-            </article>
-
-            <article class="settings-behavior-row">
-              <div class="settings-behavior-copy">
-                <div class="settings-behavior-label">
-                  <i class="fas fa-bolt" aria-hidden="true"></i>
-                  <span>Action shortcuts</span>
-                </div>
-                <p>
-                  {#if keybindMode === "custom"}
-                    Custom mode uses `Alt` plus the letter you choose for each
-                    action below.
-                  {:else}
-                    Built-in shortcuts stay simple: `Ctrl+Enter` submits,
-                    `Ctrl+Shift+Enter` runs samples, `Alt+H` asks for a hint,
-                    and `Alt+F` forfeits.
-                  {/if}
-                </p>
-              </div>
-              <div class="settings-shortcut-summary">
-                <span class="settings-shortcut-chip">
-                  {keybindMode === "custom" ? customShortcutLabel("submit") : "Ctrl+Enter"}
-                  <strong>Submit</strong>
-                </span>
-                <span class="settings-shortcut-chip">
-                  {keybindMode === "custom"
-                    ? customShortcutLabel("test")
-                    : "Ctrl+Shift+Enter"}
-                  <strong>Samples</strong>
-                </span>
-                <span class="settings-shortcut-chip">
-                  {keybindMode === "custom" ? customShortcutLabel("hint") : "Alt+H"}
-                  <strong>Hint</strong>
-                </span>
-                <span class="settings-shortcut-chip">
-                  {keybindMode === "custom" ? customShortcutLabel("forfeit") : "Alt+F"}
-                  <strong>Forfeit</strong>
-                </span>
-              </div>
-            </article>
-
-            {#if keybindMode === "custom"}
-              <article class="settings-shortcut-card">
-                <div class="settings-shortcut-card-copy">
-                  <div class="settings-behavior-label">
-                    <i class="fas fa-sliders" aria-hidden="true"></i>
-                    <span>Custom shortcut setup</span>
-                  </div>
-                  <p>
-                    Each action uses `Alt` plus one letter or number. The
-                    defaults below are chosen to be easy to remember.
-                  </p>
-                </div>
-
-                <div class="settings-shortcut-grid">
-                  <label class="settings-shortcut-field">
-                    <span>Submit</span>
-                    <div class="settings-shortcut-input-shell">
-                      <span>Alt +</span>
-                      <input
-                        type="text"
-                        maxlength="1"
-                        value={customShortcuts.submit.toUpperCase()}
-                        on:input={(event) =>
-                          setCustomShortcut(
-                            "submit",
-                            (event.currentTarget as HTMLInputElement).value,
-                          )}
-                      />
-                    </div>
-                  </label>
-                  <label class="settings-shortcut-field">
-                    <span>Run samples</span>
-                    <div class="settings-shortcut-input-shell">
-                      <span>Alt +</span>
-                      <input
-                        type="text"
-                        maxlength="1"
-                        value={customShortcuts.test.toUpperCase()}
-                        on:input={(event) =>
-                          setCustomShortcut(
-                            "test",
-                            (event.currentTarget as HTMLInputElement).value,
-                          )}
-                      />
-                    </div>
-                  </label>
-                  <label class="settings-shortcut-field">
-                    <span>Request hint</span>
-                    <div class="settings-shortcut-input-shell">
-                      <span>Alt +</span>
-                      <input
-                        type="text"
-                        maxlength="1"
-                        value={customShortcuts.hint.toUpperCase()}
-                        on:input={(event) =>
-                          setCustomShortcut(
-                            "hint",
-                            (event.currentTarget as HTMLInputElement).value,
-                          )}
-                      />
-                    </div>
-                  </label>
-                  <label class="settings-shortcut-field">
-                    <span>Forfeit</span>
-                    <div class="settings-shortcut-input-shell">
-                      <span>Alt +</span>
-                      <input
-                        type="text"
-                        maxlength="1"
-                        value={customShortcuts.forfeit.toUpperCase()}
-                        on:input={(event) =>
-                          setCustomShortcut(
-                            "forfeit",
-                            (event.currentTarget as HTMLInputElement).value,
-                          )}
-                      />
-                    </div>
-                  </label>
-                </div>
-
-                {#if customShortcutError}
-                  <p class="flash error">{customShortcutError}</p>
-                {/if}
-              </article>
-            {/if}
-          </div>
-        </section>
-
-        <section id="settings-editor" class="settings-panel">
-          <div class="settings-panel-heading">
-            <div>
-              <p class="eyebrow">Editor</p>
-              <h3>Appearance & Theme</h3>
-            </div>
-            <span class="settings-panel-note">{themePref} mode live preview</span>
-          </div>
-
-          <div class="settings-editor-grid">
-            <article class="settings-control-card">
-              <div class="settings-control-group">
-                <span class="eyebrow">Appearance mode</span>
-                <div class="segmented">
-                  {#each APPEARANCE_MODE_ORDER as option}
-                    <button
-                      type="button"
-                      class:active={appearanceMode === option}
-                      on:click={() => setAppearanceMode(option)}
-                    >
-                      {option}
-                    </button>
-                  {/each}
-                </div>
-              </div>
-
-              <label>
-                <span>{themePref} theme palette</span>
-                <select
-                  value={activeEditorTheme}
-                  on:change={(event) => {
-                    setEditorTheme(
-                      (event.currentTarget as HTMLSelectElement)
-                        .value as BundledTheme,
-                    );
-                  }}
-                >
-                  {#each availableEditorThemes as themeOption}
-                    <option value={themeOption.id}>{themeOption.displayName}</option>
-                  {/each}
-                </select>
-              </label>
-
-              <div class="settings-control-group">
-                <span class="eyebrow">Editor font size</span>
-                <div class="segmented">
-                  {#each ["compact", "default", "large"] as option}
-                    <button
-                      type="button"
-                      class:active={editorFontSize === option}
-                      on:click={() => setEditorFontSize(option as EditorFontSize)}
-                    >
-                      {option}
-                    </button>
-                  {/each}
-                </div>
-                <p class="settings-helper-copy">
-                  Font size is usually more useful than a header palette toggle
-                  because it improves readability in the live coding view.
-                </p>
-              </div>
-            </article>
-
-            <article class="settings-preview-card">
-              <div class="settings-preview-labels">
-                <span>{themeStatusText}</span>
-                <strong>{activeEditorThemeName} · {editorFontSizeLabel()}</strong>
-              </div>
-              <div class="settings-code-preview" aria-hidden="true">
-                <pre><span class="preview-keyword">def</span> <span class="preview-function">solve</span>(line):
-    <span class="preview-keyword">return</span> <span class="preview-string">line</span>.strip()[::<span class="preview-number">-1</span>]  <span class="preview-comment"># hidden-rule ready</span></pre>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section id="settings-security" class="settings-panel">
-          <div class="settings-panel-heading">
-            <div>
-              <p class="eyebrow">Security</p>
-              <h3>Password</h3>
-            </div>
-            <span class="settings-panel-note">Classic password change flow</span>
-          </div>
-
-          {#if !sessionUser || sessionUser.guest}
-            <p class="settings-helper-copy">
-              Sign in with a registered account to change your password.
-            </p>
-          {:else}
-            <div class="settings-password-grid">
-              <label>
-                <span>Current password</span>
-                <input type="password" bind:value={passwordCurrent} />
-              </label>
-
-              <label>
-                <span>New password</span>
-                <input type="password" bind:value={passwordNext} minlength="6" />
-              </label>
-
-              <label>
-                <span>Confirm new password</span>
-                <input type="password" bind:value={passwordConfirm} minlength="6" />
-              </label>
-            </div>
-
-            {#if passwordError}
-              <p class="flash error">{passwordError}</p>
-            {/if}
-            {#if passwordNotice}
-              <p class="flash notice">{passwordNotice}</p>
-            {/if}
-
-            <div class="settings-action-row">
-              <button
-                type="button"
-                class="btn primary"
-                on:click={changePassword}
-                disabled={passwordBusy ||
-                  passwordCurrent.length === 0 ||
-                  passwordNext.length < 6 ||
-                  passwordConfirm.length < 6}
-              >
-                {passwordBusy ? "Updating..." : "Update Password"}
-              </button>
-            </div>
-          {/if}
-        </section>
-      </section>
-    </main>
+    <SettingsView
+      {sessionUser}
+      {busy}
+      {leaderboardCurrentUser}
+      {match}
+      {themeStatusText}
+      {activeEditorThemeName}
+      {showPlayView}
+      {logout}
+      {refreshSession}
+      {userInitial}
+      {keybindMode}
+      {setKeybindMode}
+      {customShortcuts}
+      {customShortcutLabel}
+      {customShortcutError}
+      {setCustomShortcut}
+      bind:appearanceMode
+      appearanceModeOrder={APPEARANCE_MODE_ORDER}
+      {setAppearanceMode}
+      {themePref}
+      {activeEditorTheme}
+      {availableEditorThemes}
+      {setEditorTheme}
+      {editorFontSize}
+      {setEditorFontSize}
+      {editorFontSizeLabel}
+      bind:passwordCurrent
+      bind:passwordNext
+      bind:passwordConfirm
+      {passwordBusy}
+      {passwordNotice}
+      {passwordError}
+      {changePassword}
+    />
   {:else if activeView === "postmatch"}
-    <main id="postmatch-view">
-      {#if !postMatch}
-        <section class="race-empty">
-          <p>No completed match data yet.</p>
-          <button type="button" class="btn primary" on:click={showHome}
-            >Back Home</button
-          >
-        </section>
-      {:else}
-        <section class="postmatch-hero">
-          <div>
-            <p class="eyebrow">Match complete</p>
-            <h1>{postMatch.mode.toUpperCase()} Results</h1>
-            <p class="postmatch-subtitle">
-              {postMatch.reason} · {postMatch.theme} · {postMatch.difficulty}
-            </p>
-          </div>
-          <div class="postmatch-actions">
-            <button type="button" class="btn" on:click={showHome}>Home</button>
-            <button type="button" class="btn" on:click={showArena} disabled={!match}
-              >View Arena</button
-            >
-          </div>
-        </section>
-
-        <section class="postmatch-stats-grid">
-          <article class="postmatch-stat-card">
-            <span class="eyebrow">Winner</span>
-            <strong>{postMatchWinner(postMatch.standings)?.name ?? "No winner"}</strong>
-          </article>
-          <article class="postmatch-stat-card">
-            <span class="eyebrow">Solved</span>
-            <strong>{postMatchSolvedCount(postMatch.standings)}/{postMatch.standings.length}</strong>
-          </article>
-          <article class="postmatch-stat-card">
-            <span class="eyebrow">Forfeits</span>
-            <strong>{postMatchForfeitCount(postMatch.standings)}</strong>
-          </article>
-          <article class="postmatch-stat-card">
-            <span class="eyebrow">Time Limit</span>
-            <strong>{formatDuration(postMatch.time_limit_seconds)}</strong>
-          </article>
-        </section>
-
-        <section class="postmatch-board">
-          <div class="standings-head">
-            <h3>Final board</h3>
-          </div>
-          <div class="standings-list">
-            {#each postMatch.standings as row}
-              <article class="standing-row">
-                <span class="mono">#{row.placement}</span>
-                <span class="name">{row.name}</span>
-                <span class="mono">hidden {row.hidden_passed}</span>
-                <span class="mono">hint {row.hint_level}</span>
-                <span class="mono">ELO {row.elo}</span>
-                <span class="mono delta">{formatRatingDelta(row.rating_delta)}</span>
-                <span class="state" class:ok={row.solved} class:bad={!row.solved}>
-                  {row.forfeited ? "FORFEIT" : row.solved ? "SOLVED" : "OPEN"}
-                </span>
-              </article>
-            {/each}
-          </div>
-        </section>
-      {/if}
-      {#if notice}
-        <p class="flash notice">{notice}</p>
-      {/if}
-      {#if error}
-        <p class="flash error">{error}</p>
-      {/if}
-    </main>
+    <PostMatchView
+      {postMatch}
+      matchId={match?.match_id ?? null}
+      {notice}
+      {error}
+      {showHome}
+      {showArena}
+      {postMatchWinner}
+      {postMatchSolvedCount}
+      {postMatchForfeitCount}
+      {formatDuration}
+      {formatRatingDelta}
+    />
   {:else}
-    <main id="race-view">
-      {#if !sessionUser}
-        <section class="race-empty">
-          <p>Sign in to start a match.</p>
-          <button type="button" class="btn primary" on:click={showHome}
-            >Back Home</button
-          >
-        </section>
-      {:else if !match}
-        <section class="race-empty">
-          <p>
-            Start a match from Home to load samples and the editor scaffold.
-          </p>
-          <button type="button" class="btn" on:click={showHome}
-            >Back Home</button
-          >
-          <button
-            type="button"
-            class="btn primary"
-            on:click={launchConfiguredMatch}
-            disabled={busy}
-          >
-            Start Match
-          </button>
-        </section>
-      {:else}
-        <div class="test-config">
-          <div class="group">
-            <span id="header-mode"
-              ><i class={`fas ${raceModeIcon(match.mode)}`} aria-hidden="true"
-              ></i>
-              {match.mode}</span
-            >
-          </div>
-          <div class="divider"></div>
-          <div class="group">
-            <span
-              ><i class="fas fa-brain" aria-hidden="true"></i>
-              {match.theme}</span
-            >
-          </div>
-          <div class="divider"></div>
-          <div class="group">
-            <span
-              ><i class="fas fa-layer-group" aria-hidden="true"></i>
-              {match.difficulty}</span
-            >
-          </div>
-          <div class="divider"></div>
-          <div class="group">
-            <span class="active-text"
-              ><i class="fas fa-clock" aria-hidden="true"></i> {timerText}</span
-            >
-          </div>
-        </div>
-
-        <div class="game-layout">
-          <section class="prompt-panel">
-            <article class="prompt-card">
-              {#if match.sample_tests.length > 0}
-                <section class="samples-panel">
-                  <p class="samples-title">Samples</p>
-                  <div class="samples-scroll">
-                    <div class="samples-grid">
-                      <span class="sample-head index-head">#</span>
-                      <span class="sample-head">Input</span>
-                      <span class="sample-head">Output</span>
-                      {#each match.sample_tests as sample, index}
-                        <span class="sample-index">{index + 1}</span>
-                        <pre class="sample-cell">{sample.input}</pre>
-                        <pre class="sample-cell">{sample.output}</pre>
-                      {/each}
-                    </div>
-                  </div>
-                </section>
-              {:else}
-                <p class="standings-empty">No sample tests available.</p>
-              {/if}
-
-              {#if hints.length > 0}
-                <div class="hint-stack">
-                  {#each hints as hintText, index}
-                    <p class="hint-item">Hint {index + 1}: {hintText}</p>
-                  {/each}
-                </div>
-              {/if}
-
-              {#if submitResult?.first_failed_hidden_test}
-                <div class="failed-case">
-                  <h3>First failed hidden test</h3>
-                  <p>Input</p>
-                  <pre>{submitResult.first_failed_hidden_test.input_str}</pre>
-                  <p>Expected output</p>
-                  <pre>{submitResult.first_failed_hidden_test
-                      .expected_output}</pre>
-                  <p>Your output</p>
-                  <pre>{submitResult.first_failed_hidden_test
-                      .actual_output}</pre>
-                  <button
-                    type="button"
-                    class="btn"
-                    on:click={promoteFailedTest}
-                    disabled={busy}
-                  >
-                    Use as sample test
-                  </button>
-                </div>
-              {/if}
-            </article>
-          </section>
-
-          <section class="editor-panel">
-              <div
-                class="editor-container"
-                style={`--editor-font-size: ${editorFontSize === "compact"
-                  ? "0.82rem"
-                  : editorFontSize === "large"
-                    ? "1rem"
-                    : "0.9rem"}`}
-              >
-                <div class="editor-stack">
-                  {#if keybindMode === "vim"}
-                    <div class="vim-editor-host" bind:this={vimEditorHostEl}></div>
-                  {:else}
-                    <pre
-                      class="line-numbers"
-                      aria-hidden="true"
-                      bind:this={lineNumbersEl}
-                      style:transform={`translateX(${-editorScrollLeft}px)`}
-                      ><code>{lineNumbers}</code></pre
-                    >
-                    <pre class="code-highlight" aria-hidden="true" bind:this={highlightEl}
-                      ><code class="hljs language-python">{@html highlightedCode || " "}</code></pre
-                    >
-                    <textarea
-                      id="code-editor"
-                      bind:value={code}
-                      spellcheck="false"
-                      autocomplete="off"
-                      wrap="off"
-                      on:input={handleEditorInput}
-                      on:keydown={handleEditorKeydown}
-                      on:scroll={syncEditorScroll}
-                    ></textarea>
-                  {/if}
-                </div>
-
-              <div class="editor-actions">
-                <span class="editor-mode-badge">
-                  {keybindMode === "vim"
-                    ? "vim package"
-                    : keybindMode === "custom"
-                      ? "custom shortcuts"
-                      : "normal shortcuts"}
-                </span>
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={requestHint}
-                  disabled={busy || hints.length >= 3}
-                >
-                  <i class="fas fa-lightbulb" aria-hidden="true"></i> Hint
-                </button>
-
-                <div class="action-group">
-                  <button
-                    type="button"
-                    class="btn"
-                    on:click={forfeit}
-                    disabled={busy}
-                  >
-                    <i class="fas fa-flag" aria-hidden="true"></i> Forfeit
-                  </button>
-                  <button
-                    type="button"
-                    class="btn"
-                    on:click={testSamples}
-                    disabled={busy}
-                  >
-                    <i class="fas fa-vial" aria-hidden="true"></i> Run Samples
-                  </button>
-                  <button
-                    type="button"
-                    class="btn primary"
-                    on:click={submit}
-                    disabled={busy}
-                  >
-                    {#if busy}
-                      <i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Running...
-                    {:else}
-                      <i class="fas fa-play" aria-hidden="true"></i> Submit
-                    {/if}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="console" id="console" bind:this={consoleEl}>
-              {#each consoleEntries as entry (entry.id)}
-                <div class={`console-line ${entry.type}`}>{entry.text}</div>
-              {/each}
-            </div>
-
-            {#if testResult}
-              <p
-                class="result-pill"
-                class:success={testResult.verdict === "accepted"}
-                class:error={testResult.verdict !== "accepted"}
-              >
-                TEST: {testResult.verdict} | sample {testResult.sample_passed}/{testResult.sample_total}
-                | {testResult.runtime_ms}ms
-              </p>
-            {/if}
-
-            {#if submitResult}
-              <p
-                class="result-pill"
-                class:success={submitResult.verdict === "accepted"}
-                class:error={submitResult.verdict !== "accepted"}
-              >
-                SUBMIT: {submitResult.verdict} | sample {submitResult.sample_passed}/{submitResult.sample_total}
-                | hidden {submitResult.hidden_passed}/{submitResult.hidden_total}
-                | {submitResult.runtime_ms}ms
-              </p>
-            {/if}
-          </section>
-        </div>
-
-        <section class="standings-card">
-          <div class="standings-head">
-            <h3>Standings</h3>
-            <button type="button" class="btn" on:click={showHome}
-              >Back Home</button
-            >
-          </div>
-
-          {#if standings.length === 0}
-            <p class="standings-empty">No standings yet.</p>
-          {:else}
-            <div class="standings-list">
-              {#each standings as row}
-                <article class="standing-row">
-                  <span class="mono">#{row.placement}</span>
-                  <span class="name">{row.name}</span>
-                  <span class="mono">hidden {row.hidden_passed}</span>
-                  <span class="mono">hint {row.hint_level}</span>
-                  <span class="mono">ELO {row.elo}</span>
-                  <span class="mono delta"
-                    >{row.rating_delta >= 0 ? "+" : ""}{row.rating_delta}</span
-                  >
-                  <span
-                    class="state"
-                    class:ok={row.solved}
-                    class:bad={!row.solved}
-                  >
-                    {row.forfeited ? "FORFEIT" : row.solved ? "SOLVED" : "OPEN"}
-                  </span>
-                </article>
-              {/each}
-            </div>
-          {/if}
-        </section>
-      {/if}
-
-      {#if notice}
-        <p class="flash notice">{notice}</p>
-      {/if}
-      {#if error}
-        <p class="flash error">{error}</p>
-      {/if}
-    </main>
+    <ArenaView
+      {sessionUser}
+      {match}
+      {busy}
+      {timerText}
+      {keybindMode}
+      {editorFontSize}
+      {lineNumbers}
+      {editorScrollLeft}
+      {highlightedCode}
+      bind:code
+      {hints}
+      {submitResult}
+      {testResult}
+      {standings}
+      {notice}
+      {error}
+      {consoleEntries}
+      bind:lineNumbersEl
+      bind:highlightEl
+      bind:consoleEl
+      bind:vimEditorHostEl
+      {launchConfiguredMatch}
+      {showHome}
+      {raceModeIcon}
+      {promoteFailedTest}
+      {requestHint}
+      {forfeit}
+      {testSamples}
+      {submit}
+      {handleEditorInput}
+      {handleEditorKeydown}
+      {syncEditorScroll}
+      {formatRatingDelta}
+    />
   {/if}
 
   <footer>
