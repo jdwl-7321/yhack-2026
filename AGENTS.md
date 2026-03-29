@@ -94,7 +94,7 @@ Top-level layout:
   - Maintains template registry (`_TEMPLATES`) and mapping by theme/key.
   - Caesar/substitution inference templates expose scaffold args as `arg1`/`samples`, with `samples` typed as `list[tuple[str, str]]` and backed by auto-generated sample pairs.
   - `Algorithms` now contains classic algorithm/search/string/data-structure/greedy templates with explicit difficulty assignments covering easy/medium/hard/expert.
-  - `Numeric` includes dedicated templates for GCD, LCM, prime checking, total factor-count summation, and linear `a*x + b` inference.
+  - `Numeric` includes dedicated templates for GCD, LCM, prime checking, hard-mode two-digit number-plus-reversed-number summation, and expert templates for total factor-count summation plus linear `a*x + b` inference.
   - Produces `fingerprint` (template/params context) and `signature` (includes all tests) hashes.
   - Renders hints with Jinja templates.
   - Builds solution scaffold from contract.
