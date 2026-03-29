@@ -875,6 +875,30 @@ select:focus {
   gap: 0.7rem;
 }
 
+.setup-body {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.match-setup-panel {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.setup-body.party-mode-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr);
+  align-items: start;
+}
+
+.setup-body.party-mode-layout .match-setup-panel {
+  border-radius: 0.6rem;
+  padding: 0.75rem;
+}
+
+.setup-body.party-mode-layout .field-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
 .home-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2391,6 +2415,10 @@ footer a:hover {
 
   .settings-nav-card {
     position: static;
+  }
+
+  .setup-body.party-mode-layout {
+    grid-template-columns: 1fr;
   }
 }
 

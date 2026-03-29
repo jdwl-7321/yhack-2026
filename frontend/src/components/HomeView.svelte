@@ -183,216 +183,219 @@
           <p>{sessionUser.name} | ELO {sessionUser.elo}</p>
         </div>
 
-        <div class="field-grid">
-          <label>
-            <span>Mode</span>
-            <select bind:value={mode} disabled={!!party || !!rankedQueue || busy}>
-              {#each modeOptions as option}
-                <option value={option}>{option.toUpperCase()}</option>
-              {/each}
-            </select>
-          </label>
-
-          {#if !isRankedMode}
-            <label>
-              <span>Puzzle theme</span>
-              <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
-                {#each themes as theme}
-                  <option value={theme}>{theme}</option>
-                {/each}
-              </select>
-            </label>
-
-            <label>
-              <span>Difficulty</span>
-              <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
-                {#each difficultyOptions as option}
-                  <option value={option}>{option.toUpperCase()}</option>
-                {/each}
-              </select>
-            </label>
-
-            <label>
-              <span>Time (seconds)</span>
-              <input
-                type="number"
-                bind:value={timeLimitSeconds}
-                min="60"
-                max="7200"
-                disabled={!canEditPartySetup || busy}
-              />
-            </label>
-
-            {#if isPartyMode}
+        <div class="setup-body" class:party-mode-layout={isPartyMode}>
+          <div class="match-setup-panel">
+            <div class="field-grid">
               <label>
-                <span>Party limit</span>
-                <input
-                  type="number"
-                  bind:value={partyLimit}
-                  min={partyLimitMin}
-                  max={partyLimitMax}
-                  disabled={(!isPartyLeader && !!party) || busy}
-                />
+                <span>Mode</span>
+                <select bind:value={mode} disabled={!!party || !!rankedQueue || busy}>
+                  {#each modeOptions as option}
+                    <option value={option}>{option.toUpperCase()}</option>
+                  {/each}
+                </select>
               </label>
-            {/if}
-          {/if}
 
-        </div>
+              {#if !isRankedMode}
+                <label>
+                  <span>Puzzle theme</span>
+                  <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
+                    {#each themes as theme}
+                      <option value={theme}>{theme}</option>
+                    {/each}
+                  </select>
+                </label>
 
-        {#if isPartyMode}
-          <div class="party-lobby">
-            <div class="party-lobby-head">
-              <h3>Party Lobby</h3>
-              <div class="party-live-head-actions">
-                <span class={`live-status-badge ${liveStatusTone}`}>
-                  <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
-                </span>
-                {#if party}
-                  <button
-                    type="button"
-                    class="btn"
-                    on:click={refreshPartyLobby}
-                    disabled={busy}
-                  >
-                    <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
-                  </button>
+                <label>
+                  <span>Difficulty</span>
+                  <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
+                    {#each difficultyOptions as option}
+                      <option value={option}>{option.toUpperCase()}</option>
+                    {/each}
+                  </select>
+                </label>
+
+                <label>
+                  <span>Time (seconds)</span>
+                  <input
+                    type="number"
+                    bind:value={timeLimitSeconds}
+                    min="60"
+                    max="7200"
+                    disabled={!canEditPartySetup || busy}
+                  />
+                </label>
+
+                {#if isPartyMode}
+                  <label>
+                    <span>Party limit</span>
+                    <input
+                      type="number"
+                      bind:value={partyLimit}
+                      min={partyLimitMin}
+                      max={partyLimitMax}
+                      disabled={(!isPartyLeader && !!party) || busy}
+                    />
+                  </label>
                 {/if}
-              </div>
+              {/if}
             </div>
+          </div>
 
-            {#if party}
-              <div class="party-code-row mono">
-                <span class="eyebrow">Join code</span>
-                <strong>{party.join_code}</strong>
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={copyPartyInvite}
-                  disabled={busy}
-                >
-                  <i class="fas fa-copy" aria-hidden="true"></i> Copy code
-                </button>
-              </div>
-
-              {#if isPartyLeader}
-                <div class="party-limit-row">
-                  <span>
-                    {party.members.length}/{party.member_limit} members
+          {#if isPartyMode}
+            <div class="party-lobby">
+              <div class="party-lobby-head">
+                <h3>Party Lobby</h3>
+                <div class="party-live-head-actions">
+                  <span class={`live-status-badge ${liveStatusTone}`}>
+                    <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
                   </span>
-                  <div class="party-leader-actions">
-                    {#if party.mode === "casual"}
-                      <button
-                        type="button"
-                        class="btn"
-                        on:click={updatePartySetup}
-                        disabled={busy}
-                      >
-                        Update setup
-                      </button>
-                    {/if}
+                  {#if party}
                     <button
                       type="button"
                       class="btn"
-                      on:click={updatePartyLimit}
+                      on:click={refreshPartyLobby}
                       disabled={busy}
                     >
-                      Update limit
+                      <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
                     </button>
-                  </div>
+                  {/if}
                 </div>
-              {:else}
-                <p class="party-note">
-                  Waiting for the leader to update settings and start the match.
-                </p>
-              {/if}
+              </div>
 
-              <div class="party-members">
-                {#each party.members as member}
-                  <article class="party-member-row">
-                    <span class="mono">
-                      {member.name}
-                      {#if member.id === party.leader_id}
-                        <em>(leader)</em>
-                      {/if}
-                    </span>
-                    {#if isPartyLeader && member.id !== party.leader_id}
-                      <button
-                        type="button"
-                        class="btn"
-                        on:click={() => void kickPartyMember(member.id)}
-                        disabled={busy}
-                      >
-                        Kick
-                      </button>
-                    {/if}
-                  </article>
-                {/each}
-              </div>
-            {:else}
-              <div class="party-join-row">
-                <label>
-                  <span>Join code</span>
-                  <input
-                    value={joinCodeInput}
-                    maxlength="6"
-                    placeholder="ABC123"
-                    on:input={(event) => {
-                      joinCodeInput = normalizePartyCode(
-                        (event.currentTarget as HTMLInputElement).value,
-                      );
-                    }}
-                  />
-                </label>
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={joinPartyLobby}
-                  disabled={busy || normalizePartyCode(joinCodeInput).length !== 6}
-                >
-                  Join Party
-                </button>
-              </div>
-            {/if}
-          </div>
-        {:else if isRankedMode}
-          <div class="party-lobby">
-            <div class="party-lobby-head">
-              <h3>Ranked Queue</h3>
-              <div class="party-live-head-actions">
-                <span class={`live-status-badge ${liveStatusTone}`}>
-                  <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
-                </span>
-                {#if rankedQueue}
+              {#if party}
+                <div class="party-code-row mono">
+                  <span class="eyebrow">Join code</span>
+                  <strong>{party.join_code}</strong>
                   <button
                     type="button"
                     class="btn"
-                    on:click={refreshRankedQueue}
+                    on:click={copyPartyInvite}
                     disabled={busy}
                   >
-                    <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
+                    <i class="fas fa-copy" aria-hidden="true"></i> Copy code
                   </button>
+                </div>
+
+                {#if isPartyLeader}
+                  <div class="party-limit-row">
+                    <span>
+                      {party.members.length}/{party.member_limit} members
+                    </span>
+                    <div class="party-leader-actions">
+                      {#if party.mode === "casual"}
+                        <button
+                          type="button"
+                          class="btn"
+                          on:click={updatePartySetup}
+                          disabled={busy}
+                        >
+                          Update setup
+                        </button>
+                      {/if}
+                      <button
+                        type="button"
+                        class="btn"
+                        on:click={updatePartyLimit}
+                        disabled={busy}
+                      >
+                        Update limit
+                      </button>
+                    </div>
+                  </div>
+                {:else}
+                  <p class="party-note">
+                    Waiting for the leader to update settings and start the match.
+                  </p>
                 {/if}
-              </div>
+
+                <div class="party-members">
+                  {#each party.members as member}
+                    <article class="party-member-row">
+                      <span class="mono">
+                        {member.name}
+                        {#if member.id === party.leader_id}
+                          <em>(leader)</em>
+                        {/if}
+                      </span>
+                      {#if isPartyLeader && member.id !== party.leader_id}
+                        <button
+                          type="button"
+                          class="btn"
+                          on:click={() => void kickPartyMember(member.id)}
+                          disabled={busy}
+                        >
+                          Kick
+                        </button>
+                      {/if}
+                    </article>
+                  {/each}
+                </div>
+              {:else}
+                <div class="party-join-row">
+                  <label>
+                    <span>Join code</span>
+                    <input
+                      value={joinCodeInput}
+                      maxlength="6"
+                      placeholder="ABC123"
+                      on:input={(event) => {
+                        joinCodeInput = normalizePartyCode(
+                          (event.currentTarget as HTMLInputElement).value,
+                        );
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={joinPartyLobby}
+                    disabled={busy || normalizePartyCode(joinCodeInput).length !== 6}
+                  >
+                    Join Party
+                  </button>
+                </div>
+              {/if}
             </div>
-
-            {#if rankedQueue}
-              <div class="party-code-row mono">
-                <span class="eyebrow">Current search</span>
-                <strong>
-                  ELO {rankedQueue.queued_elo} +/- {rankedQueue.search_range}
-                </strong>
+          {:else if isRankedMode}
+            <div class="party-lobby">
+              <div class="party-lobby-head">
+                <h3>Ranked Queue</h3>
+                <div class="party-live-head-actions">
+                  <span class={`live-status-badge ${liveStatusTone}`}>
+                    <i class="fas fa-signal" aria-hidden="true"></i> {liveStatusText}
+                  </span>
+                  {#if rankedQueue}
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={refreshRankedQueue}
+                      disabled={busy}
+                    >
+                      <i class="fas fa-rotate-right" aria-hidden="true"></i> Refresh
+                    </button>
+                  {/if}
+                </div>
               </div>
 
-              <p class="party-note">
-                Searching for an opponent. {rankedQueue.queued_players} player{rankedQueue.queued_players === 1 ? "" : "s"} currently waiting.
-              </p>
-            {:else}
-              <p class="party-note">
-                Ranked uses live matchmaking. Join the queue to get paired with a nearby ELO opponent in a 1v1 match.
-              </p>
-            {/if}
-          </div>
-        {/if}
+              {#if rankedQueue}
+                <div class="party-code-row mono">
+                  <span class="eyebrow">Current search</span>
+                  <strong>
+                    ELO {rankedQueue.queued_elo} +/- {rankedQueue.search_range}
+                  </strong>
+                </div>
+
+                <p class="party-note">
+                  Searching for an opponent. {rankedQueue.queued_players} player{rankedQueue.queued_players === 1 ? "" : "s"} currently waiting.
+                </p>
+              {:else}
+                <p class="party-note">
+                  Ranked uses live matchmaking. Join the queue to get paired with a nearby ELO opponent in a 1v1 match.
+                </p>
+              {/if}
+            </div>
+          {/if}
+        </div>
 
         <div class="home-actions">
           <button
