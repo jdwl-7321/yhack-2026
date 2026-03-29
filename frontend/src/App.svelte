@@ -25,7 +25,10 @@
   import SettingsView from "./components/SettingsView.svelte";
   import PostMatchView from "./components/PostMatchView.svelte";
   import ArenaView from "./components/ArenaView.svelte";
+  import AdminView from "./components/AdminView.svelte";
   import type {
+    AdminDashboardPayload,
+    AdminMatch,
     AccountOutcome,
     AccountRecentRun,
     AccountStats,
@@ -190,6 +193,7 @@
   let authPassword = "";
 
   let sessionUser: SessionUser | null = null;
+  let isAdmin = false;
   let activeView: View = "home";
 
   let mode: Mode = "zen";
@@ -235,6 +239,8 @@
   let leaderboard: LeaderboardEntry[] = [];
   let leaderboardCurrentUser: LeaderboardEntry | null = null;
   let leaderboardTotalPlayers = 0;
+  let adminUsers: SessionUser[] = [];
+  let adminMatches: AdminMatch[] = [];
   let code = "";
   let hints: string[] = [];
   let testResult: JudgePayload | null = null;
@@ -1861,6 +1867,63 @@
     themeMenuOpen = false;
   }
 
+  function clearAdminState(): void {
+    adminUsers = [];
+    adminMatches = [];
+  }
+
+  async function loadAdminDashboard(quiet = false): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      clearAdminState();
+      return;
+    }
+
+    if (!quiet) {
+      busy = true;
+      error = "";
+      notice = "";
+    }
+
+    try {
+      const payload = await api<AdminDashboardPayload>("/api/admin/dashboard");
+      adminUsers = payload.users;
+      adminMatches = payload.active_matches;
+      if (!quiet) {
+        notice = "Admin dashboard refreshed.";
+      }
+    } catch (err) {
+      clearAdminState();
+      if (!quiet) {
+        error = toErrorMessage(err);
+      }
+    } finally {
+      if (!quiet) {
+        busy = false;
+      }
+    }
+  }
+
+  function showAdmin(): void {
+    if (!sessionUser) {
+      activeView = "home";
+      return;
+    }
+    if (!isAdmin) {
+      activeView = "home";
+      error = "Admin access required.";
+      return;
+    }
+
+    activeView = "admin";
+    error = "";
+    notice = "";
+    accountMenuOpen = false;
+    themeMenuOpen = false;
+    void loadAdminDashboard(true).catch((err) => {
+      error = toErrorMessage(err);
+    });
+  }
+
   function showPlayView(): void {
     if (match && sessionUser) {
       showArena();
@@ -2570,6 +2633,117 @@
     leaderboardTotalPlayers = payload.total_players;
   }
 
+  async function resetAllElos(): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Reset ELO for every account to 1000? This cannot be undone.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ ok: boolean; updated_users: number; elo: number }>(
+        "/api/admin/elo/reset",
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      if (sessionUser) {
+        sessionUser = { ...sessionUser, elo: payload.elo };
+      }
+      await loadLeaderboard();
+      await loadAdminDashboard(true);
+      notice = `Reset ELO to ${payload.elo} for ${payload.updated_users} players.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function updateUserElo(userId: string, elo: number): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ user: SessionUser }>(
+        `/api/admin/users/${userId}/elo`,
+        {
+          method: "POST",
+          body: JSON.stringify({ elo }),
+        },
+      );
+      if (sessionUser.id === payload.user.id) {
+        sessionUser = { ...sessionUser, elo: payload.user.elo };
+      }
+      await loadLeaderboard();
+      await loadAdminDashboard(true);
+      notice = `Updated ${payload.user.name} to ELO ${payload.user.elo}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function deleteUserAccount(userId: string): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{
+        ok: boolean;
+        deleted_user: SessionUser;
+        cancelled_match_ids: string[];
+      }>(`/api/admin/users/${userId}`, { method: "DELETE" });
+      await loadLeaderboard();
+      await loadAdminDashboard(true);
+      const cancelled = payload.cancelled_match_ids.length;
+      notice = cancelled > 0
+        ? `Deleted ${payload.deleted_user.name}. Cancelled ${cancelled} active match${cancelled === 1 ? "" : "es"}.`
+        : `Deleted ${payload.deleted_user.name}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function cancelActiveMatch(matchId: string): Promise<void> {
+    if (!sessionUser || !isAdmin) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await api<{ match: AdminMatch }>(`/api/admin/matches/${matchId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await loadAdminDashboard(true);
+      notice = `Cancelled match ${matchId}.`;
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   function leaderboardPercentile(placement: number): string {
     if (leaderboardTotalPlayers <= 0) {
       return "Top 100%";
@@ -2615,7 +2789,9 @@
     if (!payload.authenticated || !payload.user) {
       forgetPartyCode(previousUserId);
       sessionUser = null;
+      isAdmin = false;
       accountStats = emptyAccountStats();
+      clearAdminState();
       accountMenuOpen = false;
       activeView = "home";
       match = null;
@@ -2628,10 +2804,20 @@
       return;
     }
     sessionUser = payload.user;
+    isAdmin = payload.is_admin;
+    if (!isAdmin) {
+      clearAdminState();
+      if (activeView === "admin") {
+        activeView = "home";
+      }
+    }
     loadAccountStats(payload.user);
     await loadLeaderboard();
     await refreshRankedQueue(true);
     await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
+    if (isAdmin && activeView === "admin") {
+      await loadAdminDashboard(true);
+    }
   }
 
   async function restorePartyAndMatch(
@@ -2709,6 +2895,7 @@
         body: JSON.stringify({ name: authName, password: authPassword }),
       });
       sessionUser = payload.user;
+      isAdmin = payload.is_admin;
       loadAccountStats(payload.user);
       authPassword = "";
       notice =
@@ -2733,7 +2920,9 @@
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
       forgetPartyCode(previousUserId);
       sessionUser = null;
+      isAdmin = false;
       accountStats = emptyAccountStats();
+      clearAdminState();
       accountMenuOpen = false;
       activeView = "home";
       match = null;
@@ -3825,6 +4014,7 @@
     {activeEditorTheme}
     {availableEditorThemes}
     {sessionUser}
+    {isAdmin}
     {accountStats}
     {accountSolveRate}
     {accountRankLabel}
@@ -3841,6 +4031,7 @@
     {showHome}
     {showPlayView}
     {toggleLeaderboardView}
+    {showAdmin}
     {showSettings}
     {setAppearanceMode}
     {cycleAppearanceMode}
@@ -3919,6 +4110,22 @@
       {leaderboardPercentile}
       {leaderboardRowNote}
       {loadLeaderboard}
+    />
+  {:else if activeView === "admin"}
+    <AdminView
+      {sessionUser}
+      {isAdmin}
+      {busy}
+      {adminUsers}
+      {adminMatches}
+      {notice}
+      {error}
+      {formatDuration}
+      refreshAdminDashboard={loadAdminDashboard}
+      {resetAllElos}
+      {updateUserElo}
+      {deleteUserAccount}
+      {cancelActiveMatch}
     />
   {:else if activeView === "settings"}
     <SettingsView

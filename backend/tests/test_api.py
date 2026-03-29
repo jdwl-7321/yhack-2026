@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from app import create_app
+from config import ADMIN_USERNAME
 from constants import THEMES
 from judge import JudgeResult
 import store as store_module
@@ -155,12 +156,23 @@ def _start_two_player_ranked_match(
     return leader, opponent, party, match
 
 
+def _register_admin(client: Any) -> dict[str, Any]:
+    register = client.post(
+        "/api/auth/register",
+        json={"name": ADMIN_USERNAME, "password": "secret123"},
+    )
+    assert register.status_code == 200
+    payload = register.get_json()
+    assert payload is not None
+    return payload["user"]
+
+
 def test_auth_session_register_login_logout() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
 
     initial_session = client.get("/api/auth/session").get_json()
-    assert initial_session == {"authenticated": False}
+    assert initial_session == {"authenticated": False, "is_admin": False}
 
     register = client.post(
         "/api/auth/register",
@@ -175,7 +187,10 @@ def test_auth_session_register_login_logout() -> None:
 
     logout = client.post("/api/auth/logout")
     assert logout.status_code == 200
-    assert client.get("/api/auth/session").get_json() == {"authenticated": False}
+    assert client.get("/api/auth/session").get_json() == {
+        "authenticated": False,
+        "is_admin": False,
+    }
 
     login = client.post(
         "/api/auth/login",
@@ -183,6 +198,161 @@ def test_auth_session_register_login_logout() -> None:
     )
     assert login.status_code == 200
     assert client.get("/api/auth/session").get_json()["authenticated"] is True
+
+
+def test_admin_dashboard_requires_admin_account() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    unauthenticated = client.get("/api/admin/dashboard")
+    assert unauthenticated.status_code == 400
+    assert unauthenticated.get_json() == {"error": "Authentication required"}
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "RegularUser", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    denied = client.get("/api/admin/dashboard")
+    assert denied.status_code == 400
+    assert denied.get_json() == {"error": "Admin access required"}
+
+
+def test_admin_can_reset_and_set_elos_and_cancel_matches() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    _register_admin(client)
+
+    first_user = client.post(
+        "/api/users", json={"name": "FirstPlayer", "guest": False, "elo": 1250}
+    ).get_json()
+    second_user = client.post(
+        "/api/users", json={"name": "SecondPlayer", "guest": False, "elo": 900}
+    ).get_json()
+    assert first_user is not None and second_user is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": first_user["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "member_limit": 2,
+            "seed": 101,
+        },
+    ).get_json()
+    assert party is not None
+
+    joined = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": second_user["id"]},
+    )
+    assert joined.status_code == 200
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": first_user["id"], "seed": 101},
+    ).get_json()
+    assert match is not None
+
+    dashboard_before = client.get("/api/admin/dashboard")
+    assert dashboard_before.status_code == 200
+    dashboard_before_payload = dashboard_before.get_json()
+    assert dashboard_before_payload is not None
+    assert dashboard_before_payload["admin_username"] == ADMIN_USERNAME
+    assert any(
+        item["match_id"] == match["match_id"]
+        for item in dashboard_before_payload["active_matches"]
+    )
+
+    reset_response = client.post("/api/admin/elo/reset")
+    assert reset_response.status_code == 200
+    assert reset_response.get_json() == {"ok": True, "updated_users": 3, "elo": 1000}
+
+    set_elo_response = client.post(
+        f"/api/admin/users/{first_user['id']}/elo",
+        json={"elo": 1337},
+    )
+    assert set_elo_response.status_code == 200
+    set_elo_payload = set_elo_response.get_json()
+    assert set_elo_payload is not None
+    assert set_elo_payload["user"]["elo"] == 1337
+
+    cancel_response = client.post(f"/api/admin/matches/{match['match_id']}/cancel")
+    assert cancel_response.status_code == 200
+    cancelled_match = cancel_response.get_json()
+    assert cancelled_match is not None
+    assert cancelled_match["match"]["finished"] is True
+    assert cancelled_match["match"]["locked"] is True
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["finished"] is True
+    assert refreshed_match["locked"] is True
+
+
+def test_admin_can_delete_users_and_auto_cancel_their_live_matches() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    admin_user = _register_admin(client)
+
+    leader = client.post(
+        "/api/users", json={"name": "DeleteLeader", "guest": False, "elo": 1100}
+    ).get_json()
+    teammate = client.post(
+        "/api/users", json={"name": "DeleteMate", "guest": False, "elo": 1110}
+    ).get_json()
+    assert leader is not None and teammate is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "member_limit": 2,
+            "seed": 102,
+        },
+    ).get_json()
+    assert party is not None
+
+    joined = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": teammate["id"]},
+    )
+    assert joined.status_code == 200
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 102},
+    ).get_json()
+    assert match is not None
+
+    delete_response = client.delete(f"/api/admin/users/{leader['id']}")
+    assert delete_response.status_code == 200
+    delete_payload = delete_response.get_json()
+    assert delete_payload is not None
+    assert delete_payload["ok"] is True
+    assert delete_payload["deleted_user"]["id"] == leader["id"]
+    assert delete_payload["cancelled_match_ids"] == [match["match_id"]]
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}")
+    assert refreshed_match.status_code == 200
+    refreshed_payload = refreshed_match.get_json()
+    assert refreshed_payload is not None
+    assert refreshed_payload["finished"] is True
+    assert refreshed_payload["locked"] is True
+    standing_ids = {row["user_id"] for row in refreshed_payload["standings"]}
+    assert leader["id"] not in standing_ids
+
+    self_delete = client.delete(f"/api/admin/users/{admin_user['id']}")
+    assert self_delete.status_code == 400
+    assert self_delete.get_json() == {"error": "Admin account cannot delete itself"}
 
 
 def test_authenticated_user_can_change_password() -> None:

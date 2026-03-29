@@ -11,6 +11,7 @@ from typing import Any, cast
 from flask import Flask, jsonify, request, session
 from flask_sock import Sock
 
+from config import ADMIN_USERNAME, is_admin_username
 from constants import THEMES
 from judge import JudgeResult
 from puzzle import (
@@ -167,6 +168,19 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             raise ValueError("Authentication required")
         return value
 
+    def session_user() -> User:
+        user = data.users.get(session_user_id())
+        if user is None:
+            session.pop("user_id", None)
+            raise ValueError("Authentication required")
+        return user
+
+    def require_admin_user() -> User:
+        user = session_user()
+        if not is_admin_username(user.name):
+            raise ValueError("Admin access required")
+        return user
+
     def payload_user_id(payload: dict[str, Any]) -> str:
         explicit = payload.get("user_id")
         if isinstance(explicit, str) and explicit:
@@ -268,14 +282,20 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def auth_session() -> Any:
         user_id = session.get("user_id")
         if not isinstance(user_id, str) or not user_id:
-            return jsonify({"authenticated": False})
+            return jsonify({"authenticated": False, "is_admin": False})
 
         user = data.users.get(user_id)
         if user is None:
             session.pop("user_id", None)
-            return jsonify({"authenticated": False})
+            return jsonify({"authenticated": False, "is_admin": False})
 
-        return jsonify({"authenticated": True, "user": _user_payload(user)})
+        return jsonify(
+            {
+                "authenticated": True,
+                "user": _user_payload(user),
+                "is_admin": is_admin_username(user.name),
+            }
+        )
 
     @app.route("/api/auth/register", methods=["POST"])
     def auth_register() -> Any:
@@ -285,7 +305,9 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             password=str(payload.get("password", "")),
         )
         session["user_id"] = user.id
-        return jsonify({"user": _user_payload(user)})
+        return jsonify(
+            {"user": _user_payload(user), "is_admin": is_admin_username(user.name)}
+        )
 
     @app.route("/api/auth/login", methods=["POST"])
     def auth_login() -> Any:
@@ -295,7 +317,9 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             password=str(payload.get("password", "")),
         )
         session["user_id"] = user.id
-        return jsonify({"user": _user_payload(user)})
+        return jsonify(
+            {"user": _user_payload(user), "is_admin": is_admin_username(user.name)}
+        )
 
     @app.route("/api/auth/logout", methods=["POST"])
     def auth_logout() -> Any:
@@ -321,6 +345,78 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             elo=int(payload.get("elo", 1000)),
         )
         return jsonify(_user_payload(user))
+
+    @app.route("/api/admin/dashboard", methods=["GET"])
+    def admin_dashboard() -> Any:
+        require_admin_user()
+        users = sorted(
+            data.users.values(),
+            key=lambda user: (-user.elo, user.name.casefold(), user.id),
+        )
+        active_matches = sorted(
+            (match for match in data.matches.values() if not match.finished),
+            key=lambda match: match.created_at,
+            reverse=True,
+        )
+        return jsonify(
+            {
+                "admin_username": ADMIN_USERNAME,
+                "users": [_user_payload(user) for user in users],
+                "active_matches": [
+                    _admin_match_payload(data, match) for match in active_matches
+                ],
+            }
+        )
+
+    @app.route("/api/admin/elo/reset", methods=["POST"])
+    def admin_reset_elo() -> Any:
+        require_admin_user()
+        updated_users = data.admin_reset_all_elos(elo=1000)
+        return jsonify({"ok": True, "updated_users": updated_users, "elo": 1000})
+
+    @app.route("/api/admin/users/<user_id>/elo", methods=["POST"])
+    def admin_set_player_elo(user_id: str) -> Any:
+        require_admin_user()
+        payload = request.get_json(silent=True) or {}
+        if "elo" not in payload:
+            raise ValueError("elo is required")
+        user = data.admin_set_user_elo(user_id=user_id, elo=int(payload["elo"]))
+        return jsonify({"user": _user_payload(user)})
+
+    @app.route("/api/admin/users/<user_id>", methods=["DELETE"])
+    def admin_delete_user(user_id: str) -> Any:
+        admin_user = require_admin_user()
+        if admin_user.id == user_id:
+            raise ValueError("Admin account cannot delete itself")
+
+        deleted_user, cancelled_matches, updated_parties = data.admin_delete_user(
+            user_id=user_id
+        )
+        cancelled_party_codes: set[str] = set()
+        for cancelled_match in cancelled_matches:
+            publish_match_update(cancelled_match, event="admin_cancelled")
+            if cancelled_match.party_code:
+                cancelled_party_codes.add(cancelled_match.party_code)
+
+        for party in updated_parties:
+            if party.code in cancelled_party_codes:
+                continue
+            publish_party_update(party, event="admin_member_removed")
+
+        return jsonify(
+            {
+                "ok": True,
+                "deleted_user": _user_payload(deleted_user),
+                "cancelled_match_ids": [match.id for match in cancelled_matches],
+            }
+        )
+
+    @app.route("/api/admin/matches/<match_id>/cancel", methods=["POST"])
+    def admin_cancel_match(match_id: str) -> Any:
+        require_admin_user()
+        match = data.admin_cancel_match(match_id=match_id)
+        publish_match_update(match, event="admin_cancelled")
+        return jsonify({"match": _admin_match_payload(data, match)})
 
     @app.route("/api/parties", methods=["POST"])
     def create_party() -> Any:
@@ -790,4 +886,33 @@ def _judge_result_payload(result: JudgeResult) -> dict[str, Any]:
                 "actual_output": result.first_failed_hidden_test.actual_output,
             }
         ),
+    }
+
+
+def _admin_match_payload(store: MemoryStore, match: Match) -> dict[str, Any]:
+    players: list[dict[str, Any]] = []
+    for user_id, player in match.players.items():
+        user = store.users.get(user_id)
+        players.append(
+            {
+                "user_id": user_id,
+                "name": user.name if user is not None else "Deleted user",
+                "guest": user.guest if user is not None else False,
+                "elo": user.elo if user is not None else None,
+                "solved": player.solved_at is not None,
+                "forfeited": player.forfeited,
+            }
+        )
+
+    return {
+        "match_id": match.id,
+        "party_code": match.party_code,
+        "mode": match.mode,
+        "theme": match.theme,
+        "difficulty": match.difficulty,
+        "time_limit_seconds": match.time_limit_seconds,
+        "created_at": match.created_at,
+        "locked": match.locked,
+        "finished": match.finished,
+        "players": players,
     }

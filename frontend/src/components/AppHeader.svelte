@@ -34,6 +34,7 @@
   export let editorFontSize: EditorFontSize = 14;
 
   export let sessionUser: SessionUser | null = null;
+  export let isAdmin = false;
   export let accountStats: AccountStats = {
     matchesStarted: 0,
     matchesSolved: 0,
@@ -64,6 +65,7 @@
   export let showHome: () => void = () => {};
   export let showPlayView: () => void = () => {};
   export let toggleLeaderboardView: () => void = () => {};
+  export let showAdmin: () => void = () => {};
   export let showSettings: () => void = () => {};
   export let setAppearanceMode: (mode: AppearanceMode) => void = () => {};
   export let cycleAppearanceMode: () => void = () => {};
@@ -207,6 +209,17 @@
       },
     ];
 
+    if (isAdmin) {
+      navigationActions.push({
+        id: "quick-admin",
+        label: "Open admin dashboard",
+        description: "Manage users, ELO, and live matches",
+        icon: "fa-shield-halved",
+        keywords: "admin dashboard moderation users elo matches",
+        run: showAdmin,
+      });
+    }
+
     const appearanceActions = quickAppearanceModes.map((mode) => ({
       id: `quick-appearance-${mode}`,
       label: quickAppearanceLabel(mode),
@@ -337,6 +350,17 @@
     >
       <i class="fas fa-crown" aria-hidden="true"></i>
     </button>
+    {#if isAdmin}
+      <button
+        type="button"
+        class="nav-icon"
+        class:active={activeView === "admin"}
+        on:click={showAdmin}
+        title="Admin"
+      >
+        <i class="fas fa-shield-halved" aria-hidden="true"></i>
+      </button>
+    {/if}
     <button
       type="button"
       class="nav-icon"

@@ -1,6 +1,12 @@
 export type UiTheme = "light" | "dark";
 export type AppearanceMode = UiTheme | "system";
-export type View = "home" | "arena" | "leaderboard" | "postmatch" | "settings";
+export type View =
+  | "home"
+  | "arena"
+  | "leaderboard"
+  | "postmatch"
+  | "settings"
+  | "admin";
 export type KeybindMode = "normal" | "vim" | "custom";
 export type VimMode = "insert" | "normal";
 export type EditorAction = "submit" | "test" | "hint" | "forfeit";
@@ -25,11 +31,13 @@ export type SessionUser = {
 
 export type SessionPayload = {
   authenticated: boolean;
+  is_admin: boolean;
   user?: SessionUser;
 };
 
 export type AuthResponse = {
   user: SessionUser;
+  is_admin: boolean;
 };
 
 export type Standing = {
@@ -217,4 +225,32 @@ export type AccountStats = {
   bestHiddenPassed: number;
   recentRuns: AccountRecentRun[];
   recordedMatchIds: string[];
+};
+
+export type AdminMatchPlayer = {
+  user_id: string;
+  name: string;
+  guest: boolean;
+  elo: number | null;
+  solved: boolean;
+  forfeited: boolean;
+};
+
+export type AdminMatch = {
+  match_id: string;
+  party_code: string;
+  mode: Mode;
+  theme: string;
+  difficulty: Difficulty;
+  time_limit_seconds: number;
+  created_at: number;
+  locked: boolean;
+  finished: boolean;
+  players: AdminMatchPlayer[];
+};
+
+export type AdminDashboardPayload = {
+  admin_username: string;
+  users: SessionUser[];
+  active_matches: AdminMatch[];
 };

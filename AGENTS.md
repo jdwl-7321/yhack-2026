@@ -62,10 +62,17 @@ Top-level layout:
   - Defines all REST endpoints and WebSocket endpoint (`/ws/events`).
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
   - Converts domain/store objects into API payloads (`_party_payload`, `_match_payload`, `_judge_result_payload`).
+  - Adds admin payload conversion via `_admin_match_payload` for dashboard match inspection.
   - Also exposes ranked queue payloads via `_ranked_queue_payload`.
   - Match payloads include `template_key` so the client can apply template-specific UI behavior.
+  - Auth session payload includes `is_admin` (resolved by configured admin username).
+  - Provides admin endpoints for dashboard listing, resetting all ELOs, setting per-user ELO, deleting users, and canceling active matches.
   - Enables permissive CORS headers for local frontend dev.
   - Defaults to `SqliteStore` using `backend/data/yhack.sqlite3` unless `YHACK_DB_PATH` is set.
+
+- `backend/src/config.py`
+  - Backend app config for admin identity.
+  - Declares `ADMIN_USERNAME` and normalization helper used for admin access checks.
 
 ### Domain and rules
 
@@ -124,6 +131,8 @@ Top-level layout:
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
     - Match participants can add/update/delete visible sample tests during a match.
+    - Admin operations are available in store layer: reset all ELO values, set one user ELO, cancel active matches (finished+locked, no rating delta), and delete users.
+    - Admin user deletion auto-cancels that user's active matches, removes them from parties and ranked queue, and purges name-index/DB rows.
     - Custom sample edits validate argument arity against puzzle contract and recompute expected outputs from the active puzzle template; for templates with shared example inputs, clients may send either primary args only or full invocation args (shared suffix is immutable).
     - Ranked theme rotation avoids repeats until all themes are used once.
 
@@ -146,6 +155,13 @@ Defined in `backend/src/app.py`:
 
 - User utility:
   - `POST /api/users` (direct user creation helper endpoint)
+
+- Admin:
+  - `GET /api/admin/dashboard`
+  - `POST /api/admin/elo/reset`
+  - `POST /api/admin/users/<user_id>/elo`
+  - `DELETE /api/admin/users/<user_id>`
+  - `POST /api/admin/matches/<match_id>/cancel`
 
 - Party/lobby:
   - `POST /api/parties`
@@ -192,6 +208,7 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/app-types.ts`
   - Central TypeScript contracts for backend payloads and UI state.
+  - Includes admin dashboard payload contracts (`AdminDashboardPayload`, `AdminMatch`, `AdminMatchPlayer`) and `is_admin` session/auth flags.
 
 - `frontend/src/app.css`
   - Entire app styling and design tokens.
@@ -211,13 +228,19 @@ Defined in `backend/src/app.py`:
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
-    - routing between subviews (`home`, `arena`, `leaderboard`, `settings`, `postmatch`)
+    - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match)
+    - routing between subviews (`home`, `arena`, `leaderboard`, `admin`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 
 ### Svelte component roles
 
 - `frontend/src/components/AppHeader.svelte`
   - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, and account summary dialog.
+  - Shows admin nav/quick action when the current session has admin access.
+
+- `frontend/src/components/AdminView.svelte`
+  - Admin dashboard UI for account and live-match operations.
+  - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match.
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
@@ -256,7 +279,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, and casual/zen party time extension.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, casual/zen party time extension, and admin dashboard/account/match controls.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
@@ -280,6 +303,7 @@ Implication: server restart drops active parties/matches but keeps user accounts
 ## Common Task Routing (Where to Edit)
 
 - Add/modify endpoint behavior: `backend/src/app.py` + `backend/src/store.py`
+- Change admin identity/access check: `backend/src/config.py`
 - Change game rules (party limits, hint policy, ranked fallback, ranked matchmaking window, auto-finish): `backend/src/store.py`, `backend/src/rating.py`
 - Add new puzzle family/theme/template: `backend/src/puzzle.py` + `backend/src/constants.py` + tests
 - Change judging sandbox or verdict details: `backend/src/judge.py` + tests

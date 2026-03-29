@@ -746,6 +746,90 @@ class MemoryStore:
             "total_players": len(ranked_users),
         }
 
+    def admin_reset_all_elos(self, *, elo: int = 1000) -> int:
+        if elo < 0:
+            raise ValueError("elo must be non-negative")
+
+        for user in self.users.values():
+            user.elo = elo
+        return len(self.users)
+
+    def admin_set_user_elo(self, *, user_id: str, elo: int) -> User:
+        if elo < 0:
+            raise ValueError("elo must be non-negative")
+
+        user = self._require_user(user_id)
+        user.elo = elo
+        return user
+
+    def admin_cancel_match(self, *, match_id: str) -> Match:
+        match = self._require_match(match_id)
+        if match.finished:
+            raise ValueError("Match is already finished")
+
+        match.finished = True
+        match.locked = True
+        match.rating_deltas = {}
+
+        for player_user_id in list(match.players):
+            self.ranked_queue.pop(player_user_id, None)
+
+        if match.party_code:
+            party = self.parties.get(match.party_code)
+            if party is not None and party.active_match_id == match.id:
+                party.active_match_id = None
+
+        return match
+
+    def admin_delete_user(
+        self, *, user_id: str
+    ) -> tuple[User, list[Match], list[Party]]:
+        user = self._require_user(user_id)
+
+        match_ids_to_cancel = [
+            match.id
+            for match in self.matches.values()
+            if not match.finished and user_id in match.players
+        ]
+        cancelled_matches = [
+            self.admin_cancel_match(match_id=match_id)
+            for match_id in match_ids_to_cancel
+        ]
+
+        updated_parties: list[Party] = []
+        for party_code, party in list(self.parties.items()):
+            if user_id not in party.members:
+                continue
+
+            party.members = [
+                member_id for member_id in party.members if member_id != user_id
+            ]
+            if not party.members:
+                self.parties.pop(party_code, None)
+                continue
+
+            if party.leader_id == user_id:
+                party.leader_id = party.members[0]
+
+            if party.active_match_id is not None:
+                active_match = self.matches.get(party.active_match_id)
+                if active_match is None or active_match.finished:
+                    party.active_match_id = None
+
+            updated_parties.append(party)
+
+        for match in self.matches.values():
+            if user_id not in match.players:
+                continue
+            match.players.pop(user_id, None)
+            if match.rating_deltas is not None:
+                match.rating_deltas.pop(user_id, None)
+
+        self.ranked_queue.pop(user_id, None)
+        self._remove_user_name_index(user_id=user_id)
+        self.users.pop(user_id, None)
+        return user, cancelled_matches, updated_parties
+
     def _new_party_code(self) -> str:
         alphabet = string.ascii_uppercase + string.digits
         while True:
@@ -912,6 +996,11 @@ class MemoryStore:
         if len(normalized) > 24:
             raise ValueError("Display name must be 24 characters or less")
         return normalized.casefold()
+
+    def _remove_user_name_index(self, *, user_id: str) -> None:
+        for normalized_name, indexed_user_id in list(self.user_name_index.items()):
+            if indexed_user_id == user_id:
+                self.user_name_index.pop(normalized_name, None)
 
     def _require_user(self, user_id: str) -> User:
         user = self.users.get(user_id)
@@ -1083,6 +1172,31 @@ class SqliteStore(MemoryStore):
                 (user.password_hash, user.id),
             )
         return user
+
+    def admin_reset_all_elos(self, *, elo: int = 1000) -> int:
+        updated = super().admin_reset_all_elos(elo=elo)
+        with self._conn:
+            self._conn.execute("UPDATE users SET elo = ?", (elo,))
+        return updated
+
+    def admin_set_user_elo(self, *, user_id: str, elo: int) -> User:
+        user = super().admin_set_user_elo(user_id=user_id, elo=elo)
+        with self._conn:
+            self._conn.execute(
+                "UPDATE users SET elo = ? WHERE id = ?",
+                (user.elo, user.id),
+            )
+        return user
+
+    def admin_delete_user(
+        self, *, user_id: str
+    ) -> tuple[User, list[Match], list[Party]]:
+        deleted_user, cancelled_matches, updated_parties = super().admin_delete_user(
+            user_id=user_id
+        )
+        with self._conn:
+            self._conn.execute("DELETE FROM users WHERE id = ?", (deleted_user.id,))
+        return deleted_user, cancelled_matches, updated_parties
 
     def finish_match(self, *, match_id: str) -> dict[str, int]:
         deltas = super().finish_match(match_id=match_id)
