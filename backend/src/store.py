@@ -52,6 +52,7 @@ class Party:
     leader_id: str
     settings: PartySettings
     member_limit: int
+    active_match_id: str | None = None
     members: list[str] = field(default_factory=list)
 
 
@@ -268,6 +269,12 @@ class MemoryStore:
         party = self._require_party(code)
         if requester_id is not None and requester_id != party.leader_id:
             raise ValueError("Only the party leader can start the match")
+
+        if party.active_match_id is not None:
+            existing_match = self.matches.get(party.active_match_id)
+            if existing_match is not None and not existing_match.finished:
+                raise ValueError("This party already has an active match")
+
         members = [self._require_user(user_id) for user_id in party.members]
 
         effective_mode = resolve_mode(
@@ -307,6 +314,7 @@ class MemoryStore:
         )
 
         self.matches[match.id] = match
+        party.active_match_id = match.id
         return match
 
     def get_match(self, *, match_id: str) -> Match:

@@ -415,6 +415,55 @@ def test_only_party_leader_can_start_match() -> None:
     assert started.status_code == 200
 
 
+def test_party_reports_active_match_and_blocks_second_live_start() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    leader = client.post(
+        "/api/users",
+        json={"name": "Leader", "guest": False, "elo": 1200},
+    ).get_json()
+    assert leader is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 600,
+            "member_limit": 4,
+            "seed": 50,
+        },
+    ).get_json()
+    assert party is not None
+
+    started = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 50},
+    )
+    assert started.status_code == 200
+    started_payload = started.get_json()
+    assert started_payload is not None
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}")
+    assert refreshed_party.status_code == 200
+    refreshed_payload = refreshed_party.get_json()
+    assert refreshed_payload is not None
+    assert refreshed_payload["active_match_id"] == started_payload["match_id"]
+    assert refreshed_payload["active_match_finished"] is False
+
+    second_start = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 50},
+    )
+    assert second_start.status_code == 400
+    assert second_start.get_json() == {
+        "error": "This party already has an active match"
+    }
+
+
 def test_hint_unlock_sequence_and_submit_flow() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()

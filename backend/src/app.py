@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 import os
 from pathlib import Path
+import threading
 from typing import Any, cast
 
 from flask import Flask, jsonify, request, session
+from flask_sock import Sock
 
 from constants import THEMES
 from puzzle import TestCase, generator_schema
@@ -19,12 +22,119 @@ SOLUTION_SCAFFOLD = (
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
 
 
+class EventHub:
+    def __init__(self) -> None:
+        self._channels: dict[str, dict[int, Any]] = {}
+        self._locks: dict[int, threading.Lock] = {}
+        self._guard = threading.Lock()
+
+    def subscribe(self, *, channel: str, ws: Any) -> None:
+        ws_id = id(ws)
+        with self._guard:
+            subscribers = self._channels.setdefault(channel, {})
+            subscribers[ws_id] = ws
+            self._locks.setdefault(ws_id, threading.Lock())
+
+    def unsubscribe(self, *, channel: str, ws: Any) -> None:
+        ws_id = id(ws)
+        with self._guard:
+            subscribers = self._channels.get(channel)
+            if subscribers is not None:
+                subscribers.pop(ws_id, None)
+                if not subscribers:
+                    self._channels.pop(channel, None)
+            self._cleanup_lock(ws_id)
+
+    def unsubscribe_all(self, *, ws: Any) -> None:
+        ws_id = id(ws)
+        with self._guard:
+            for channel in list(self._channels):
+                subscribers = self._channels[channel]
+                subscribers.pop(ws_id, None)
+                if not subscribers:
+                    self._channels.pop(channel, None)
+            self._locks.pop(ws_id, None)
+
+    def publish(self, *, channel: str, payload: dict[str, Any]) -> None:
+        message = json.dumps(payload)
+        with self._guard:
+            subscribers = list(self._channels.get(channel, {}).items())
+
+        stale_ws: list[int] = []
+        for ws_id, ws in subscribers:
+            lock = self._locks.get(ws_id)
+            if lock is None:
+                stale_ws.append(ws_id)
+                continue
+
+            try:
+                with lock:
+                    ws.send(message)
+            except Exception:
+                stale_ws.append(ws_id)
+
+        if not stale_ws:
+            return
+
+        with self._guard:
+            for ws_id in stale_ws:
+                for channel_name in list(self._channels):
+                    channel_subscribers = self._channels[channel_name]
+                    channel_subscribers.pop(ws_id, None)
+                    if not channel_subscribers:
+                        self._channels.pop(channel_name, None)
+                self._locks.pop(ws_id, None)
+
+    def _cleanup_lock(self, ws_id: int) -> None:
+        for subscribers in self._channels.values():
+            if ws_id in subscribers:
+                return
+        self._locks.pop(ws_id, None)
+
+
+def _party_channel(code: str) -> str:
+    return f"party:{code.upper()}"
+
+
+def _match_channel(match_id: str) -> str:
+    return f"match:{match_id}"
+
+
 def create_app(store: MemoryStore | None = None) -> Flask:
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("YHACK_SECRET_KEY", "dev-secret")
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    sock = Sock(app)
+    event_hub = EventHub()
     data = store or SqliteStore(os.environ.get("YHACK_DB_PATH", str(DEFAULT_DB_PATH)))
+
+    def publish_party_update(party: Party, *, event: str) -> None:
+        event_hub.publish(
+            channel=_party_channel(party.code),
+            payload={
+                "type": "party.updated",
+                "event": event,
+                "party": _party_payload(data, party),
+            },
+        )
+
+    def publish_match_update(match: Match, *, event: str) -> None:
+        event_hub.publish(
+            channel=_match_channel(match.id),
+            payload={
+                "type": "match.updated",
+                "event": event,
+                "match": _match_payload(data, match, include_samples=False),
+            },
+        )
+
+        try:
+            party = data.get_party(code=match.party_code)
+        except ValueError:
+            return
+
+        publish_party_update(party, event=event)
 
     def session_user_id() -> str:
         value = session.get("user_id")
@@ -37,6 +147,59 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         if isinstance(explicit, str) and explicit:
             return explicit
         return session_user_id()
+
+    @sock.route("/ws/events")
+    def events_socket(ws: Any) -> None:
+        subscribed_channels: set[str] = set()
+        try:
+            while True:
+                raw = ws.receive()
+                if raw is None:
+                    break
+
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    ws.send(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                    continue
+
+                action = payload.get("action")
+                channel = str(payload.get("channel", "")).strip()
+
+                if action == "ping":
+                    ws.send(json.dumps({"type": "pong"}))
+                    continue
+
+                if action == "subscribe":
+                    if not channel:
+                        ws.send(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "message": "channel is required for subscribe",
+                                }
+                            )
+                        )
+                        continue
+
+                    event_hub.subscribe(channel=channel, ws=ws)
+                    subscribed_channels.add(channel)
+                    ws.send(json.dumps({"type": "subscribed", "channel": channel}))
+                    continue
+
+                if action == "unsubscribe":
+                    if not channel:
+                        continue
+                    event_hub.unsubscribe(channel=channel, ws=ws)
+                    subscribed_channels.discard(channel)
+                    ws.send(json.dumps({"type": "unsubscribed", "channel": channel}))
+                    continue
+
+                ws.send(json.dumps({"type": "error", "message": "Unsupported action"}))
+        finally:
+            for channel in list(subscribed_channels):
+                event_hub.unsubscribe(channel=channel, ws=ws)
+            event_hub.unsubscribe_all(ws=ws)
 
     @app.after_request
     def add_cors_headers(response: Any) -> Any:
@@ -142,6 +305,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             ),
             seed=_optional_int(payload.get("seed")),
         )
+        publish_party_update(party, event="created")
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>", methods=["GET"])
@@ -153,6 +317,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def join_party(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
         party = data.join_party(code=code, user_id=payload_user_id(payload))
+        publish_party_update(party, event="member_joined")
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/limit", methods=["POST"])
@@ -167,6 +332,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             leader_id=payload_user_id(payload),
             member_limit=int(member_limit_raw),
         )
+        publish_party_update(party, event="limit_updated")
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/settings", methods=["POST"])
@@ -188,6 +354,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             time_limit_seconds=int(payload.get("time_limit_seconds", 900)),
             seed=_optional_int(payload.get("seed")),
         )
+        publish_party_update(party, event="settings_updated")
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/kick", methods=["POST"])
@@ -202,6 +369,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             leader_id=payload_user_id(payload),
             member_id=member_id,
         )
+        publish_party_update(party, event="member_kicked")
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/start", methods=["POST"])
@@ -212,6 +380,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             requester_id=payload_user_id(payload),
             seed=_optional_int(payload.get("seed")),
         )
+        publish_match_update(match, event="started")
         return jsonify(_match_payload(data, match))
 
     @app.route("/api/matches/<match_id>", methods=["GET"])
@@ -227,6 +396,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             user_id=payload_user_id(payload),
             code=str(payload.get("code", "")),
         )
+        publish_match_update(data.get_match(match_id=match_id), event="submission")
         return jsonify(
             {
                 **asdict(result),
@@ -245,6 +415,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             user_id=payload_user_id(payload),
             code=str(payload.get("code", "")),
         )
+        publish_match_update(data.get_match(match_id=match_id), event="sample_test")
         return jsonify(
             {
                 **asdict(result),
@@ -277,11 +448,13 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def forfeit(match_id: str) -> Any:
         payload = request.get_json(silent=True) or {}
         data.forfeit(match_id=match_id, user_id=payload_user_id(payload))
+        publish_match_update(data.get_match(match_id=match_id), event="forfeit")
         return jsonify({"standings": data.standings(match_id=match_id)})
 
     @app.route("/api/matches/<match_id>/finish", methods=["POST"])
     def finish(match_id: str) -> Any:
         deltas = data.finish_match(match_id=match_id)
+        publish_match_update(data.get_match(match_id=match_id), event="finished")
         return jsonify(
             {"rating_deltas": deltas, "standings": data.standings(match_id=match_id)}
         )
@@ -326,6 +499,9 @@ def _user_payload(user: User) -> dict[str, Any]:
 
 def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
     members = [_user_payload(store.users[user_id]) for user_id in party.members]
+    active_match = (
+        store.matches.get(party.active_match_id) if party.active_match_id else None
+    )
     return {
         "code": party.code,
         "join_code": party.code,
@@ -334,6 +510,8 @@ def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
         "leader_id": party.leader_id,
         "member_limit": party.member_limit,
         "is_full": len(members) >= party.member_limit,
+        "active_match_id": party.active_match_id,
+        "active_match_finished": active_match.finished if active_match else None,
         "settings": {
             "theme": party.settings.theme,
             "difficulty": party.settings.difficulty,
@@ -357,6 +535,7 @@ def _match_payload(
         "match_id": match.id,
         "party_code": match.party_code,
         "mode": match.mode,
+        "finished": match.finished,
         "theme": match.theme,
         "difficulty": match.difficulty,
         "time_limit_seconds": match.time_limit_seconds,
