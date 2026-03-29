@@ -81,6 +81,7 @@ Top-level layout:
   - Ranked difficulty bucket assignment by average ELO.
   - Ranked matchmaking search window starts narrow and widens over queue wait time.
   - Placement ordering and ELO delta computation.
+  - Forfeited ranked players always sort below non-forfeited players in placement ordering.
   - Hint penalty applies only to positive rating gains; level 1 has no penalty, levels 2/3 reduce gain.
 
 - `backend/src/puzzle.py`
@@ -114,7 +115,10 @@ Top-level layout:
     - Ranked queue entries are in-memory only and expire if the client stops polling for ~20 seconds before a match is found.
     - Users are persisted in SQLite only when using `SqliteStore`.
     - Matches in every mode auto-finish when all players are solved or forfeited.
+    - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
+    - Casual party leaders can add time (`add_seconds`) to party settings; if a casual match is currently active and unlocked for that party, the match timer is extended too.
+    - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
@@ -148,6 +152,7 @@ Defined in `backend/src/app.py`:
   - `POST /api/parties/<code>/join`
   - `POST /api/parties/<code>/limit`
   - `POST /api/parties/<code>/settings`
+  - `POST /api/parties/<code>/add-time`
   - `POST /api/parties/<code>/kick`
   - `POST /api/parties/<code>/close`
   - `POST /api/parties/<code>/start`
@@ -200,6 +205,8 @@ Defined in `backend/src/app.py`:
     - casual party lifecycle, ranked queue polling, and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
+    - casual-party leader time-extension action and live timer resync when a `time_extended` match event is received
+    - immediate match handoff on party join when a casual lobby already has an active match
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
@@ -214,10 +221,12 @@ Defined in `backend/src/app.py`:
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
   - Match setup fields are mode-aware: ranked shows only mode selection, and party limit appears only in casual party mode.
+  - Casual party leaders get lobby management actions for setup and member limit.
   - In casual party mode, setup fields and party lobby render in a two-column layout on desktop, with primary action buttons kept in the bottom action row.
 
 - `frontend/src/components/ArenaView.svelte`
   - Match UI: samples with inline input editing inside the sample grid (save on blur), auto-resizing sample input textareas, output auto-refresh, sample delete/add actions, hints, failed hidden case promotion, editor, console, standings.
+  - Shows a casual-party leader `+5 min` timer extension action next to the live match timer.
   - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
   - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
   - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args (for shared-input ciphers this means users edit only `arg1`).
@@ -244,7 +253,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, and casual party time extension.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
@@ -253,7 +262,7 @@ Defined in `backend/src/app.py`:
   - Puzzle schema validation, deterministic generation, cryptography template expectations, scaffold typing.
 
 - `backend/tests/test_rating.py`
-  - Difficulty buckets, ranked matchmaking window growth, mode fallback, ordering ties, and hint penalties on rating gains.
+  - Difficulty buckets, ranked matchmaking window growth, mode fallback, ordering ties (including forfeits), and hint penalties on rating gains.
 
 ## Persistence and State Boundaries
 

@@ -1,7 +1,28 @@
 <script lang="ts">
-  import type { PostMatchState, Standing } from "../app-types";
+  import type { PostMatchState, SessionUser, Standing } from "../app-types";
+
+  // Flip this to false if you want to remove the win confetti quickly.
+  const SHOW_POSTMATCH_CONFETTI = true;
+  const CONFETTI_COLORS = [
+    "var(--main-color)",
+    "var(--editor-function)",
+    "var(--editor-string)",
+    "var(--editor-number)",
+    "var(--text-color)",
+  ];
+  const CONFETTI_PIECES = Array.from({ length: 28 }, (_, index) => ({
+    id: index,
+    left: (index * 13 + 7) % 100,
+    delay: (index % 7) * 0.14,
+    duration: 3.2 + (index % 5) * 0.35,
+    drift: (index % 2 === 0 ? 1 : -1) * (18 + (index % 4) * 10),
+    size: 0.42 + (index % 3) * 0.14,
+    color: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
+    shape: index % 4 === 0 ? "circle" : "rect",
+  }));
 
   export let postMatch: PostMatchState | null = null;
+  export let sessionUser: SessionUser | null = null;
   export let matchId: string | null = null;
   export let notice = "";
   export let error = "";
@@ -13,6 +34,15 @@
   export let postMatchForfeitCount: (rows: Standing[]) => number = () => 0;
   export let formatDuration: (totalSeconds: number) => string = () => "0:00";
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
+
+  $: winner = postMatch ? postMatchWinner(postMatch.standings) : null;
+  $: celebrateWin =
+    SHOW_POSTMATCH_CONFETTI &&
+    !!postMatch &&
+    !!sessionUser &&
+    !!winner &&
+    winner.user_id === sessionUser.id &&
+    !winner.forfeited;
 </script>
 
 <main id="postmatch-view">
@@ -22,6 +52,18 @@
       <button type="button" class="btn primary" on:click={showHome}>Back Home</button>
     </section>
   {:else}
+    {#if celebrateWin}
+      <div class="postmatch-confetti" aria-hidden="true">
+        {#each CONFETTI_PIECES as piece (piece.id)}
+          <span
+            class="postmatch-confetti-piece"
+            class:circle={piece.shape === "circle"}
+            style={`--confetti-left: ${piece.left}%; --confetti-delay: ${piece.delay}s; --confetti-duration: ${piece.duration}s; --confetti-drift: ${piece.drift}px; --confetti-size: ${piece.size}rem; --confetti-color: ${piece.color};`}
+          ></span>
+        {/each}
+      </div>
+    {/if}
+
     <section class="postmatch-hero">
       <div>
         <p class="eyebrow">Match complete</p>

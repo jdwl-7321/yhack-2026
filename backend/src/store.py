@@ -227,6 +227,20 @@ class MemoryStore:
             if len(party.members) >= party.member_limit:
                 raise ValueError("Party is full")
             party.members.append(user_id)
+
+        if party.mode == "casual" and party.active_match_id is not None:
+            active_match = self.matches.get(party.active_match_id)
+            if (
+                active_match is not None
+                and not active_match.finished
+                and not active_match.locked
+                and user_id not in active_match.players
+            ):
+                active_match.players[user_id] = MatchPlayer(
+                    user_id=user_id,
+                    hint_level=1,
+                    hints_used={1},
+                )
         return party
 
     def set_party_limit(
@@ -274,6 +288,36 @@ class MemoryStore:
         party.settings.time_limit_seconds = time_limit_seconds
         party.settings.seed = seed
         return party
+
+    def add_party_time(
+        self,
+        *,
+        code: str,
+        leader_id: str,
+        add_seconds: int,
+    ) -> tuple[Party, Match | None]:
+        party = self._require_party(code)
+        self._require_party_leader(party, leader_id)
+
+        if party.mode != "casual":
+            raise ValueError("Time can only be added in casual parties")
+        if add_seconds <= 0:
+            raise ValueError("add_seconds must be positive")
+
+        party.settings.time_limit_seconds += add_seconds
+
+        updated_match: Match | None = None
+        if party.active_match_id is not None:
+            active_match = self.matches.get(party.active_match_id)
+            if (
+                active_match is not None
+                and not active_match.finished
+                and not active_match.locked
+            ):
+                active_match.time_limit_seconds += add_seconds
+                updated_match = active_match
+
+        return party, updated_match
 
     def kick_party_member(
         self,
@@ -618,6 +662,7 @@ class MemoryStore:
                     hidden_passed=player.hidden_passed,
                     best_score_at=player.best_score_at or now,
                     hint_level=player.hint_level,
+                    forfeited=player.forfeited,
                 )
             )
 
@@ -642,6 +687,7 @@ class MemoryStore:
                 hidden_passed=player.hidden_passed,
                 best_score_at=player.best_score_at or now,
                 hint_level=player.hint_level,
+                forfeited=player.forfeited,
             )
             for player in match.players.values()
         ]
@@ -745,6 +791,17 @@ class MemoryStore:
             for player in match.players.values()
         )
         if all_players_done:
+            self.finish_match(match_id=match.id)
+            return
+
+        if match.mode != "ranked":
+            return
+
+        active_players = [
+            player for player in match.players.values() if not player.forfeited
+        ]
+        forfeited_count = len(match.players) - len(active_players)
+        if forfeited_count > 0 and len(active_players) == 1:
             self.finish_match(match_id=match.id)
 
     def _attempt_ranked_match(

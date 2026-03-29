@@ -46,6 +46,8 @@
   export let promoteFailedTest: () => void | Promise<void> = () => {};
   export let requestHint: () => void | Promise<void> = () => {};
   export let forfeit: () => void | Promise<void> = () => {};
+  export let addPartyTime: () => void | Promise<void> = () => {};
+  export let canAddPartyTime = false;
   export let testSamples: () => void | Promise<void> = () => {};
   export let submit: () => void | Promise<void> = () => {};
   export let handleEditorInput: (event: Event) => void = () => {};
@@ -238,9 +240,19 @@
       </div>
       <div class="divider"></div>
       <div class="group">
-        <span class="active-text"
-          ><i class="fas fa-clock" aria-hidden="true"></i> {timerText}</span
-        >
+        <span class="active-text">
+          <i class="fas fa-clock" aria-hidden="true"></i> {timerText}
+        </span>
+        {#if canAddPartyTime}
+          <button
+            type="button"
+            class="btn timer-extend-btn"
+            on:click={addPartyTime}
+            disabled={busy || actionLocked}
+          >
+            +5 min
+          </button>
+        {/if}
       </div>
     </div>
 

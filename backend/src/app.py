@@ -138,7 +138,9 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             },
         )
 
-    def publish_match_update(match: Match, *, event: str, include_samples: bool = False) -> None:
+    def publish_match_update(
+        match: Match, *, event: str, include_samples: bool = False
+    ) -> None:
         event_hub.publish(
             channel=_match_channel(match.id),
             payload={
@@ -350,8 +352,21 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     @app.route("/api/parties/<code>/join", methods=["POST"])
     def join_party(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
-        party = data.join_party(code=code, user_id=payload_user_id(payload))
+        user_id = payload_user_id(payload)
+        party = data.join_party(code=code, user_id=user_id)
         publish_party_update(party, event="member_joined")
+
+        if party.active_match_id is not None:
+            match = data.matches.get(party.active_match_id)
+            if (
+                match is not None
+                and match.mode == "casual"
+                and not match.finished
+                and not match.locked
+                and user_id in match.players
+            ):
+                publish_match_update(match, event="member_joined")
+
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/limit", methods=["POST"])
@@ -389,6 +404,19 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             seed=_optional_int(payload.get("seed")),
         )
         publish_party_update(party, event="settings_updated")
+        return jsonify(_party_payload(data, party))
+
+    @app.route("/api/parties/<code>/add-time", methods=["POST"])
+    def add_party_time(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        party, updated_match = data.add_party_time(
+            code=code,
+            leader_id=payload_user_id(payload),
+            add_seconds=int(payload.get("add_seconds", 300)),
+        )
+        if updated_match is not None:
+            publish_match_update(updated_match, event="time_extended")
+        publish_party_update(party, event="time_extended")
         return jsonify(_party_payload(data, party))
 
     @app.route("/api/parties/<code>/kick", methods=["POST"])
@@ -676,11 +704,7 @@ def _ranked_queue_payload(
         1 for queue_entry in store.ranked_queue.values() if queue_entry.match_id is None
     )
     wait_seconds = max(0.0, time() - entry.joined_at)
-    match = (
-        store.matches.get(entry.match_id)
-        if entry.match_id is not None
-        else None
-    )
+    match = store.matches.get(entry.match_id) if entry.match_id is not None else None
     return {
         "status": "matched" if match is not None and not match.finished else "queued",
         "queued_players": queued_players,
