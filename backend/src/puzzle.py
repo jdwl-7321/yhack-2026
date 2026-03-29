@@ -433,6 +433,11 @@ def expected_output_for_primary_inputs(
         value = _require_int_value(primary_inputs[0], label="n")
         return _is_prime(value)
 
+    if template_key == "numeric-add-reversed-number-v1":
+        _require_arity(primary_inputs, expected=1)
+        value = _require_int_value(primary_inputs[0], label="n")
+        return _add_number_and_reverse(value)
+
     if template_key == "numeric-total-factor-count-v1":
         _require_arity(primary_inputs, expected=1)
         values = _require_int_sequence(primary_inputs[0], label="values")
@@ -1106,6 +1111,20 @@ def _total_factor_count(values: Sequence[int]) -> int:
     return sum(_factor_count(value) for value in values)
 
 
+def _add_number_and_reverse(value: int) -> int:
+    if value < 0:
+        raise ValueError("n must be non-negative")
+    reversed_value = int(str(value)[::-1])
+    return value + reversed_value
+
+
+def _case_add_reversed_number(
+    rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
+) -> TestCase:
+    value = rng.randint(10, 99)
+    return TestCase(inputs=(value,), output=_add_number_and_reverse(value))
+
+
 def _case_total_factor_count(
     rng: random.Random, _difficulty: Difficulty, _params: dict[str, JsonScalar]
 ) -> TestCase:
@@ -1466,6 +1485,24 @@ _TEMPLATES: tuple[_Template, ...] = (
         difficulties=("medium",),
     ),
     _Template(
+        key="numeric-add-reversed-number-v1",
+        theme="Numeric",
+        prompt=(
+            "Given a non-negative integer, return the sum of the integer and its digit-reversed form."
+        ),
+        hint_level_1="Reverse digits in base-10 (for example, 120 becomes 21).",
+        hint_level_2="Compute the reversed number first, then add it to the original input.",
+        hint_level_3="Return n + int(str(n)[::-1]).",
+        contract=FunctionContract(
+            parameter_types=("int",),
+            return_type="int",
+        ),
+        case_factory=_case_add_reversed_number,
+        variable_factory=_no_variables,
+        shared_input_factory=_no_shared_inputs,
+        difficulties=("hard",),
+    ),
+    _Template(
         key="numeric-total-factor-count-v1",
         theme="Numeric",
         prompt=(
@@ -1481,7 +1518,7 @@ _TEMPLATES: tuple[_Template, ...] = (
         case_factory=_case_total_factor_count,
         variable_factory=_no_variables,
         shared_input_factory=_no_shared_inputs,
-        difficulties=("hard",),
+        difficulties=("expert",),
     ),
     _Template(
         key="numeric-linear-transform-v1",
@@ -1547,6 +1584,7 @@ _THEME_ALIASES = {
     "Numeric - GCD": "Numeric",
     "Numeric - LCM": "Numeric",
     "Numeric - Prime numbers": "Numeric",
+    "Numeric - Add number and reverse": "Numeric",
     "Numeric - Total number of factors": "Numeric",
     "Numeric - AX plus B linear transform": "Numeric",
     "Numeric - Fast modular exponent": "Numeric",

@@ -81,8 +81,11 @@
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
   const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
-  const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
-  const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
+  const PROFILE_IMAGE_STORAGE_PREFIX = "yhack.profile-image";
+  const DEFAULT_APPEARANCE_MODE: AppearanceMode = "light";
+  const SYSTEM_APPEARANCE_FALLBACK: UiTheme = "light";
+  const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "everforest-light";
+  const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "catppuccin-mocha";
   const DEFAULT_EDITOR_FONT_FAMILY: EditorFontFamily = "roboto-mono";
   const DEFAULT_EDITOR_FONT_SIZE = 14;
   const MIN_EDITOR_FONT_SIZE = 12;
@@ -181,7 +184,6 @@
     hljs.registerLanguage("python", python);
   }
 
-  const modeOptions: Mode[] = ["zen", "casual", "ranked"];
   const difficultyOptions: Difficulty[] = ["easy", "medium", "hard", "expert"];
   const AUTO_GENERATED_SHARED_SAMPLE_TEMPLATES = new Set<string>([
     "crypto-shift-inference-v2",
@@ -205,14 +207,14 @@
   let party: PartyPayload | null = null;
   let rankedQueue: RankedQueuePayload | null = null;
 
-  let themePref: UiTheme = "dark";
-  let appearanceMode: AppearanceMode = "system";
+  let themePref: UiTheme = DEFAULT_APPEARANCE_MODE;
+  let appearanceMode: AppearanceMode = DEFAULT_APPEARANCE_MODE;
   let systemMatcher: MediaQueryList | null = null;
   let mediaListener: (() => void) | null = null;
   let themeStatusText = "";
   let lightEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
   let darkEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
-  let activeEditorTheme: BundledTheme = DEFAULT_DARK_EDITOR_THEME;
+  let activeEditorTheme: BundledTheme = DEFAULT_LIGHT_EDITOR_THEME;
   let keybindMode: KeybindMode = "normal";
   let vimMode: VimMode = "insert";
   let vimPendingKey = "";
@@ -222,10 +224,10 @@
   let customShortcutError = "";
   let editorFontFamily: EditorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
   let editorFontSize: EditorFontSize = DEFAULT_EDITOR_FONT_SIZE;
-  let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
-    DEFAULT_DARK_EDITOR_THEME;
+  let activeEditorThemeName = themeInfoById.get(DEFAULT_LIGHT_EDITOR_THEME)?.displayName ??
+    DEFAULT_LIGHT_EDITOR_THEME;
   let availableEditorThemes = bundledThemesInfo.filter(
-    (theme) => theme.type === "dark",
+    (theme) => theme.type === "light",
   );
   let themeMenuOpen = false;
   let themeMenuEl: HTMLDivElement | null = null;
@@ -307,6 +309,10 @@
     return `${ACTIVE_PARTY_STORAGE_PREFIX}:${userId}`;
   }
 
+  function profileImageStorageKey(userId: string): string {
+    return `${PROFILE_IMAGE_STORAGE_PREFIX}:${userId}`;
+  }
+
   function storedPartyCodeForUser(userId: string): string {
     if (typeof window === "undefined") {
       return "";
@@ -329,6 +335,83 @@
       return;
     }
     localStorage.removeItem(activePartyStorageKey(userId));
+  }
+
+  function loadProfileImage(user: SessionUser): void {
+    if (typeof window === "undefined") {
+      profileImageUrl = "";
+      return;
+    }
+    profileImageUrl = localStorage.getItem(profileImageStorageKey(user.id)) ?? "";
+  }
+
+  function clearProfileImage(): void {
+    profileImageUrl = "";
+  }
+
+  async function normalizeProfileImage(file: File): Promise<string> {
+    if (typeof window === "undefined") {
+      throw new Error("Profile images can only be updated in the browser.");
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const nextImage = new Image();
+        nextImage.onload = () => resolve(nextImage);
+        nextImage.onerror = () => reject(new Error("Could not load that image."));
+        nextImage.src = objectUrl;
+      });
+
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Could not process that image.");
+      }
+
+      const size = 256;
+      const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+      const sourceX = (image.naturalWidth - sourceSize) / 2;
+      const sourceY = (image.naturalHeight - sourceSize) / 2;
+
+      canvas.width = size;
+      canvas.height = size;
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceSize,
+        sourceSize,
+        0,
+        0,
+        size,
+        size,
+      );
+
+      return canvas.toDataURL("image/jpeg", 0.86);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function uploadProfileImage(file: File): Promise<void> {
+    if (!sessionUser || typeof window === "undefined") {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      error = "Choose an image file for your profile photo.";
+      return;
+    }
+
+    try {
+      const nextProfileImage = await normalizeProfileImage(file);
+      localStorage.setItem(profileImageStorageKey(sessionUser.id), nextProfileImage);
+      profileImageUrl = nextProfileImage;
+      error = "";
+      notice = "Profile photo updated.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    }
   }
 
   function normalizeAccountStats(raw: unknown): AccountStats {
@@ -521,6 +604,58 @@
     };
   }
 
+  function storedAccountStatsForUser(userId: string): AccountStats | null {
+    if (userId === sessionUser?.id) {
+      return accountStats;
+    }
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const saved = localStorage.getItem(accountStatsStorageKey(userId));
+    if (!saved) {
+      return null;
+    }
+
+    try {
+      return normalizeAccountStats(JSON.parse(saved));
+    } catch {
+      return null;
+    }
+  }
+
+  function leaderboardProfileImage(userId: string): string {
+    if (userId === sessionUser?.id) {
+      return profileImageUrl;
+    }
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return localStorage.getItem(profileImageStorageKey(userId)) ?? "";
+  }
+
+  function leaderboardProfilePreview(entry: LeaderboardEntry) {
+    const stats = storedAccountStatsForUser(entry.user_id);
+    const solveRate = stats && stats.matchesStarted > 0
+      ? `${Math.round((stats.matchesSolved / stats.matchesStarted) * 100)}%`
+      : "--";
+
+    return {
+      imageUrl: leaderboardProfileImage(entry.user_id),
+      initials: accountInitials(entry.name),
+      accountType: entry.guest ? "Guest session" : "Registered account",
+      rankLabel: `#${entry.placement}`,
+      percentileLabel: leaderboardPercentile(entry.placement),
+      statusLabel: leaderboardRowNote(entry),
+      eloLabel: `${entry.elo}`,
+      solveRateLabel: solveRate,
+      rankedWinsLabel: stats ? `${stats.rankedWins}/${stats.rankedFinished}` : "--",
+      bestHiddenLabel: stats ? `${stats.bestHiddenPassed}` : "--",
+      sampleRunsLabel: stats ? `${stats.sampleRuns}` : "--",
+      trackedRunsLabel: stats ? `${stats.recentRuns.length}` : "--",
+    };
+  }
+
   function saveArenaSnapshot(currentMatch: MatchPayload, rows: Standing[]): void {
     lastArenaSnapshot = {
       match: cloneMatchPayload({
@@ -695,7 +830,11 @@
       return;
     }
 
-    applyParty(nextParty);
+    const shouldForceSetupSync =
+      eventName === "settings_updated" ||
+      eventName === "time_extended" ||
+      eventName === "started";
+    applyParty(nextParty, shouldForceSetupSync ? { syncSetup: true } : undefined);
 
     if (previousParty) {
       if (nextParty.members.length > previousParty.members.length) {
@@ -875,6 +1014,7 @@
   let passwordBusy = false;
   let passwordNotice = "";
   let passwordError = "";
+  let profileImageUrl = "";
 
   function userInitial(name: string | undefined): string {
     return name?.trim().charAt(0).toUpperCase() || "?";
@@ -1773,6 +1913,18 @@
     accountMenuOpen = false;
   }
 
+  function showResults(): void {
+    if (!postMatch) {
+      showHome();
+      return;
+    }
+    activeView = "postmatch";
+    error = "";
+    notice = "";
+    setLiveStatus("Post-match board ready", "ok");
+    accountMenuOpen = false;
+  }
+
   function showArena(): void {
     if (!sessionUser) {
       activeView = "home";
@@ -1933,7 +2085,7 @@
   }
 
   function resolveSystemTheme(): UiTheme {
-    return systemMatcher?.matches ? "dark" : "light";
+    return systemMatcher?.matches ? "dark" : SYSTEM_APPEARANCE_FALLBACK;
   }
 
   function cycleAppearanceMode(): void {
@@ -2303,7 +2455,7 @@
   }
 
   function resetThemePreferences(): void {
-    appearanceMode = "system";
+    appearanceMode = DEFAULT_APPEARANCE_MODE;
     lightEditorTheme = DEFAULT_LIGHT_EDITOR_THEME;
     darkEditorTheme = DEFAULT_DARK_EDITOR_THEME;
     editorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
@@ -2580,13 +2732,27 @@
     await addSampleTest(formatInputDraft(failedSample.primary_inputs));
   }
 
-  function applyParty(partyPayload: PartyPayload): void {
+  function applyParty(
+    partyPayload: PartyPayload,
+    options?: { syncSetup?: boolean },
+  ): void {
+    const existingParty = party;
+    const shouldSyncSetup = options?.syncSetup ?? !(
+      !!sessionUser &&
+      !!existingParty &&
+      existingParty.code === partyPayload.code &&
+      partyPayload.mode === "casual" &&
+      partyPayload.leader_id === sessionUser.id
+    );
+
     party = partyPayload;
     joinCodeInput = partyPayload.join_code;
     mode = partyPayload.mode;
-    selectedTheme = partyPayload.settings.theme;
-    difficulty = partyPayload.settings.difficulty;
-    timeLimitSeconds = partyPayload.settings.time_limit_seconds;
+    if (shouldSyncSetup) {
+      selectedTheme = partyPayload.settings.theme;
+      difficulty = partyPayload.settings.difficulty;
+      timeLimitSeconds = partyPayload.settings.time_limit_seconds;
+    }
     partyLimit = partyPayload.member_limit;
     rememberPartyCode(partyPayload.code);
   }
@@ -2791,6 +2957,7 @@
       sessionUser = null;
       isAdmin = false;
       accountStats = emptyAccountStats();
+      clearProfileImage();
       clearAdminState();
       accountMenuOpen = false;
       activeView = "home";
@@ -2812,6 +2979,7 @@
       }
     }
     loadAccountStats(payload.user);
+    loadProfileImage(payload.user);
     await loadLeaderboard();
     await refreshRankedQueue(true);
     await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
@@ -2839,7 +3007,7 @@
         return false;
       }
 
-      applyParty(partyPayload);
+      applyParty(partyPayload, { syncSetup: true });
       setLiveStatus("Lobby restored", "ok");
 
       if (!partyPayload.active_match_id || partyPayload.active_match_finished) {
@@ -2897,6 +3065,7 @@
       sessionUser = payload.user;
       isAdmin = payload.is_admin;
       loadAccountStats(payload.user);
+      loadProfileImage(payload.user);
       authPassword = "";
       notice =
         nextMode === "register"
@@ -2922,6 +3091,7 @@
       sessionUser = null;
       isAdmin = false;
       accountStats = emptyAccountStats();
+      clearProfileImage();
       clearAdminState();
       accountMenuOpen = false;
       activeView = "home";
@@ -3005,9 +3175,6 @@
         body: JSON.stringify({
           leader_id: sessionUser.id,
           mode,
-          theme: selectedTheme,
-          difficulty,
-          time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
           member_limit: mode === "zen"
             ? 1
             : Math.min(
@@ -3017,10 +3184,10 @@
         }),
       });
 
-      applyParty(payload);
+      applyParty(payload, { syncSetup: true });
       setLiveStatus("Party live. Waiting for members...", "neutral");
       syncLiveSocket();
-      notice = `Party created. Share code ${payload.join_code}.`;
+      notice = `Party created. Share code ${payload.join_code}. Configure match settings in the lobby, then start.`;
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -3049,7 +3216,7 @@
         return;
       }
 
-      applyParty(payload);
+      applyParty(payload, { syncSetup: true });
       setLiveStatus("Lobby synced", "ok");
       if (payload.active_match_id && (!match || match.match_id !== payload.active_match_id)) {
         setLiveStatus("Host started the match", "ok");
@@ -3146,37 +3313,6 @@
     }
   }
 
-  async function updatePartySetup(): Promise<void> {
-    if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
-      return;
-    }
-
-    busy = true;
-    error = "";
-    notice = "";
-    try {
-      const payload = await api<PartyPayload>(
-        `/api/parties/${party.code}/settings`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            user_id: sessionUser.id,
-            theme: selectedTheme,
-            difficulty,
-            time_limit_seconds: timeLimitSeconds,
-          }),
-        },
-      );
-      applyParty(payload);
-      setLiveStatus("Party setup updated", "ok");
-      notice = "Party setup updated.";
-    } catch (err) {
-      error = toErrorMessage(err);
-    } finally {
-      busy = false;
-    }
-  }
-
   async function addPartyTime(): Promise<void> {
     if (!match || !sessionUser) {
       return;
@@ -3211,7 +3347,7 @@
         }),
       });
       if (party || payload.mode !== "zen") {
-        applyParty(payload);
+        applyParty(payload, { syncSetup: true });
       } else {
         timeLimitSeconds = payload.settings.time_limit_seconds;
       }
@@ -3335,7 +3471,16 @@
         `/api/parties/${codeToStart}/start`,
         {
           method: "POST",
-          body: JSON.stringify({ user_id: sessionUser.id }),
+          body: JSON.stringify({
+            user_id: sessionUser.id,
+            ...(requestedMode === "casual"
+              ? {
+                  theme: selectedTheme,
+                  difficulty,
+                  time_limit_seconds: timeLimitSeconds,
+                }
+              : {}),
+          }),
         },
       );
 
@@ -3415,8 +3560,8 @@
       setLiveStatus("Pick create or join to go live", "neutral");
       notice = "Create a party or enter a join code to continue.";
     } else if (nextMode === "ranked") {
-      setLiveStatus("Join the ranked queue", "neutral");
-      notice = "Queue into a live 1v1 match with a nearby ELO opponent.";
+      setLiveStatus("Queue for a nearby-ELO 1v1", "neutral");
+      notice = "";
     } else {
       setLiveStatus("Solo mode", "neutral");
       notice = "";
@@ -4013,6 +4158,7 @@
     {themePref}
     {activeEditorTheme}
     {availableEditorThemes}
+    {profileImageUrl}
     {sessionUser}
     {isAdmin}
     {accountStats}
@@ -4041,9 +4187,12 @@
     {editorFontFamily}
     {editorFontFamilyOptions}
     {editorFontSize}
+    {keybindMode}
     {setEditorFontFamily}
     {setEditorFontSize}
+    {setKeybindMode}
     {resetThemePreferences}
+    {uploadProfileImage}
     {accountInitials}
     {formatActivityTime}
     {formatRatingDelta}
@@ -4069,7 +4218,6 @@
       {match}
       {timerText}
       {themes}
-      {modeOptions}
       {difficultyOptions}
       {isPartyMode}
       {isRankedMode}
@@ -4087,7 +4235,6 @@
       }}
       {startRace}
       {authenticate}
-      {updatePartySetup}
       {updatePartyLimit}
       {copyPartyInvite}
       {refreshPartyLobby}
@@ -4098,6 +4245,7 @@
       leaveRankedQueue={() => leaveRankedQueue(false)}
       {launchConfiguredMatch}
       {resumeRace}
+      {forfeit}
       {logout}
       {normalizePartyCode}
     />
@@ -4107,6 +4255,8 @@
       {sessionUser}
       {leaderboardCurrentUser}
       {leaderboardTotalPlayers}
+      {accountInitials}
+      {leaderboardProfilePreview}
       {leaderboardPercentile}
       {leaderboardRowNote}
       {loadLeaderboard}
@@ -4135,9 +4285,11 @@
       {match}
       {themeStatusText}
       {activeEditorThemeName}
+      {profileImageUrl}
       {showPlayView}
       {logout}
       {refreshSession}
+      {uploadProfileImage}
       {userInitial}
       {keybindMode}
       {setKeybindMode}
@@ -4226,6 +4378,7 @@
       {handleEditorKeydown}
       {syncEditorScroll}
       {formatRatingDelta}
+      {showResults}
     />
   {/if}
 

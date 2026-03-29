@@ -26,7 +26,6 @@
   export let match: MatchPayload | null = null;
   export let timerText = "00:00";
   export let themes: string[] = [];
-  export let modeOptions: Mode[] = [];
   export let difficultyOptions: Difficulty[] = [];
   export let isPartyMode = false;
   export let isRankedMode = false;
@@ -42,7 +41,6 @@
   export let clearFlash: () => void = () => {};
   export let startRace: (nextMode: Mode) => void | Promise<void> = () => {};
   export let authenticate: (nextMode: AuthMode) => void | Promise<void> = () => {};
-  export let updatePartySetup: () => void | Promise<void> = () => {};
   export let updatePartyLimit: () => void | Promise<void> = () => {};
   export let copyPartyInvite: () => void | Promise<void> = () => {};
   export let refreshPartyLobby: () => void | Promise<void> = () => {};
@@ -53,10 +51,18 @@
   export let leaveRankedQueue: () => void | Promise<void> = () => {};
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
   export let resumeRace: () => void | Promise<void> = () => {};
+  export let forfeit: () => void | Promise<void> = () => {};
   export let logout: () => void | Promise<void> = () => {};
   export let normalizePartyCode: (raw: string) => string = (raw) => raw;
 
   $: resumableMatch = match && !match.finished && !match.locked ? match : null;
+  $: showMatchSetupFields = !isPartyMode || !!party;
+  $: modeLabel =
+    mode === "zen"
+      ? "ZEN MODE"
+      : mode === "casual"
+        ? "CASUAL PARTY"
+        : "RANKED";
 </script>
 
 <main id="home-view">
@@ -84,8 +90,10 @@
       <button
         type="button"
         class="mode-card"
+        class:active={mode === "zen"}
         on:click={() => startRace("zen")}
         disabled={!sessionUser || busy}
+        aria-pressed={mode === "zen"}
       >
         <i class="fas fa-mountain" aria-hidden="true"></i>
         <h3>Zen Mode</h3>
@@ -95,8 +103,10 @@
       <button
         type="button"
         class="mode-card"
+        class:active={mode === "casual"}
         on:click={() => startRace("casual")}
         disabled={!sessionUser || busy}
+        aria-pressed={mode === "casual"}
       >
         <i class="fas fa-user-friends" aria-hidden="true"></i>
         <h3>Casual Party</h3>
@@ -106,8 +116,10 @@
       <button
         type="button"
         class="mode-card"
+        class:active={mode === "ranked"}
         on:click={() => startRace("ranked")}
         disabled={!sessionUser || busy}
+        aria-pressed={mode === "ranked"}
       >
         <i class="fas fa-trophy" aria-hidden="true"></i>
         <h3>Ranked</h3>
@@ -183,47 +195,49 @@
           <p>{sessionUser.name} | ELO {sessionUser.elo}</p>
         </div>
 
-        <div class="setup-body" class:party-mode-layout={isPartyMode}>
+        <div
+          class="setup-body"
+          class:party-mode-layout={isPartyMode}
+          class:ranked-mode-layout={isRankedMode}
+        >
           <div class="match-setup-panel">
             <div class="field-grid">
-              <label>
+              <div class="field-display">
                 <span>Mode</span>
-                <select bind:value={mode} disabled={!!party || !!rankedQueue || busy}>
-                  {#each modeOptions as option}
-                    <option value={option}>{option.toUpperCase()}</option>
-                  {/each}
-                </select>
-              </label>
+                <div class="field-readout">{modeLabel}</div>
+              </div>
 
               {#if !isRankedMode}
-                <label>
-                  <span>Puzzle theme</span>
-                  <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
-                    {#each themes as theme}
-                      <option value={theme}>{theme}</option>
-                    {/each}
-                  </select>
-                </label>
+                {#if showMatchSetupFields}
+                  <label>
+                    <span>Puzzle theme</span>
+                    <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
+                      {#each themes as theme}
+                        <option value={theme}>{theme}</option>
+                      {/each}
+                    </select>
+                  </label>
 
-                <label>
-                  <span>Difficulty</span>
-                  <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
-                    {#each difficultyOptions as option}
-                      <option value={option}>{option.toUpperCase()}</option>
-                    {/each}
-                  </select>
-                </label>
+                  <label>
+                    <span>Difficulty</span>
+                    <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
+                      {#each difficultyOptions as option}
+                        <option value={option}>{option.toUpperCase()}</option>
+                      {/each}
+                    </select>
+                  </label>
 
-                <label>
-                  <span>Time (seconds)</span>
-                  <input
-                    type="number"
-                    bind:value={timeLimitSeconds}
-                    min="60"
-                    max="7200"
-                    disabled={!canEditPartySetup || busy}
-                  />
-                </label>
+                  <label>
+                    <span>Time (seconds)</span>
+                    <input
+                      type="number"
+                      bind:value={timeLimitSeconds}
+                      min="60"
+                      max="7200"
+                      disabled={!canEditPartySetup || busy}
+                    />
+                  </label>
+                {/if}
 
                 {#if isPartyMode}
                   <label>
@@ -282,16 +296,6 @@
                       {party.members.length}/{party.member_limit} members
                     </span>
                     <div class="party-leader-actions">
-                      {#if party.mode === "casual"}
-                        <button
-                          type="button"
-                          class="btn"
-                          on:click={updatePartySetup}
-                          disabled={busy}
-                        >
-                          Update setup
-                        </button>
-                      {/if}
                       <button
                         type="button"
                         class="btn"
@@ -409,7 +413,7 @@
             {:else if isRankedMode && rankedQueue}
               Searching Matchmaking
             {:else if !party}
-              {isRankedMode ? "Join Ranked Queue" : "Create Party"}
+              {isRankedMode ? "Join Ranked Queue" : "Create Party Lobby"}
             {:else if !isPartyLeader}
               Waiting for Leader
             {:else}
@@ -417,14 +421,25 @@
             {/if}
           </button>
 
-          <button
-            type="button"
-            class="btn resume"
-            on:click={resumeRace}
-            disabled={!resumableMatch || busy}
-          >
-            Resume Race
-          </button>
+          {#if resumableMatch}
+            <button
+              type="button"
+              class="btn resume"
+              on:click={resumeRace}
+              disabled={busy}
+            >
+              Resume Race
+            </button>
+
+            <button
+              type="button"
+              class="btn forfeit"
+              on:click={forfeit}
+              disabled={busy}
+            >
+              Forfeit Match
+            </button>
+          {/if}
 
           {#if party}
             <button

@@ -191,6 +191,32 @@ def test_numeric_theme_covers_all_difficulties(difficulty: Difficulty) -> None:
     assert puzzle.theme == "Numeric"
 
 
+def test_numeric_hard_maps_to_reverse_sum_template() -> None:
+    puzzle = generate_puzzle(theme="Numeric", difficulty="hard", seed=91)
+    assert puzzle.template_key == "numeric-add-reversed-number-v1"
+
+
+def test_numeric_reverse_sum_cases_match_expected_rule() -> None:
+    puzzle = generate_puzzle(theme="Numeric", difficulty="hard", seed=123)
+    for case in puzzle.sample_tests + puzzle.hidden_tests:
+        value = case.inputs[0]
+        assert isinstance(value, int)
+        assert 10 <= value <= 99
+        assert case.output == value + int(str(value)[::-1])
+
+
+def test_numeric_expert_includes_total_factor_and_linear_templates() -> None:
+    observed: set[str] = set()
+    for seed in range(1, 40):
+        puzzle = generate_puzzle(theme="Numeric", difficulty="expert", seed=seed)
+        observed.add(puzzle.template_key)
+
+    assert observed == {
+        "numeric-total-factor-count-v1",
+        "numeric-linear-transform-v1",
+    }
+
+
 def test_requested_categories_exist_in_theme_catalog() -> None:
     expected = {"Cryptography", "Algorithms", "Numeric"}
     assert expected.issubset(set(THEMES))

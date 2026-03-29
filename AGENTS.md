@@ -60,6 +60,8 @@ Top-level layout:
 - `backend/src/app.py`
   - Main Flask app wiring (`create_app`, `main`).
   - Defines all REST endpoints and WebSocket endpoint (`/ws/events`).
+  - `POST /api/parties` accepts minimal lobby creation payloads (mode + optional member limit) and fills default match settings (`theme=THEMES[0]`, `difficulty=easy`, `time_limit_seconds=900`) when omitted.
+  - `POST /api/parties/<code>/start` accepts optional non-ranked match settings (`theme`, `difficulty`, `time_limit_seconds`) so casual lobbies can set puzzle config at match start.
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
   - Converts domain/store objects into API payloads (`_party_payload`, `_match_payload`, `_judge_result_payload`).
   - Adds admin payload conversion via `_admin_match_payload` for dashboard match inspection.
@@ -99,7 +101,7 @@ Top-level layout:
   - Maintains template registry (`_TEMPLATES`) and mapping by theme/key.
   - Caesar/substitution inference templates expose scaffold args as `arg1`/`samples`, with `samples` typed as `list[tuple[str, str]]` and backed by auto-generated sample pairs.
   - `Algorithms` now contains classic algorithm/search/string/data-structure/greedy templates with explicit difficulty assignments covering easy/medium/hard/expert.
-  - `Numeric` includes dedicated templates for GCD, LCM, prime checking, total factor-count summation, and linear `a*x + b` inference.
+  - `Numeric` includes dedicated templates for GCD, LCM, prime checking, hard-mode two-digit number-plus-reversed-number summation, and expert templates for total factor-count summation plus linear `a*x + b` inference.
   - Produces `fingerprint` (template/params context) and `signature` (includes all tests) hashes.
   - Renders hints with Jinja templates.
   - Builds solution scaffold from contract.
@@ -125,6 +127,7 @@ Top-level layout:
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
+    - Casual/zen match settings can be supplied per match at party start time; those selected settings become the party's latest stored setup.
     - Casual and zen party leaders can add time (`add_seconds`) to party settings; if a casual/zen match is currently active and unlocked for that party, the match timer is extended too.
     - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
@@ -213,6 +216,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/app.css`
   - Entire app styling and design tokens.
   - Defines theme CSS variables and component layout styles.
+  - Base tokens align with the default startup palette: Everforest Light for light mode, with Catppuccin Mocha applied for dark mode.
 
 ### Main SPA orchestrator
 
@@ -228,6 +232,8 @@ Defined in `backend/src/app.py`:
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
+    - appearance persistence with light-mode startup default, explicit light fallback for system mode, and Everforest Light / Catppuccin Mocha as the default light/dark palettes
+    - local per-user profile photo persistence in browser storage, including client-side square crop/compression before save
     - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match)
     - routing between subviews (`home`, `arena`, `leaderboard`, `admin`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
@@ -235,7 +241,7 @@ Defined in `backend/src/app.py`:
 ### Svelte component roles
 
 - `frontend/src/components/AppHeader.svelte`
-  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, and account summary dialog.
+  - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, account summary dialog, a quick Vim-mode toggle, and a hover `+` profile-photo upload affordance in the account summary card.
   - Shows admin nav/quick action when the current session has admin access.
 
 - `frontend/src/components/AdminView.svelte`
@@ -244,8 +250,13 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
-  - Match setup fields are mode-aware: ranked shows only mode selection, and party limit appears only in casual party mode.
-  - Casual party leaders get lobby management actions for setup and member limit.
+  - Mode selection is driven by the large top mode cards; the match setup panel no longer repeats mode selection with a dropdown.
+  - The setup panel still shows the current mode as a read-only field so the layout stays anchored after the dropdown removal.
+  - When an unfinished unlocked match exists, the home action row exposes both resume and forfeit actions so players can leave a match without re-entering the arena first.
+  - Match setup fields are mode-aware: ranked shows queue state only; casual pre-lobby setup shows party limit; puzzle theme/difficulty/time appear after the lobby exists and are used for each started match.
+  - Ranked setup uses a compact two-column layout with the setup panel in a narrow left column and the queue card beside it.
+  - Ranked idle guidance is shown in the queue panel status badge instead of the bottom flash notice bar.
+  - Casual party leaders get lobby management actions for member limit (match setup updates happen through match start payloads).
   - In casual party mode, setup fields and party lobby render in a two-column layout on desktop, with primary action buttons kept in the bottom action row.
 
 - `frontend/src/components/ArenaView.svelte`
@@ -261,12 +272,13 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/LeaderboardView.svelte`
   - Ranked leaderboard display and refresh.
+  - Rows show profile avatars and a hover/focus profile card with ladder stats plus any locally cached run stats/profile photo available in the current browser.
 
 - `frontend/src/components/PostMatchView.svelte`
   - End-of-match summary and final standings board.
 
 - `frontend/src/components/SettingsView.svelte`
-  - Appearance/theme controls, keybind profile/custom shortcuts, account/session settings, password change.
+  - Appearance/theme controls, keybind profile/custom shortcuts, account/session settings, password change, and a hover `+` profile-photo upload affordance in the profile card.
 
 ### Static assets and legacy prototype
 

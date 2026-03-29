@@ -18,10 +18,12 @@
   export let match: MatchPayload | null = null;
   export let themeStatusText = "";
   export let activeEditorThemeName = "";
+  export let profileImageUrl = "";
 
   export let showPlayView: () => void = () => {};
   export let logout: () => void | Promise<void> = () => {};
   export let refreshSession: () => void | Promise<void> = () => {};
+  export let uploadProfileImage: (file: File) => void | Promise<void> = () => {};
   export let userInitial: (name: string | undefined) => string = () => "?";
 
   export let keybindMode: KeybindMode = "normal";
@@ -36,11 +38,11 @@
   export let customShortcutError = "";
   export let setCustomShortcut: (action: EditorAction, rawValue: string) => void = () => {};
 
-  export let appearanceMode: AppearanceMode = "system";
+  export let appearanceMode: AppearanceMode = "light";
   export let appearanceModeOrder: AppearanceMode[] = ["system", "light", "dark"];
   export let setAppearanceMode: (mode: AppearanceMode) => void = () => {};
-  export let themePref: UiTheme = "dark";
-  export let activeEditorTheme: BundledTheme = "github-dark-default";
+  export let themePref: UiTheme = "light";
+  export let activeEditorTheme: BundledTheme = "everforest-light";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
   export let resetThemePreferences: () => void = () => {};
@@ -61,6 +63,17 @@
   export let passwordNotice = "";
   export let passwordError = "";
   export let changePassword: () => void | Promise<void> = () => {};
+
+  let profileImageInputEl: HTMLInputElement | null = null;
+
+  async function handleProfileImageChange(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) {
+      await uploadProfileImage(file);
+    }
+    input.value = "";
+  }
 </script>
 
 <main id="settings-view">
@@ -68,10 +81,6 @@
     <section class="settings-nav-card">
       <p class="eyebrow">Workspace</p>
       <h1>Settings</h1>
-      <p class="settings-sidebar-copy">
-        Tune the arena, editor, and account surface so the app matches your
-        workflow.
-      </p>
 
       <div class="settings-summary-list">
         <div class="settings-summary-item">
@@ -134,8 +143,35 @@
 
       <div class="settings-profile-grid">
         <article class="settings-identity-card">
-          <div class="settings-avatar" aria-hidden="true">
-            {userInitial(sessionUser?.name)}
+          <div class="settings-avatar-shell">
+            <div class="settings-avatar" aria-hidden={!profileImageUrl}>
+              {#if profileImageUrl}
+                <img
+                  class="avatar-image"
+                  src={profileImageUrl}
+                  alt={`${sessionUser?.name ?? "User"} profile photo`}
+                />
+              {:else}
+                {userInitial(sessionUser?.name)}
+              {/if}
+            </div>
+            {#if sessionUser}
+              <input
+                bind:this={profileImageInputEl}
+                class="settings-avatar-input"
+                type="file"
+                accept="image/*"
+                on:change={(event) => void handleProfileImageChange(event)}
+              />
+              <button
+                type="button"
+                class="settings-avatar-button"
+                on:click={() => profileImageInputEl?.click()}
+                aria-label="Upload profile photo"
+              >
+                <i class="fas fa-plus" aria-hidden="true"></i>
+              </button>
+            {/if}
           </div>
           <div class="settings-identity-copy">
             <strong>{sessionUser?.name ?? "Guest challenger"}</strong>
@@ -199,10 +235,7 @@
               <span>Keybind profile</span>
             </div>
             <p>
-              Normal keeps the default editor controls. Vim now uses a real
-              CodeMirror Vim package instead of custom in-app motion logic.
-              Custom lets users keep normal typing but tailor action
-              shortcuts.
+              Choose between normal, Vim, or custom shortcuts.
             </p>
           </div>
           <div
@@ -231,12 +264,9 @@
             </div>
             <p>
               {#if keybindMode === "custom"}
-                Custom mode uses `Alt` plus the letter you choose for each
-                action below.
+                Use `Alt` plus your chosen key for each action below.
               {:else}
-                Built-in shortcuts stay simple: `Ctrl+Enter` submits,
-                `Ctrl+Shift+Enter` runs samples, `Alt+H` asks for a hint,
-                and `Alt+F` forfeits.
+                Default shortcuts are shown on the right.
               {/if}
             </p>
           </div>
@@ -438,10 +468,6 @@
                 />
               </label>
             </div>
-            <p class="settings-helper-copy">
-              Pick the code font and point size that feels best across the
-              editor, settings, and match UI.
-            </p>
           </div>
 
           <div class="settings-action-row settings-theme-actions">
@@ -474,7 +500,6 @@
           <p class="eyebrow">Security</p>
           <h3>Password</h3>
         </div>
-        <span class="settings-panel-note">Classic password change flow</span>
       </div>
 
       {#if !sessionUser || sessionUser.guest}

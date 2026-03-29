@@ -6,6 +6,7 @@
     AppearanceMode,
     EditorFontFamily,
     EditorFontSize,
+    KeybindMode,
     SessionUser,
     UiTheme,
     View,
@@ -23,15 +24,17 @@
   };
 
   export let activeView: View = "home";
-  export let appearanceMode: AppearanceMode = "system";
+  export let appearanceMode: AppearanceMode = "light";
   export let themeStatusText = "";
   export let activeEditorThemeName = "";
-  export let themePref: UiTheme = "dark";
-  export let activeEditorTheme: BundledTheme = "github-dark-default";
+  export let themePref: UiTheme = "light";
+  export let activeEditorTheme: BundledTheme = "everforest-light";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
+  export let profileImageUrl = "";
   export let editorFontFamily: EditorFontFamily = "roboto-mono";
   export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];
   export let editorFontSize: EditorFontSize = 14;
+  export let keybindMode: KeybindMode = "normal";
 
   export let sessionUser: SessionUser | null = null;
   export let isAdmin = false;
@@ -74,7 +77,9 @@
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
   export let setEditorFontFamily: (family: EditorFontFamily) => void = () => {};
   export let setEditorFontSize: (size: EditorFontSize) => void = () => {};
+  export let setKeybindMode: (mode: KeybindMode) => void = () => {};
   export let resetThemePreferences: () => void = () => {};
+  export let uploadProfileImage: (file: File) => void | Promise<void> = () => {};
   export let accountInitials: (name: string) => string = () => "EN";
   export let formatActivityTime: (timestamp: string) => string = () => "";
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
@@ -89,6 +94,7 @@
   let quickSettingsIndex = 0;
   let quickSettingsInputEl: HTMLInputElement | null = null;
   let quickSettingsActions: QuickSettingAction[] = [];
+  let accountImageInputEl: HTMLInputElement | null = null;
 
   function closeQuickSettings(): void {
     quickSettingsOpen = false;
@@ -114,6 +120,15 @@
       return "Follow system appearance";
     }
     return `Use ${mode} appearance`;
+  }
+
+  async function handleAccountImageChange(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) {
+      await uploadProfileImage(file);
+    }
+    input.value = "";
   }
 
   function handleQuickSettingsKeydown(event: KeyboardEvent): void {
@@ -273,6 +288,20 @@
       run: () => setEditorFontSize(size),
     }));
 
+    const editorModeActions: QuickSettingAction[] = [
+      {
+        id: "quick-keybind-vim-toggle",
+        label: keybindMode === "vim" ? "Disable Vim mode" : "Enable Vim mode",
+        description:
+          keybindMode === "vim"
+            ? "Currently using Vim keybinds. Switch back to normal typing."
+            : "Toggle Vim keybinds on for the editor.",
+        icon: "fa-keyboard",
+        keywords: `editor keybind vim modal normal custom ${keybindMode}`,
+        run: () => setKeybindMode(keybindMode === "vim" ? "normal" : "vim"),
+      },
+    ];
+
     const utilityActions: QuickSettingAction[] = [
       {
         id: "quick-reset-theme",
@@ -301,6 +330,7 @@
       ...themeActions,
       ...fontActions,
       ...fontSizeActions,
+      ...editorModeActions,
       ...utilityActions,
     ];
 
@@ -443,7 +473,34 @@
         <div class="account-menu" role="dialog" aria-label="Account summary">
           {#if sessionUser}
             <section class="account-summary-card">
-              <div class="account-avatar">{accountInitials(sessionUser.name)}</div>
+              <div class="account-avatar-shell">
+                <div class="account-avatar">
+                  {#if profileImageUrl}
+                    <img
+                      class="avatar-image"
+                      src={profileImageUrl}
+                      alt={`${sessionUser.name} profile photo`}
+                    />
+                  {:else}
+                    {accountInitials(sessionUser.name)}
+                  {/if}
+                </div>
+                <input
+                  bind:this={accountImageInputEl}
+                  class="account-avatar-input"
+                  type="file"
+                  accept="image/*"
+                  on:change={(event) => void handleAccountImageChange(event)}
+                />
+                <button
+                  type="button"
+                  class="account-avatar-button"
+                  on:click={() => accountImageInputEl?.click()}
+                  aria-label="Upload profile photo"
+                >
+                  <i class="fas fa-plus" aria-hidden="true"></i>
+                </button>
+              </div>
               <div class="account-summary-copy">
                 <p class="eyebrow">Account</p>
                 <h2>{sessionUser.name}</h2>

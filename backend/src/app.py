@@ -422,7 +422,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def create_party() -> Any:
         payload = request.get_json(silent=True) or {}
         mode = _parse_mode(payload.get("mode"))
-        difficulty = _parse_difficulty(payload.get("difficulty"))
+        difficulty = _parse_difficulty(payload.get("difficulty", "easy"))
         member_limit_raw = payload.get("member_limit", payload.get("party_limit"))
         party = data.create_party(
             leader_id=str(payload.get("leader_id", "")) or session_user_id(),
@@ -545,10 +545,33 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     @app.route("/api/parties/<code>/start", methods=["POST"])
     def start_match(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
+
+        theme: str | None = None
+        difficulty: Difficulty | None = None
+        time_limit_seconds: int | None = None
+
+        has_custom_settings = any(
+            field in payload for field in ("theme", "difficulty", "time_limit_seconds")
+        )
+        if has_custom_settings:
+            if "theme" not in payload:
+                raise ValueError("theme is required")
+            if "difficulty" not in payload:
+                raise ValueError("difficulty is required")
+            if "time_limit_seconds" not in payload:
+                raise ValueError("time_limit_seconds is required")
+
+            theme = str(payload.get("theme", THEMES[0]))
+            difficulty = _parse_difficulty(payload.get("difficulty"))
+            time_limit_seconds = int(payload.get("time_limit_seconds", 900))
+
         match = data.start_match(
             code=code,
             requester_id=payload_user_id(payload),
             seed=_optional_int(payload.get("seed")),
+            theme=theme,
+            difficulty=difficulty,
+            time_limit_seconds=time_limit_seconds,
         )
         publish_match_update(match, event="started")
         return jsonify(_match_payload(data, match))

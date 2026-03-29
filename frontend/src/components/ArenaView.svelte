@@ -35,6 +35,7 @@
 
   export let launchConfiguredMatch: () => void | Promise<void> = () => {};
   export let showHome: () => void = () => {};
+  export let showResults: () => void = () => {};
   export let raceModeIcon: (value: MatchPayload["mode"]) => string = () => "fa-mountain";
   export let addSampleTest: (inputsText: string) => Promise<boolean> = async () => false;
   export let updateSampleTest: (
@@ -279,7 +280,7 @@
 
     {#if match.finished}
       <div class="arena-review-actions">
-        <button type="button" class="btn" on:click={showHome}>Home</button>
+        <button type="button" class="btn" on:click={showResults}>Results</button>
       </div>
     {/if}
 
@@ -548,7 +549,13 @@
     <section class="standings-card">
       <div class="standings-head">
         <h3>Standings</h3>
-        <button type="button" class="btn" on:click={showHome}>Back Home</button>
+        <button
+          type="button"
+          class="btn"
+          on:click={match.finished ? showResults : showHome}
+        >
+          {match.finished ? "Results" : "Back Home"}
+        </button>
       </div>
 
       {#if standings.length === 0}
