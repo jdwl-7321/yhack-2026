@@ -3231,8 +3231,8 @@
       setLiveStatus("Pick create or join to go live", "neutral");
       notice = "Create a party or enter a join code to continue.";
     } else if (nextMode === "ranked") {
-      setLiveStatus("Join the ranked queue", "neutral");
-      notice = "Queue into a live 1v1 match with a nearby ELO opponent.";
+      setLiveStatus("Queue for a nearby-ELO 1v1", "neutral");
+      notice = "";
     } else {
       setLiveStatus("Solo mode", "neutral");
       notice = "";

@@ -183,7 +183,11 @@
           <p>{sessionUser.name} | ELO {sessionUser.elo}</p>
         </div>
 
-        <div class="setup-body" class:party-mode-layout={isPartyMode}>
+        <div
+          class="setup-body"
+          class:party-mode-layout={isPartyMode}
+          class:ranked-mode-layout={isRankedMode}
+        >
           <div class="match-setup-panel">
             <div class="field-grid">
               <label>

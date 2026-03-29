@@ -225,6 +225,8 @@ Defined in `backend/src/app.py`:
 - `frontend/src/components/HomeView.svelte`
   - Auth card, casual party lobby controls, ranked queue panel, start flow, and active-match resume spotlight/CTA.
   - Match setup fields are mode-aware: ranked shows only mode selection; casual pre-lobby setup shows mode + party limit; puzzle theme/difficulty/time appear after the lobby exists and are used for each started match.
+  - Ranked setup uses a compact two-column layout with the mode selector in a narrow left column and the queue card beside it.
+  - Ranked idle guidance is shown in the queue panel status badge instead of the bottom flash notice bar.
   - Casual party leaders get lobby management actions for member limit (match setup updates happen through match start payloads).
   - In casual party mode, setup fields and party lobby render in a two-column layout on desktop, with primary action buttons kept in the bottom action row.
 
