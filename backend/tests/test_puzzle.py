@@ -3,7 +3,6 @@ import pytest
 from constants import THEMES
 from domain_types import Difficulty
 from puzzle import (
-    NoveltyPool,
     PuzzleInstance,
     format_value,
     generate_puzzle,
@@ -50,27 +49,16 @@ def test_invalid_variable_schema_rejected() -> None:
         )
 
 
-def test_novelty_pool_evicts_when_over_50() -> None:
-    pool = NoveltyPool(size=50, similarity_threshold=1.1)
-    for index in range(51):
-        assert pool.accept(f"fp-{index}", f"sig-{index}")
-
-    assert len(pool) == 50
-    assert pool.accept("fp-0", "sig-0")
-
-
 def test_generate_puzzle_is_seed_deterministic() -> None:
     first = generate_puzzle(
         theme=THEMES[0],
         difficulty="easy",
         seed=99,
-        novelty_pool=NoveltyPool(similarity_threshold=1.1),
     )
     second = generate_puzzle(
         theme=THEMES[0],
         difficulty="easy",
         seed=99,
-        novelty_pool=NoveltyPool(similarity_threshold=1.1),
     )
 
     assert first.variables == second.variables
@@ -87,14 +75,12 @@ def test_hint_templates_render_human_readable_text() -> None:
         theme=THEMES[0],
         difficulty="easy",
         seed=123,
-        novelty_pool=NoveltyPool(similarity_threshold=1.1),
     )
 
     second = generate_puzzle(
         theme=THEMES[2],
         difficulty="easy",
         seed=456,
-        novelty_pool=NoveltyPool(similarity_threshold=1.1),
     )
 
     for puzzle in (first, second):
@@ -111,7 +97,6 @@ def test_two_sum_contract_uses_typed_parameters() -> None:
         theme="Algorithms",
         difficulty="easy",
         seed=321,
-        novelty_pool=NoveltyPool(similarity_threshold=1.1),
     )
 
     assert puzzle.contract.parameter_types == ("list[int]", "int")
@@ -192,5 +177,4 @@ def _crypto_puzzle_for_difficulty(difficulty: Difficulty) -> PuzzleInstance:
         theme="Cryptography",
         difficulty=difficulty,
         seed=41,
-        novelty_pool=NoveltyPool(similarity_threshold=1.1),
     )
