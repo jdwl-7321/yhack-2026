@@ -670,6 +670,34 @@ def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:
     assert len(refreshed_match["sample_tests"]) == 4
 
 
+def test_ranked_theme_rotation_uses_all_themes_before_repeat() -> None:
+    data = MemoryStore()
+    leader = data.create_user(name="CycleLeader", guest=False, elo=1000)
+    party = data.create_party(
+        leader_id=leader.id,
+        mode="ranked",
+        theme=THEMES[0],
+        difficulty="easy",
+        time_limit_seconds=900,
+    )
+
+    seen: list[str] = []
+    for seed in range(1, len(THEMES) + 1):
+        match = data.start_match(code=party.code, requester_id=leader.id, seed=seed)
+        seen.append(match.theme)
+        data.finish_match(match_id=match.id)
+
+    assert len(set(seen)) == len(THEMES)
+    assert set(seen) == set(THEMES)
+
+    next_match = data.start_match(
+        code=party.code,
+        requester_id=leader.id,
+        seed=len(THEMES) + 10,
+    )
+    assert next_match.theme in THEMES
+
+
 def test_ranked_submit_auto_finishes_and_updates_elo() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()

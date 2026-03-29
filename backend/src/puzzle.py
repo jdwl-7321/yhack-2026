@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 import hashlib
 import json
 import math
@@ -14,7 +13,7 @@ from typing import Any, Callable, Literal, Sequence, cast
 
 from jinja2 import Environment, StrictUndefined, TemplateError
 
-from constants import NOVELTY_POOL_SIZE, SIMILARITY_THRESHOLD, THEMES
+from constants import THEMES
 from domain_types import Difficulty, JsonScalar, JsonValue
 
 VarType = Literal["int", "float", "bool", "str", "choice"]
@@ -85,31 +84,6 @@ class _Template:
     difficulties: tuple[Difficulty, ...] | None = None
 
 
-class NoveltyPool:
-    def __init__(
-        self,
-        size: int = NOVELTY_POOL_SIZE,
-        similarity_threshold: float = SIMILARITY_THRESHOLD,
-    ) -> None:
-        self._entries: deque[tuple[str, str]] = deque(maxlen=size)
-        self.similarity_threshold = similarity_threshold
-
-    def accept(self, fingerprint: str, signature: str) -> bool:
-        for existing_fp, existing_sig in self._entries:
-            if fingerprint == existing_fp:
-                return False
-            if (
-                SequenceMatcher(None, signature, existing_sig).ratio()
-                >= self.similarity_threshold
-            ):
-                return False
-        self._entries.append((fingerprint, signature))
-        return True
-
-    def __len__(self) -> int:
-        return len(self._entries)
-
-
 def generator_schema() -> dict[str, Any]:
     return {
         "variables": {
@@ -136,10 +110,6 @@ def generator_schema() -> dict[str, Any]:
             ],
             "return_type": "any Python expression type hint",
             "parameter_names": ["arg1", "arg2"],
-        },
-        "novelty": {
-            "pool_size": NOVELTY_POOL_SIZE,
-            "similarity_threshold": SIMILARITY_THRESHOLD,
         },
     }
 
@@ -246,93 +216,83 @@ def generate_puzzle(
     theme: str,
     difficulty: Difficulty,
     seed: int,
-    novelty_pool: NoveltyPool,
-    retry_budget: int = 5,
 ) -> PuzzleInstance:
     normalized_theme = _normalize_theme(theme)
+    rng = random.Random(seed)
+    template = _select_template(normalized_theme, difficulty, rng)
+    params = template.variable_factory(rng, difficulty)
+    sample_tests = _build_cases(
+        template,
+        params,
+        rng,
+        difficulty,
+        count=2,
+        distinct_outputs=_samples_require_distinct_outputs(template.key),
+    )
+    shared_inputs = template.shared_input_factory(params, sample_tests)
 
-    for attempt in range(retry_budget):
-        attempt_seed = seed + (attempt * 7919)
-        rng = random.Random(attempt_seed)
-        template = _select_template(normalized_theme, difficulty, rng)
-        params = template.variable_factory(rng, difficulty)
-        sample_tests = _build_cases(
-            template,
-            params,
-            rng,
-            difficulty,
-            count=2,
-            distinct_outputs=_samples_require_distinct_outputs(template.key),
-        )
-        shared_inputs = template.shared_input_factory(params, sample_tests)
+    hidden_count = {"easy": 10, "medium": 12, "hard": 14, "expert": 16}[difficulty]
+    hidden_tests = _build_cases(
+        template,
+        params,
+        rng,
+        difficulty,
+        count=hidden_count,
+        existing_cases=sample_tests,
+    )
 
-        hidden_count = {"easy": 10, "medium": 12, "hard": 14, "expert": 16}[difficulty]
-        hidden_tests = _build_cases(
-            template,
-            params,
-            rng,
-            difficulty,
-            count=hidden_count,
-            existing_cases=sample_tests,
-        )
+    fingerprint_payload = {
+        "template": template.key,
+        "theme": normalized_theme,
+        "difficulty": difficulty,
+        "variables": params,
+        "contract": {
+            "parameter_types": list(template.contract.parameter_types),
+            "return_type": template.contract.return_type,
+            "parameter_names": (
+                None
+                if template.contract.parameter_names is None
+                else list(template.contract.parameter_names)
+            ),
+        },
+        "shared_inputs": to_json_value(list(shared_inputs)),
+    }
+    fingerprint_source = json.dumps(
+        fingerprint_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
 
-        fingerprint_payload = {
-            "template": template.key,
-            "theme": normalized_theme,
-            "difficulty": difficulty,
-            "variables": params,
-            "contract": {
-                "parameter_types": list(template.contract.parameter_types),
-                "return_type": template.contract.return_type,
-                "parameter_names": (
-                    None
-                    if template.contract.parameter_names is None
-                    else list(template.contract.parameter_names)
-                ),
-            },
-            "shared_inputs": to_json_value(list(shared_inputs)),
-        }
-        fingerprint_source = json.dumps(
-            fingerprint_payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+    signature_payload = {
+        **fingerprint_payload,
+        "sample_tests": [_serialize_case(case) for case in sample_tests],
+        "hidden_tests": [_serialize_case(case) for case in hidden_tests],
+    }
+    signature_source = json.dumps(
+        signature_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    signature = hashlib.sha256(signature_source.encode("utf-8")).hexdigest()
 
-        signature_payload = {
-            **fingerprint_payload,
-            "sample_tests": [_serialize_case(case) for case in sample_tests],
-            "hidden_tests": [_serialize_case(case) for case in hidden_tests],
-        }
-        signature_source = json.dumps(
-            signature_payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        signature = hashlib.sha256(signature_source.encode("utf-8")).hexdigest()
-
-        if not novelty_pool.accept(fingerprint, signature):
-            continue
-
-        return PuzzleInstance(
-            id=uuid.uuid4().hex[:12],
-            theme=normalized_theme,
-            difficulty=difficulty,
-            prompt=template.prompt,
-            sample_tests=sample_tests,
-            hidden_tests=hidden_tests,
-            hint_level_1=_render_hint_template(template.hint_level_1, params),
-            hint_level_2=_render_hint_template(template.hint_level_2, params),
-            hint_level_3=_render_hint_template(template.hint_level_3, params),
-            variables=params,
-            contract=template.contract,
-            template_key=template.key,
-            shared_inputs=shared_inputs,
-            fingerprint=fingerprint,
-            signature=signature,
-        )
-
-    raise ValueError("Failed novelty check after retry budget")
+    return PuzzleInstance(
+        id=uuid.uuid4().hex[:12],
+        theme=normalized_theme,
+        difficulty=difficulty,
+        prompt=template.prompt,
+        sample_tests=sample_tests,
+        hidden_tests=hidden_tests,
+        hint_level_1=_render_hint_template(template.hint_level_1, params),
+        hint_level_2=_render_hint_template(template.hint_level_2, params),
+        hint_level_3=_render_hint_template(template.hint_level_3, params),
+        variables=params,
+        contract=template.contract,
+        template_key=template.key,
+        shared_inputs=shared_inputs,
+        fingerprint=fingerprint,
+        signature=signature,
+    )
 
 
 def generate_additional_hidden_test(

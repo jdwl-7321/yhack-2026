@@ -12,7 +12,6 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from constants import THEMES
 from judge import JudgeResult, judge_submission
 from puzzle import (
-    NoveltyPool,
     PuzzleInstance,
     TestCase,
     generate_additional_hidden_test,
@@ -90,7 +89,7 @@ class MemoryStore:
         self.user_name_index: dict[str, str] = {}
         self.parties: dict[str, Party] = {}
         self.matches: dict[str, Match] = {}
-        self.novelty_pool = NoveltyPool()
+        self._ranked_used_themes: set[str] = set()
 
     def create_user(
         self,
@@ -149,7 +148,9 @@ class MemoryStore:
     ) -> User:
         user = self._require_user(user_id)
         if user.guest or user.password_hash is None:
-            raise ValueError("Password changes are only available for registered accounts")
+            raise ValueError(
+                "Password changes are only available for registered accounts"
+            )
         if not check_password_hash(user.password_hash, current_password):
             raise ValueError("Current password is incorrect")
         if len(new_password) < 6:
@@ -303,8 +304,7 @@ class MemoryStore:
         if effective_mode == "ranked":
             avg_elo = sum(member.elo for member in members) / max(1, len(members))
             difficulty = assign_ranked_difficulty(avg_elo)
-            chooser = random.Random(seed) if seed is not None else random
-            theme = chooser.choice(THEMES)
+            theme = self._choose_next_ranked_theme(seed=seed)
             time_limit_seconds = 3600
         else:
             difficulty = party.settings.difficulty
@@ -316,7 +316,6 @@ class MemoryStore:
             theme=theme,
             difficulty=difficulty,
             seed=match_seed,
-            novelty_pool=self.novelty_pool,
         )
 
         match = Match(
@@ -564,6 +563,17 @@ class MemoryStore:
         if member_limit > 16:
             raise ValueError("Party limit cannot exceed 16")
         return member_limit
+
+    def _choose_next_ranked_theme(self, *, seed: int | None) -> str:
+        available = [theme for theme in THEMES if theme not in self._ranked_used_themes]
+        if not available:
+            self._ranked_used_themes.clear()
+            available = list(THEMES)
+
+        chooser = random.Random(seed) if seed is not None else random
+        chosen = chooser.choice(available)
+        self._ranked_used_themes.add(chosen)
+        return chosen
 
     @staticmethod
     def _require_party_leader(party: Party, leader_id: str) -> None:
