@@ -1939,11 +1939,7 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 1rem;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--main-color) 18%, transparent),
-    transparent 65%
-  );
+  background: color-mix(in srgb, var(--bg-color) 72%, var(--sub-alt-color) 28%);
   border-radius: 1rem;
   padding: 1rem;
   min-height: 100%;
@@ -2134,6 +2130,11 @@ select:focus {
   gap: 1rem;
 }
 
+.settings-preview-card {
+  gap: 0.6rem;
+  align-content: start;
+}
+
 .settings-control-group {
   display: grid;
   gap: 0.35rem;
@@ -2234,15 +2235,16 @@ select:focus {
   background: var(--editor-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 65%, transparent);
   overflow: hidden;
+  align-self: start;
 }
 
 .settings-code-preview pre {
   margin: 0;
-  padding: 1rem;
+  padding: 0.75rem 0.85rem;
   color: var(--editor-text);
   font-family: var(--editor-font-family);
   font-size: var(--editor-font-size);
-  line-height: 1.7;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
