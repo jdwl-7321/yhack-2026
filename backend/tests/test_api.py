@@ -1890,6 +1890,76 @@ def test_caesar_and_substitution_samples_allow_row_edits_but_keep_shared_arg_loc
         }
 
 
+def test_ranked_party_match_with_admin_uses_hardcoded_numeric_template() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    admin_user = _register_admin(client)
+    opponent = client.post(
+        "/api/users", json={"name": "RankedOpponent", "guest": False, "elo": 1000}
+    ).get_json()
+    assert opponent is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": admin_user["id"],
+            "mode": "ranked",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "member_limit": 2,
+            "seed": 91,
+        },
+    ).get_json()
+    assert party is not None
+
+    joined = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": opponent["id"]},
+    )
+    assert joined.status_code == 200
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"seed": 91, "user_id": admin_user["id"]},
+    ).get_json()
+    assert match is not None
+    assert match["template_key"] == "numeric-add-reversed-number-v1"
+    assert match["theme"] == "Numeric"
+    assert match["difficulty"] == "hard"
+
+
+def test_ranked_queue_match_with_admin_uses_hardcoded_numeric_template() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    admin_user = _register_admin(client)
+    opponent = client.post(
+        "/api/users", json={"name": "QueueOpponent", "guest": False, "elo": 1000}
+    ).get_json()
+    assert opponent is not None
+
+    first_join = client.post(
+        "/api/ranked/queue",
+        json={"user_id": admin_user["id"], "seed": 92},
+    )
+    assert first_join.status_code == 200
+
+    second_join = client.post(
+        "/api/ranked/queue",
+        json={"user_id": opponent["id"], "seed": 92},
+    )
+    assert second_join.status_code == 200
+    queue_payload = second_join.get_json()
+    assert queue_payload is not None
+    assert queue_payload["status"] == "matched"
+    assert queue_payload["match"] is not None
+    assert queue_payload["match"]["template_key"] == "numeric-add-reversed-number-v1"
+    assert queue_payload["match"]["theme"] == "Numeric"
+    assert queue_payload["match"]["difficulty"] == "hard"
+
+
 def test_ranked_theme_rotation_uses_all_themes_before_repeat() -> None:
     data = MemoryStore()
     ranked_themes = [theme for theme in THEMES if theme != "AI"]

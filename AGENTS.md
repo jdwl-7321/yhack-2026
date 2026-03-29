@@ -152,6 +152,7 @@ Top-level layout:
     - Casual and zen party leaders can add time (`add_seconds`) to party settings; if a casual/zen match is currently active and unlocked for that party, the match timer is extended too.
     - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
+    - If any ranked match participant's username matches the configured admin username, ranked puzzle selection is overridden to `numeric-add-reversed-number-v1` (Numeric/hard) for that match.
     - Match generation selects from puzzle modules loaded from `backend/src/puzzles/*_puzzle.py` for the requested theme+difficulty.
     - If a theme+difficulty has no puzzle modules, match start fails with a validation error.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.

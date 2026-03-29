@@ -12,6 +12,7 @@ import uuid
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from constants import THEMES
+from config import is_admin_username
 from judge import JudgeResult, judge_submission
 from puzzle import (
     HardcodedPuzzleTemplate,
@@ -170,6 +171,7 @@ class RankedQueueEntry:
 class MemoryStore:
     _RANKED_QUEUE_STALE_SECONDS = 20.0
     _AI_TOPIC_QUEUE_LIMIT = 6
+    _RANKED_ADMIN_TEMPLATE_KEY = "numeric-add-reversed-number-v1"
 
     def __init__(self) -> None:
         self.users: dict[str, User] = {}
@@ -518,11 +520,15 @@ class MemoryStore:
                 or time_limit_seconds is not None
             ):
                 raise ValueError("Ranked matches do not support custom settings")
+            ranked_template_override = self._ranked_template_override_for_members(
+                members=members
+            )
             avg_elo = sum(member.elo for member in members) / max(1, len(members))
             match_difficulty = assign_ranked_difficulty(avg_elo)
             match_theme = self._choose_next_ranked_theme(seed=seed)
             match_time_limit_seconds = 3600
         else:
+            ranked_template_override = None
             match_theme = theme if theme is not None else party.settings.theme
             match_difficulty = (
                 difficulty if difficulty is not None else party.settings.difficulty
@@ -547,7 +553,11 @@ class MemoryStore:
             difficulty=match_difficulty,
             seed=match_seed,
             participant_user_ids=[member.id for member in members],
+            forced_template_key=ranked_template_override,
         )
+        if ranked_template_override is not None:
+            match_theme = puzzle.theme
+            match_difficulty = puzzle.difficulty
 
         match = Match(
             id=f"m_{uuid.uuid4().hex[:10]}",
@@ -1026,20 +1036,32 @@ class MemoryStore:
         difficulty: Difficulty,
         seed: int,
         participant_user_ids: list[str] | None = None,
+        forced_template_key: str | None = None,
     ) -> PuzzleInstance:
-        candidates = [
-            template
-            for template in hardcoded_puzzle_templates()
-            if template.theme == theme and template.difficulty == difficulty
-        ]
-        if not candidates:
-            raise ValueError(
-                "No puzzle templates are available for this theme/difficulty"
+        if forced_template_key is not None:
+            selected = next(
+                (
+                    template
+                    for template in hardcoded_puzzle_templates()
+                    if template.template_key == forced_template_key
+                ),
+                None,
             )
+            if selected is None:
+                raise ValueError("Forced puzzle template is not available")
+        else:
+            candidates = [
+                template
+                for template in hardcoded_puzzle_templates()
+                if template.theme == theme and template.difficulty == difficulty
+            ]
+            if not candidates:
+                raise ValueError(
+                    "No puzzle templates are available for this theme/difficulty"
+                )
+            selected = random.Random(seed).choice(candidates)
 
-        selected = random.Random(seed).choice(candidates)
-
-        if theme != "AI":
+        if selected.theme != "AI":
             return generate_puzzle_from_template(
                 template_key=selected.template_key,
                 theme=selected.theme,
@@ -1126,6 +1148,13 @@ class MemoryStore:
         self._ranked_used_themes.add(chosen)
         return chosen
 
+    def _ranked_template_override_for_members(
+        self, *, members: list[User]
+    ) -> str | None:
+        if any(is_admin_username(member.name) for member in members):
+            return self._RANKED_ADMIN_TEMPLATE_KEY
+        return None
+
     @staticmethod
     def _require_party_leader(party: Party, leader_id: str) -> None:
         if party.leader_id != leader_id:
@@ -1207,6 +1236,9 @@ class MemoryStore:
         seed: int | None,
     ) -> Match:
         members = [self._require_user(user_id) for user_id in user_ids]
+        ranked_template_override = self._ranked_template_override_for_members(
+            members=members
+        )
         avg_elo = sum(member.elo for member in members) / max(1, len(members))
         difficulty = assign_ranked_difficulty(avg_elo)
         theme = self._choose_next_ranked_theme(seed=seed)
@@ -1216,7 +1248,11 @@ class MemoryStore:
             difficulty=difficulty,
             seed=match_seed,
             participant_user_ids=[member.id for member in members],
+            forced_template_key=ranked_template_override,
         )
+        if ranked_template_override is not None:
+            theme = puzzle.theme
+            difficulty = puzzle.difficulty
 
         match = Match(
             id=f"m_{uuid.uuid4().hex[:10]}",
