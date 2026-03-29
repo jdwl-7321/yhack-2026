@@ -104,9 +104,18 @@ header {
   padding: 0;
 }
 
-.logo .icon {
+.logo-mark {
   color: var(--main-color);
-  font-size: 2.2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.06rem;
+  font-size: 1.85rem;
+  line-height: 1;
+}
+
+.logo-mark-question {
+  font-size: 1.32rem;
+  transform: translateY(-0.02rem);
 }
 
 .logo .text {

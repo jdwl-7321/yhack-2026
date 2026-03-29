@@ -14,7 +14,7 @@
 
   type UiTheme = "light" | "dark";
   type AppearanceMode = UiTheme | "system";
-  type View = "home" | "arena" | "leaderboard" | "settings";
+  type View = "home" | "arena" | "leaderboard" | "postmatch" | "settings";
   type KeybindMode = "normal" | "vim" | "custom";
   type VimMode = "insert" | "normal";
   type EditorAction = "submit" | "test" | "hint" | "forfeit";
@@ -622,12 +622,13 @@
     nextParty: PartyPayload,
     eventName: string,
   ): Promise<void> {
-    if (!sessionUser) {
+    const user = sessionUser;
+    if (!user) {
       return;
     }
 
     const previousParty = party;
-    const stillMember = nextParty.members.some((member) => member.id === sessionUser.id);
+    const stillMember = nextParty.members.some((member) => member.id === user.id);
     if (!stillMember) {
       if (previousParty && previousParty.code === nextParty.code) {
         party = null;
@@ -1576,7 +1577,7 @@
   }
 
   function buildFaviconDataUrl(color: string): string {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="enigma favicon"><text x="8" y="44" fill="${color}" font-family="'Roboto Mono','Fira Code',monospace" font-size="32" font-weight="700" letter-spacing="-1.5">&lt;/&gt;</text></svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="enigma favicon"><text x="8" y="44" fill="${color}" font-family="'Roboto Mono','Fira Code',monospace" font-size="32" font-weight="700" letter-spacing="-1.5">&lt;?&gt;</text></svg>`;
     return `data:image/svg+xml,${encodeURIComponent(svg)}`;
   }
 
@@ -2206,7 +2207,8 @@
   }
 
   async function refreshPartyLobby(): Promise<void> {
-    if (!party || !sessionUser) {
+    const user = sessionUser;
+    if (!party || !user) {
       return;
     }
 
@@ -2215,7 +2217,7 @@
     notice = "";
     try {
       const payload = await api<PartyPayload>(`/api/parties/${party.code}?t=${Date.now()}`);
-      const stillMember = payload.members.some((member) => member.id === sessionUser.id);
+      const stillMember = payload.members.some((member) => member.id === user.id);
       if (!stillMember) {
         party = null;
         joinCodeInput = "";
@@ -2873,7 +2875,11 @@
 <div id="app-shell">
   <header>
     <button type="button" class="logo" on:click={showHome}>
-      <i class="fas fa-code icon" aria-hidden="true"></i>
+      <span class="logo-mark" aria-hidden="true">
+        <i class="fas fa-angle-left"></i>
+        <i class="fas fa-question logo-mark-question"></i>
+        <i class="fas fa-angle-right"></i>
+      </span>
       <span class="text">enigma</span>
     </button>
 
