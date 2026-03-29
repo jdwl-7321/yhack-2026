@@ -3,6 +3,7 @@
   import type {
     AppearanceMode,
     EditorAction,
+    EditorFontFamily,
     EditorFontSize,
     KeybindMode,
     LeaderboardEntry,
@@ -42,9 +43,16 @@
   export let activeEditorTheme: BundledTheme = "github-dark-default";
   export let availableEditorThemes: Array<{ id: string; displayName: string }> = [];
   export let setEditorTheme: (themeId: BundledTheme) => void = () => {};
-  export let editorFontSize: EditorFontSize = "default";
+  export let resetThemePreferences: () => void = () => {};
+  export let editorFontFamily: EditorFontFamily = "roboto-mono";
+  export let editorFontFamilyOptions: Array<{ id: EditorFontFamily; label: string }> = [];
+  export let setEditorFontFamily: (family: EditorFontFamily) => void = () => {};
+  export let editorFontFamilyLabel: (family?: EditorFontFamily) => string = () => "Roboto Mono";
+  export let editorFontSize: EditorFontSize = 14;
+  export let editorFontSizeMin = 12;
+  export let editorFontSizeMax = 22;
   export let setEditorFontSize: (size: EditorFontSize) => void = () => {};
-  export let editorFontSizeLabel: (size?: EditorFontSize) => string = () => "Default";
+  export let editorFontSizeLabel: (size?: EditorFontSize) => string = () => "14 px";
 
   export let passwordCurrent = "";
   export let passwordNext = "";
@@ -91,7 +99,7 @@
         </a>
         <a href="#settings-editor" class="settings-section-link">
           <i class="fas fa-palette" aria-hidden="true"></i>
-          <span>Editor Theme</span>
+          <span>Editor</span>
         </a>
         <a href="#settings-security" class="settings-section-link">
           <i class="fas fa-lock" aria-hidden="true"></i>
@@ -346,7 +354,7 @@
       <div class="settings-panel-heading">
         <div>
           <p class="eyebrow">Editor</p>
-          <h3>Appearance & Theme</h3>
+          <h3>Appearance & Typography</h3>
         </div>
         <span class="settings-panel-note">{themePref} mode live preview</span>
       </div>
@@ -385,30 +393,72 @@
             </select>
           </label>
 
+          <label>
+            <span>Editor font</span>
+            <select
+              value={editorFontFamily}
+              on:change={(event) =>
+                setEditorFontFamily(
+                  (event.currentTarget as HTMLSelectElement)
+                    .value as EditorFontFamily,
+                )}
+            >
+              {#each editorFontFamilyOptions as fontOption}
+                <option value={fontOption.id}>{fontOption.label}</option>
+              {/each}
+            </select>
+          </label>
+
           <div class="settings-control-group">
             <span class="eyebrow">Editor font size</span>
-            <div class="segmented">
-              {#each ["compact", "default", "large"] as option}
-                <button
-                  type="button"
-                  class:active={editorFontSize === option}
-                  on:click={() => setEditorFontSize(option as EditorFontSize)}
-                >
-                  {option}
-                </button>
-              {/each}
+            <div class="settings-font-size-row">
+              <input
+                type="range"
+                min={editorFontSizeMin}
+                max={editorFontSizeMax}
+                step="1"
+                value={editorFontSize}
+                on:input={(event) =>
+                  setEditorFontSize(
+                    Number((event.currentTarget as HTMLInputElement).value),
+                  )}
+              />
+              <label class="settings-font-size-input">
+                <span>{editorFontSizeLabel()}</span>
+                <input
+                  type="number"
+                  min={editorFontSizeMin}
+                  max={editorFontSizeMax}
+                  step="1"
+                  value={editorFontSize}
+                  on:input={(event) =>
+                    setEditorFontSize(
+                      Number((event.currentTarget as HTMLInputElement).value),
+                    )}
+                />
+              </label>
             </div>
             <p class="settings-helper-copy">
-              Font size is usually more useful than a header palette toggle
-              because it improves readability in the live coding view.
+              Pick the code font and point size that feels best across the
+              editor, settings, and match UI.
             </p>
+          </div>
+
+          <div class="settings-action-row settings-theme-actions">
+            <button
+              type="button"
+              class="btn"
+              on:click={resetThemePreferences}
+            >
+              Reset to defaults
+            </button>
           </div>
         </article>
 
         <article class="settings-preview-card">
           <div class="settings-preview-labels">
             <span>{themeStatusText}</span>
-            <strong>{activeEditorThemeName} · {editorFontSizeLabel()}</strong>
+            <strong>{editorFontFamilyLabel()} | {editorFontSizeLabel()}</strong>
           </div>
           <div class="settings-code-preview" aria-hidden="true">
             <pre><span class="preview-keyword">def</span> <span class="preview-function">solve</span>(line):

@@ -1,9 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { basicSetup, EditorView } from "codemirror";
-  import { indentLess, insertTab } from "@codemirror/commands";
+  import { EditorState } from "@codemirror/state";
+  import { indentLess, indentMore } from "@codemirror/commands";
   import { keymap } from "@codemirror/view";
-  import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+  import {
+    HighlightStyle,
+    indentUnit,
+    syntaxHighlighting,
+  } from "@codemirror/language";
   import { python as cmPython } from "@codemirror/lang-python";
   import { tags } from "@lezer/highlight";
   import { getCM, Vim, vim } from "@replit/codemirror-vim";
@@ -31,6 +36,7 @@
     ConsoleType,
     Difficulty,
     EditorAction,
+    EditorFontFamily,
     EditorFontSize,
     EditorSnapshot,
     EditorThemePalette,
@@ -44,6 +50,7 @@
     PartyPayload,
     PostMatchState,
     SampleTest,
+    RankedQueuePayload,
     SessionPayload,
     SessionUser,
     ShikiThemeDefinition,
@@ -60,15 +67,22 @@
   const PARTY_LIMIT_MIN = 2;
   const PARTY_LIMIT_MAX = 16;
   const DEFAULT_PARTY_LIMIT = 4;
+  const RANKED_QUEUE_POLL_MS = 3000;
   const APPEARANCE_STORAGE_KEY = "yhack.appearance";
   const LIGHT_THEME_STORAGE_KEY = "yhack.editor-theme.light";
   const DARK_THEME_STORAGE_KEY = "yhack.editor-theme.dark";
   const KEYBIND_MODE_STORAGE_KEY = "yhack.keybind-mode";
   const CUSTOM_SHORTCUTS_STORAGE_KEY = "yhack.custom-shortcuts";
+  const EDITOR_FONT_FAMILY_STORAGE_KEY = "yhack.editor-font-family";
   const EDITOR_FONT_SIZE_STORAGE_KEY = "yhack.editor-font-size";
   const ACCOUNT_STATS_STORAGE_PREFIX = "yhack.account-stats";
+  const ACTIVE_PARTY_STORAGE_PREFIX = "yhack.active-party";
   const DEFAULT_LIGHT_EDITOR_THEME: BundledTheme = "github-light";
   const DEFAULT_DARK_EDITOR_THEME: BundledTheme = "github-dark-default";
+  const DEFAULT_EDITOR_FONT_FAMILY: EditorFontFamily = "roboto-mono";
+  const DEFAULT_EDITOR_FONT_SIZE = 14;
+  const MIN_EDITOR_FONT_SIZE = 12;
+  const MAX_EDITOR_FONT_SIZE = 22;
   const APPEARANCE_MODE_ORDER: AppearanceMode[] = ["system", "light", "dark"];
   const ACCOUNT_RECENT_RUN_LIMIT = 6;
   const ACCOUNT_RECORDED_MATCH_LIMIT = 30;
@@ -80,6 +94,40 @@
   };
   const themeInfoById = new Map(
     bundledThemesInfo.map((theme) => [theme.id as BundledTheme, theme]),
+  );
+  const editorFontFamilyOptions: Array<{
+    id: EditorFontFamily;
+    label: string;
+    cssValue: string;
+  }> = [
+    {
+      id: "roboto-mono",
+      label: "Roboto Mono",
+      cssValue: "'Roboto Mono', 'Fira Code', 'JetBrains Mono', monospace",
+    },
+    {
+      id: "fira-code",
+      label: "Fira Code",
+      cssValue: "'Fira Code', 'Roboto Mono', 'JetBrains Mono', monospace",
+    },
+    {
+      id: "jetbrains-mono",
+      label: "JetBrains Mono",
+      cssValue: "'JetBrains Mono', 'Roboto Mono', 'Fira Code', monospace",
+    },
+    {
+      id: "source-code-pro",
+      label: "Source Code Pro",
+      cssValue: "'Source Code Pro', 'Roboto Mono', 'Fira Code', monospace",
+    },
+    {
+      id: "ibm-plex-mono",
+      label: "IBM Plex Mono",
+      cssValue: "'IBM Plex Mono', 'Roboto Mono', 'Fira Code', monospace",
+    },
+  ];
+  const editorFontFamilyById = new Map(
+    editorFontFamilyOptions.map((option) => [option.id, option]),
   );
   const vimHighlightStyle = HighlightStyle.define([
     {
@@ -146,6 +194,7 @@
   let partyLimit = DEFAULT_PARTY_LIMIT;
   let joinCodeInput = "";
   let party: PartyPayload | null = null;
+  let rankedQueue: RankedQueuePayload | null = null;
 
   let themePref: UiTheme = "dark";
   let appearanceMode: AppearanceMode = "system";
@@ -162,7 +211,8 @@
     ...DEFAULT_CUSTOM_SHORTCUTS,
   };
   let customShortcutError = "";
-  let editorFontSize: EditorFontSize = "default";
+  let editorFontFamily: EditorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
+  let editorFontSize: EditorFontSize = DEFAULT_EDITOR_FONT_SIZE;
   let activeEditorThemeName = themeInfoById.get(DEFAULT_DARK_EDITOR_THEME)?.displayName ??
     DEFAULT_DARK_EDITOR_THEME;
   let availableEditorThemes = bundledThemesInfo.filter(
@@ -196,6 +246,7 @@
   let liveSocket: WebSocket | null = null;
   let liveSocketReady = false;
   let liveSocketRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let rankedQueuePollTimer: ReturnType<typeof setTimeout> | null = null;
   let liveSocketSubscribedChannels = new Set<string>();
 
   let highlightedCode = "";
@@ -229,6 +280,34 @@
 
   function accountStatsStorageKey(userId: string): string {
     return `${ACCOUNT_STATS_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function activePartyStorageKey(userId: string): string {
+    return `${ACTIVE_PARTY_STORAGE_PREFIX}:${userId}`;
+  }
+
+  function storedPartyCodeForUser(userId: string): string {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return normalizePartyCode(localStorage.getItem(activePartyStorageKey(userId)) ?? "");
+  }
+
+  function rememberPartyCode(partyCode: string): void {
+    if (typeof window === "undefined" || !sessionUser) {
+      return;
+    }
+    localStorage.setItem(
+      activePartyStorageKey(sessionUser.id),
+      normalizePartyCode(partyCode),
+    );
+  }
+
+  function forgetPartyCode(userId: string | undefined = sessionUser?.id): void {
+    if (typeof window === "undefined" || !userId) {
+      return;
+    }
+    localStorage.removeItem(activePartyStorageKey(userId));
   }
 
   function normalizeAccountStats(raw: unknown): AccountStats {
@@ -527,6 +606,7 @@
       if (previousParty && previousParty.code === nextParty.code) {
         party = null;
         joinCodeInput = "";
+        forgetPartyCode();
         setLiveStatus("You were removed from the party", "warn");
         notice = "You were removed from the party.";
       }
@@ -587,6 +667,14 @@
       return;
     }
 
+    if (nextMatch.locked) {
+      clearTimer();
+      timerText = "Paused";
+      notice = "Party lobby closed. This match is read-only now.";
+      setLiveStatus("Lobby closed by leader", "warn");
+      return;
+    }
+
     if (eventName === "submission") {
       setLiveStatus("Standings updated from a submission", "ok");
     }
@@ -617,6 +705,18 @@
         payload.match as MatchPayload,
         String(payload.event ?? "updated"),
       );
+      return;
+    }
+
+    if (type === "party.closed") {
+      const closedCode = normalizePartyCode(String(payload.code ?? ""));
+      if (party && closedCode && party.code === closedCode) {
+        party = null;
+        joinCodeInput = "";
+        notice = "Party lobby was closed by the leader.";
+        setLiveStatus("Party closed", "warn");
+        forgetPartyCode();
+      }
       return;
     }
   }
@@ -759,6 +859,9 @@
     if (!match || !sessionUser) {
       return;
     }
+    if (match.locked) {
+      return;
+    }
 
     try {
       const payload = await api<{ standings: Standing[] }>(
@@ -776,19 +879,50 @@
     }
   }
 
-  async function openMatchFromLobby(matchId: string): Promise<void> {
-    const payload = await api<MatchPayload>(`/api/matches/${matchId}`);
+  function stopRankedQueuePolling(): void {
+    if (rankedQueuePollTimer) {
+      clearTimeout(rankedQueuePollTimer);
+      rankedQueuePollTimer = null;
+    }
+  }
+
+  function syncRankedQueuePolling(): void {
+    stopRankedQueuePolling();
+    if (
+      !sessionUser ||
+      activeView !== "home" ||
+      rankedQueue?.status !== "queued" ||
+      match
+    ) {
+      return;
+    }
+
+    rankedQueuePollTimer = setTimeout(() => {
+      rankedQueuePollTimer = null;
+      void refreshRankedQueue(true);
+    }, RANKED_QUEUE_POLL_MS);
+  }
+
+  function clearRankedQueueState(): void {
+    rankedQueue = null;
+    stopRankedQueuePolling();
+  }
+
+  function loadMatchIntoArena(payload: MatchPayload, consoleMessage: string): void {
+    clearRankedQueueState();
     match = payload;
     postMatch = null;
     testResult = null;
     submitResult = null;
-    hints = [];
+    hints = payload.free_hint ? [payload.free_hint] : [];
     standings = payload.standings;
     mode = payload.mode;
     difficulty = payload.difficulty;
     selectedTheme = payload.theme;
     timeLimitSeconds = payload.time_limit_seconds;
     syncSessionElo(payload.standings);
+    code = payload.scaffold;
+    resetEditorHistory(payload.scaffold);
 
     if (payload.finished) {
       showPostMatch("Match complete", payload.standings);
@@ -796,11 +930,140 @@
     }
 
     activeView = "arena";
-    startTimer(remainingSecondsForMatch(payload));
+    if (payload.locked) {
+      clearTimer();
+      timerText = "Paused";
+      setLiveStatus("Lobby closed by leader", "warn");
+      notice = "Party lobby closed. This match is read-only now.";
+    } else {
+      startTimer(remainingSecondsForMatch(payload));
+    }
     code = payload.scaffold;
     resetConsole();
-    setLiveStatus("Match started", "ok");
-    appendConsole(`Joined live match: ${payload.theme}`, "system");
+    if (!payload.locked) {
+      setLiveStatus("Match started", "ok");
+      appendConsole(`Joined live match: ${payload.theme}`, "system");
+    }
+    // setLiveStatus("Live match in progress", "ok");
+    // appendConsole(consoleMessage, "system");
+  }
+
+  async function handleRankedQueuePayload(
+    payload: RankedQueuePayload,
+    options: {
+      fromQueueJoin?: boolean;
+      quiet?: boolean;
+    } = {},
+  ): Promise<void> {
+    const fromQueueJoin = options.fromQueueJoin ?? false;
+    const quiet = options.quiet ?? false;
+    if (payload.status === "idle") {
+      clearRankedQueueState();
+      if (!quiet) {
+        setLiveStatus("Idle", "neutral");
+      }
+      return;
+    }
+
+    mode = "ranked";
+    party = null;
+    rankedQueue = payload;
+    if (payload.status === "matched" && payload.match) {
+      clearRankedQueueState();
+      loadMatchIntoArena(payload.match, `Ranked match ready: ${payload.match.theme}`);
+      updateAccountStats((current) => ({
+        ...current,
+        matchesStarted: current.matchesStarted + 1,
+      }));
+      notice = "Opponent found. Ranked match is live.";
+      return;
+    }
+
+    setLiveStatus("Searching ranked queue", "neutral");
+    if (fromQueueJoin) {
+      notice = "Joined ranked matchmaking.";
+    } else if (!quiet) {
+      notice = "Ranked queue refreshed.";
+    }
+    syncRankedQueuePolling();
+  }
+
+  async function openMatchFromLobby(matchId: string): Promise<void> {
+    const payload = await api<MatchPayload>(`/api/matches/${matchId}`);
+    loadMatchIntoArena(payload, `Joined live match: ${payload.theme}`);
+  }
+
+  async function refreshRankedQueue(quiet = false): Promise<void> {
+    if (!sessionUser) {
+      clearRankedQueueState();
+      return;
+    }
+
+    try {
+      const payload = await api<RankedQueuePayload>("/api/ranked/queue");
+      await handleRankedQueuePayload(payload, { quiet });
+    } catch (err) {
+      clearRankedQueueState();
+      if (!quiet) {
+        error = toErrorMessage(err);
+      }
+    }
+  }
+
+  async function joinRankedQueue(): Promise<void> {
+    if (!sessionUser) {
+      error = "Sign in to join ranked matchmaking.";
+      activeView = "home";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    party = null;
+    try {
+      const payload = await api<RankedQueuePayload>("/api/ranked/queue", {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id }),
+      });
+      await handleRankedQueuePayload(payload, { fromQueueJoin: true });
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function leaveRankedQueue(silent = false): Promise<void> {
+    if (!sessionUser) {
+      clearRankedQueueState();
+      return;
+    }
+
+    busy = silent ? busy : true;
+    if (!silent) {
+      error = "";
+      notice = "";
+    }
+    try {
+      await api<RankedQueuePayload>("/api/ranked/queue/leave", {
+        method: "POST",
+        body: JSON.stringify({ user_id: sessionUser.id }),
+      });
+      clearRankedQueueState();
+      setLiveStatus("Idle", "neutral");
+      if (!silent) {
+        notice = "Left ranked queue.";
+      }
+    } catch (err) {
+      if (!silent) {
+        error = toErrorMessage(err);
+      }
+    } finally {
+      if (!silent) {
+        busy = false;
+      }
+    }
   }
 
   function resetConsole(): void {
@@ -982,9 +1245,48 @@
     applyEditorChange(target, nextCode, cursor);
   }
 
-  function indentSelection(target: HTMLTextAreaElement): void {
+  function selectedLineBounds(
+    source: string,
+    selectionStart: number,
+    selectionEnd: number,
+  ): { start: number; end: number } {
+    const start = source.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+    const safeEnd = selectionEnd > selectionStart && source[selectionEnd - 1] === "\n"
+      ? selectionEnd - 1
+      : selectionEnd;
+    const nextBreak = source.indexOf("\n", safeEnd);
+    const end = nextBreak === -1 ? source.length : nextBreak;
+    return { start, end };
+  }
+
+  function removableIndentLength(line: string): number {
+    const indentMatch = line.match(/^[\t ]+/)?.[0] ?? "";
+    if (indentMatch.length === 0) {
+      return 0;
+    }
+    return Math.min(INDENT.length, indentMatch.length);
+  }
+
+  function indentSelection(
+    target: HTMLTextAreaElement,
+    direction: 1 | -1 = 1,
+  ): void {
     const { selectionStart, selectionEnd } = target;
     if (selectionStart === selectionEnd) {
+      if (direction < 0) {
+        const bounds = lineBounds(code, selectionStart);
+        const line = code.slice(bounds.start, bounds.end);
+        const removable = removableIndentLength(line);
+        if (removable === 0) {
+          return;
+        }
+        const nextCode =
+          `${code.slice(0, bounds.start)}${line.slice(removable)}${code.slice(bounds.end)}`;
+        const cursor = Math.max(bounds.start, selectionStart - removable);
+        applyEditorChange(target, nextCode, cursor);
+        return;
+      }
+
       const nextCode =
         `${code.slice(0, selectionStart)}${INDENT}${code.slice(selectionEnd)}`;
       const cursor = selectionStart + INDENT.length;
@@ -992,15 +1294,22 @@
       return;
     }
 
-    const selection = code.slice(selectionStart, selectionEnd);
-    const indented = `${INDENT}${selection.replace(/\n/g, `\n${INDENT}`)}`;
+    const bounds = selectedLineBounds(code, selectionStart, selectionEnd);
+    const selection = code.slice(bounds.start, bounds.end);
+    const transformed = selection
+      .split("\n")
+      .map((line) =>
+        direction > 0
+          ? `${INDENT}${line}`
+          : line.slice(removableIndentLength(line)))
+      .join("\n");
     const nextCode =
-      `${code.slice(0, selectionStart)}${indented}${code.slice(selectionEnd)}`;
+      `${code.slice(0, bounds.start)}${transformed}${code.slice(bounds.end)}`;
     applyEditorChange(
       target,
       nextCode,
-      selectionStart,
-      selectionStart + indented.length,
+      bounds.start,
+      bounds.start + transformed.length,
     );
   }
 
@@ -1194,7 +1503,7 @@
 
     if (event.key === "Tab") {
       event.preventDefault();
-      indentSelection(target);
+      indentSelection(target, event.shiftKey ? -1 : 1);
       return true;
     }
 
@@ -1375,11 +1684,31 @@
       activeView = "home";
       return;
     }
+    if (match && !match.locked && !timerInterval) {
+      startTimer(remainingSecondsForMatch(match));
+    }
     activeView = "arena";
     error = "";
     notice = "";
     setLiveStatus("Live match in progress", "ok");
     accountMenuOpen = false;
+  }
+
+  async function resumeRace(): Promise<void> {
+    if (!match) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await openMatchFromLobby(match.match_id);
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
   }
 
   function toggleLeaderboardView(): void {
@@ -1738,19 +2067,80 @@
     persistCustomShortcuts();
   }
 
+  function clampEditorFontSize(value: number): number {
+    if (!Number.isFinite(value)) {
+      return DEFAULT_EDITOR_FONT_SIZE;
+    }
+    return Math.min(
+      MAX_EDITOR_FONT_SIZE,
+      Math.max(MIN_EDITOR_FONT_SIZE, Math.round(value)),
+    );
+  }
+
+  function editorFontFamilyCssValue(
+    family: EditorFontFamily = editorFontFamily,
+  ): string {
+    return editorFontFamilyById.get(family)?.cssValue ??
+      editorFontFamilyById.get(DEFAULT_EDITOR_FONT_FAMILY)?.cssValue ??
+      "'Roboto Mono', monospace";
+  }
+
+  function applyEditorTypography(): void {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const root = document.documentElement;
+    const fontFamily = editorFontFamilyCssValue();
+    root.style.setProperty("--editor-font-family", fontFamily);
+    root.style.setProperty("--font-family", fontFamily);
+    root.style.setProperty("--editor-font-size", `${editorFontSize}px`);
+  }
+
+  function setEditorFontFamily(family: EditorFontFamily): void {
+    if (!editorFontFamilyById.has(family)) {
+      return;
+    }
+    editorFontFamily = family;
+    localStorage.setItem(EDITOR_FONT_FAMILY_STORAGE_KEY, family);
+    applyEditorTypography();
+  }
+
   function setEditorFontSize(size: EditorFontSize): void {
-    editorFontSize = size;
-    localStorage.setItem(EDITOR_FONT_SIZE_STORAGE_KEY, size);
+    editorFontSize = clampEditorFontSize(size);
+    localStorage.setItem(
+      EDITOR_FONT_SIZE_STORAGE_KEY,
+      String(editorFontSize),
+    );
+    applyEditorTypography();
   }
 
   function editorFontSizeLabel(size: EditorFontSize = editorFontSize): string {
-    if (size === "compact") {
-      return "Compact";
-    }
-    if (size === "large") {
-      return "Large";
-    }
-    return "Default";
+    return `${clampEditorFontSize(size)} px`;
+  }
+
+  function editorFontFamilyLabel(
+    family: EditorFontFamily = editorFontFamily,
+  ): string {
+    return editorFontFamilyById.get(family)?.label ??
+      editorFontFamilyById.get(DEFAULT_EDITOR_FONT_FAMILY)?.label ??
+      "Roboto Mono";
+  }
+
+  function resetThemePreferences(): void {
+    appearanceMode = "system";
+    lightEditorTheme = DEFAULT_LIGHT_EDITOR_THEME;
+    darkEditorTheme = DEFAULT_DARK_EDITOR_THEME;
+    editorFontFamily = DEFAULT_EDITOR_FONT_FAMILY;
+    editorFontSize = DEFAULT_EDITOR_FONT_SIZE;
+
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, appearanceMode);
+    localStorage.setItem(LIGHT_THEME_STORAGE_KEY, lightEditorTheme);
+    localStorage.setItem(DARK_THEME_STORAGE_KEY, darkEditorTheme);
+    localStorage.setItem(EDITOR_FONT_FAMILY_STORAGE_KEY, editorFontFamily);
+    localStorage.setItem(EDITOR_FONT_SIZE_STORAGE_KEY, String(editorFontSize));
+
+    applyEditorTypography();
+    syncThemeState();
   }
 
   function customShortcutLabel(action: EditorAction): string {
@@ -1780,7 +2170,7 @@
         run: (view) => {
           const cm = getCM(view);
           if (cm?.state.vim?.insertMode) {
-            insertTab(view);
+            indentMore(view);
             return true;
           }
           if (cm) {
@@ -1852,6 +2242,8 @@
       extensions: [
         vim({ status: true }),
         basicSetup,
+        EditorState.tabSize.of(INDENT.length),
+        indentUnit.of(INDENT),
         cmPython(),
         syntaxHighlighting(vimHighlightStyle),
         createVimActionKeymap(),
@@ -1987,11 +2379,13 @@
 
   function applyParty(partyPayload: PartyPayload): void {
     party = partyPayload;
+    joinCodeInput = partyPayload.join_code;
     mode = partyPayload.mode;
     selectedTheme = partyPayload.settings.theme;
     difficulty = partyPayload.settings.difficulty;
     timeLimitSeconds = partyPayload.settings.time_limit_seconds;
     partyLimit = partyPayload.member_limit;
+    rememberPartyCode(partyPayload.code);
   }
 
   function partyJoinUrl(partyPayload: PartyPayload): string {
@@ -2069,8 +2463,10 @@
   }
 
   async function refreshSession(): Promise<void> {
+    const previousUserId = sessionUser?.id;
     const payload = await api<SessionPayload>("/api/auth/session");
     if (!payload.authenticated || !payload.user) {
+      forgetPartyCode(previousUserId);
       sessionUser = null;
       accountStats = emptyAccountStats();
       accountMenuOpen = false;
@@ -2078,6 +2474,7 @@
       match = null;
       postMatch = null;
       party = null;
+      clearRankedQueueState();
       clearTimer();
       disconnectLiveSocket();
       return;
@@ -2085,6 +2482,73 @@
     sessionUser = payload.user;
     loadAccountStats(payload.user);
     await loadLeaderboard();
+    await refreshRankedQueue(true);
+    await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
+  }
+
+  async function restorePartyAndMatch(
+    user: SessionUser,
+    partyCode: string,
+  ): Promise<boolean> {
+    const normalizedCode = normalizePartyCode(partyCode);
+    if (!normalizedCode) {
+      return false;
+    }
+
+    try {
+      const partyPayload = await api<PartyPayload>(
+        `/api/parties/${normalizedCode}?t=${Date.now()}`,
+      );
+      const stillMember = partyPayload.members.some((member) => member.id === user.id);
+      if (!stillMember) {
+        forgetPartyCode(user.id);
+        return false;
+      }
+
+      applyParty(partyPayload);
+      setLiveStatus("Lobby restored", "ok");
+
+      if (!partyPayload.active_match_id || partyPayload.active_match_finished) {
+        if (match && match.party_code === partyPayload.code) {
+          match = null;
+          standings = [];
+        }
+        return true;
+      }
+
+      const activeMatch = await api<MatchPayload>(
+        `/api/matches/${partyPayload.active_match_id}`,
+      );
+      match = activeMatch;
+      postMatch = null;
+      testResult = null;
+      submitResult = null;
+      standings = activeMatch.standings;
+      syncSessionElo(activeMatch.standings);
+      mode = activeMatch.mode;
+      difficulty = activeMatch.difficulty;
+      selectedTheme = activeMatch.theme;
+      timeLimitSeconds = activeMatch.time_limit_seconds;
+      hints = activeMatch.free_hint ? [activeMatch.free_hint] : [];
+      code = activeMatch.scaffold;
+      resetEditorHistory(activeMatch.scaffold);
+      if (activeMatch.locked) {
+        clearTimer();
+        timerText = "Paused";
+        setLiveStatus("Lobby closed by leader", "warn");
+        notice = "Party lobby closed. This match is read-only now.";
+      } else {
+        startTimer(remainingSecondsForMatch(activeMatch));
+        setLiveStatus("Active match ready to resume", "ok");
+        notice = `You have an active ${activeMatch.mode} match in progress.`;
+      }
+      return true;
+    } catch (err) {
+      if (toErrorMessage(err) === "Party not found") {
+        forgetPartyCode(user.id);
+      }
+      return false;
+    }
   }
 
   async function authenticate(nextMode: AuthMode): Promise<void> {
@@ -2103,9 +2567,8 @@
         nextMode === "register"
           ? "Account created. Session is active."
           : "Signed in.";
-      void loadLeaderboard().catch((err) => {
-        error = toErrorMessage(err);
-      });
+      await loadLeaderboard();
+      await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
     } catch (err) {
       error = toErrorMessage(err);
     } finally {
@@ -2114,11 +2577,13 @@
   }
 
   async function logout(): Promise<void> {
+    const previousUserId = sessionUser?.id;
     busy = true;
     error = "";
     notice = "";
     try {
       await api<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+      forgetPartyCode(previousUserId);
       sessionUser = null;
       accountStats = emptyAccountStats();
       accountMenuOpen = false;
@@ -2126,6 +2591,7 @@
       match = null;
       postMatch = null;
       party = null;
+      clearRankedQueueState();
       joinCodeInput = "";
       standings = [];
       testResult = null;
@@ -2240,6 +2706,7 @@
       if (!stillMember) {
         party = null;
         joinCodeInput = "";
+        forgetPartyCode();
         setLiveStatus("You were removed from the party", "warn");
         notice = "You were removed from the party.";
         return;
@@ -2390,12 +2857,51 @@
     }
   }
 
-  function clearPartyLobby(): void {
-    party = null;
-    joinCodeInput = "";
-    syncLiveSocket();
-    setLiveStatus("Idle", "neutral");
-    notice = "Lobby closed.";
+  async function clearPartyLobby(): Promise<void> {
+    if (!party) {
+      return;
+    }
+
+    const currentParty = party;
+    if (!sessionUser || currentParty.leader_id !== sessionUser.id) {
+      party = null;
+      joinCodeInput = "";
+      forgetPartyCode();
+      syncLiveSocket();
+      setLiveStatus("Idle", "neutral");
+      notice = "Lobby closed.";
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      await api<{ ok: boolean; match_locked: boolean }>(
+        `/api/parties/${currentParty.code}/close`,
+        {
+          method: "POST",
+          body: JSON.stringify({ user_id: sessionUser.id }),
+        },
+      );
+      party = null;
+      match = null;
+      standings = [];
+      testResult = null;
+      submitResult = null;
+      hints = [];
+      clearTimer();
+      timerText = "00:00";
+      joinCodeInput = "";
+      forgetPartyCode();
+      syncLiveSocket();
+      setLiveStatus("Idle", "neutral");
+      notice = "Lobby closed.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
   }
 
   async function startMatch(partyCode?: string): Promise<void> {
@@ -2413,9 +2919,9 @@
     submitResult = null;
     hints = [];
     const requestedMode = mode;
+    let codeToStart = partyCode;
 
     try {
-      let codeToStart = partyCode;
       if (!codeToStart) {
         const createdParty = await api<PartyPayload>("/api/parties", {
           method: "POST",
@@ -2429,6 +2935,7 @@
           }),
         });
         codeToStart = createdParty.code;
+        rememberPartyCode(createdParty.code);
         if (mode !== "zen") {
           applyParty(createdParty);
         }
@@ -2442,18 +2949,7 @@
         },
       );
 
-      match = payload;
-      mode = payload.mode;
-      difficulty = payload.difficulty;
-      selectedTheme = payload.theme;
-      timeLimitSeconds = payload.time_limit_seconds;
-      standings = payload.standings;
-      syncSessionElo(payload.standings);
-      code = payload.scaffold;
-      hints = payload.free_hint ? [payload.free_hint] : [];
-      resetEditorHistory(payload.scaffold);
-      activeView = "arena";
-      setLiveStatus("Live match in progress", "ok");
+      loadMatchIntoArena(payload, `Match loaded: ${payload.theme}`);
       updateAccountStats((current) => ({
         ...current,
         matchesStarted: current.matchesStarted + 1,
@@ -2463,17 +2959,26 @@
         party = null;
       }
 
-      startTimer(remainingSecondsForMatch(payload));
-      resetConsole();
-      appendConsole(`Match loaded: ${payload.theme}`, "system");
       if (payload.mode !== requestedMode) {
         notice = `Mode switched to ${payload.mode.toUpperCase()} due to ranked eligibility.`;
       }
     } catch (err) {
-      error = toErrorMessage(err);
-      match = null;
-      standings = [];
-      appendConsole(`System error: ${toErrorMessage(err)}`, "error");
+      const message = toErrorMessage(err);
+      if (
+        message === "This party already has an active match" &&
+        sessionUser &&
+        codeToStart
+      ) {
+        const restored = await restorePartyAndMatch(sessionUser, codeToStart);
+        if (restored) {
+          error = "";
+          notice = "This party already has an active match. Resume when ready.";
+          return;
+        }
+      }
+
+      error = message;
+      appendConsole(`System error: ${message}`, "error");
     } finally {
       busy = false;
     }
@@ -2482,7 +2987,14 @@
   async function launchConfiguredMatch(): Promise<void> {
     if (mode === "zen") {
       party = null;
+      clearRankedQueueState();
       await startMatch();
+      return;
+    }
+
+    if (mode === "ranked") {
+      party = null;
+      await joinRankedQueue();
       return;
     }
 
@@ -2500,14 +3012,21 @@
   }
 
   async function startRace(nextMode: Mode): Promise<void> {
+    if (rankedQueue && nextMode !== "ranked") {
+      await leaveRankedQueue(true);
+    }
     if (party && party.mode !== nextMode) {
       party = null;
+      forgetPartyCode();
       setLiveStatus("Idle", "neutral");
     }
     mode = nextMode;
-    if (nextMode === "casual" || nextMode === "ranked") {
+    if (nextMode === "casual") {
       setLiveStatus("Pick create or join to go live", "neutral");
       notice = "Create a party or enter a join code to continue.";
+    } else if (nextMode === "ranked") {
+      setLiveStatus("Join the ranked queue", "neutral");
+      notice = "Queue into a live 1v1 match with a nearby ELO opponent.";
     } else {
       setLiveStatus("Solo mode", "neutral");
       notice = "";
@@ -2516,6 +3035,11 @@
 
   async function submit(): Promise<void> {
     if (!match || !sessionUser) {
+      return;
+    }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Submission blocked: match has been closed.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -2561,6 +3085,9 @@
         recordCompletedMatch("solved", payload.standings);
         appendConsole("Match complete. Great run.", "success");
       }
+      if (payload.finished) {
+        showPostMatch("Match complete", payload.standings);
+      }
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Submission failed: ${toErrorMessage(err)}`, "error");
@@ -2571,6 +3098,11 @@
 
   async function testSamples(): Promise<void> {
     if (!match || !sessionUser) {
+      return;
+    }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Sample run blocked: match has been closed.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -2616,6 +3148,11 @@
 
   async function promoteFailedTest(): Promise<void> {
     if (!match || !sessionUser || !submitResult?.first_failed_hidden_test) {
+      return;
+    }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Promotion blocked: match has been closed.", "error");
       return;
     }
     const currentMatchId = match.match_id;
@@ -2743,6 +3280,11 @@
     if (!match || !sessionUser) {
       return;
     }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Hint request blocked: match has been closed.", "error");
+      return;
+    }
     busy = true;
     error = "";
     try {
@@ -2772,10 +3314,15 @@
     if (!match || !sessionUser) {
       return;
     }
+    if (match.locked) {
+      error = "This match has been closed.";
+      appendConsole("Forfeit blocked: match has been closed.", "error");
+      return;
+    }
     busy = true;
     error = "";
     try {
-      const payload = await api<{ standings: Standing[] }>(
+      const payload = await api<{ finished: boolean; standings: Standing[] }>(
         `/api/matches/${match.match_id}/forfeit`,
         {
           method: "POST",
@@ -2786,6 +3333,9 @@
       syncSessionElo(payload.standings);
       recordCompletedMatch("forfeit", payload.standings);
       appendConsole("You forfeited the match.", "error");
+      if (payload.finished) {
+        showPostMatch("Match complete", payload.standings);
+      }
     } catch (err) {
       error = toErrorMessage(err);
       appendConsole(`Forfeit failed: ${toErrorMessage(err)}`, "error");
@@ -2794,7 +3344,8 @@
     }
   }
 
-  $: isPartyMode = mode === "casual" || mode === "ranked";
+  $: isPartyMode = mode === "casual";
+  $: isRankedMode = mode === "ranked";
   $: isPartyLeader = !!party && !!sessionUser && party.leader_id === sessionUser.id;
   $: canEditPartySetup = !party || (isPartyLeader && mode === "casual");
   $: {
@@ -2813,6 +3364,14 @@
     partyLimit = Math.min(PARTY_LIMIT_MAX, Math.max(PARTY_LIMIT_MIN, partyLimit));
   } else {
     partyLimit = 1;
+  }
+
+  $: {
+    sessionUser;
+    activeView;
+    rankedQueue;
+    match;
+    syncRankedQueuePolling();
   }
 
   $: themeStatusText =
@@ -2917,14 +3476,27 @@
       }
     }
 
-    const savedEditorFontSize = localStorage.getItem(EDITOR_FONT_SIZE_STORAGE_KEY);
+    const savedEditorFontFamily = localStorage.getItem(
+      EDITOR_FONT_FAMILY_STORAGE_KEY,
+    );
     if (
-      savedEditorFontSize === "compact" ||
-      savedEditorFontSize === "default" ||
-      savedEditorFontSize === "large"
+      savedEditorFontFamily === "roboto-mono" ||
+      savedEditorFontFamily === "fira-code" ||
+      savedEditorFontFamily === "jetbrains-mono" ||
+      savedEditorFontFamily === "source-code-pro" ||
+      savedEditorFontFamily === "ibm-plex-mono"
     ) {
-      editorFontSize = savedEditorFontSize;
+      editorFontFamily = savedEditorFontFamily;
     }
+
+    const savedEditorFontSize = localStorage.getItem(
+      EDITOR_FONT_SIZE_STORAGE_KEY,
+    );
+    if (savedEditorFontSize) {
+      editorFontSize = clampEditorFontSize(Number(savedEditorFontSize));
+    }
+
+    applyEditorTypography();
 
     systemMatcher = window.matchMedia("(prefers-color-scheme: dark)");
     syncThemeState();
@@ -2980,6 +3552,7 @@
     return () => {
       clearTimer();
       disconnectLiveSocket();
+      stopRankedQueuePolling();
       destroyVimEditor();
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener("change", mediaListener);
@@ -3016,10 +3589,17 @@
     {showPlayView}
     {toggleLeaderboardView}
     {showSettings}
+    {setAppearanceMode}
     {cycleAppearanceMode}
     {toggleThemeMenu}
     {toggleAccountMenu}
     {setEditorTheme}
+    {editorFontFamily}
+    {editorFontFamilyOptions}
+    {editorFontSize}
+    {setEditorFontFamily}
+    {setEditorFontSize}
+    {resetThemePreferences}
     {accountInitials}
     {formatActivityTime}
     {formatRatingDelta}
@@ -3041,11 +3621,14 @@
       bind:partyLimit
       bind:joinCodeInput
       {party}
+      {rankedQueue}
       {match}
+      {timerText}
       {themes}
       {modeOptions}
       {difficultyOptions}
       {isPartyMode}
+      {isRankedMode}
       {isPartyLeader}
       {canEditPartySetup}
       {liveStatusText}
@@ -3067,8 +3650,10 @@
       {joinPartyLobby}
       {kickPartyMember}
       {clearPartyLobby}
+      {refreshRankedQueue}
+      leaveRankedQueue={() => leaveRankedQueue(false)}
       {launchConfiguredMatch}
-      {showArena}
+      {resumeRace}
       {logout}
       {normalizePartyCode}
     />
@@ -3107,7 +3692,14 @@
       {activeEditorTheme}
       {availableEditorThemes}
       {setEditorTheme}
+      {resetThemePreferences}
+      {editorFontFamily}
+      {editorFontFamilyOptions}
+      {setEditorFontFamily}
+      {editorFontFamilyLabel}
       {editorFontSize}
+      editorFontSizeMin={MIN_EDITOR_FONT_SIZE}
+      editorFontSizeMax={MAX_EDITOR_FONT_SIZE}
       {setEditorFontSize}
       {editorFontSizeLabel}
       bind:passwordCurrent

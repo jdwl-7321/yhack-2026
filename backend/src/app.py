@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import threading
+from time import time
 from typing import Any, cast
 
 from flask import Flask, jsonify, request, session
@@ -21,7 +22,8 @@ from puzzle import (
     solution_scaffold,
     to_json_value,
 )
-from store import Match, MemoryStore, Party, SqliteStore, User
+from rating import ranked_matchmaking_window
+from store import Match, MemoryStore, Party, RankedQueueEntry, SqliteStore, User
 from domain_types import Difficulty, Mode
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
@@ -113,6 +115,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     sock = Sock(app)
     event_hub = EventHub()
     data = store or SqliteStore(os.environ.get("YHACK_DB_PATH", str(DEFAULT_DB_PATH)))
+    app.config["store"] = data
 
     def publish_party_update(party: Party, *, event: str) -> None:
         event_hub.publish(
@@ -124,9 +127,18 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             },
         )
 
-    def publish_match_update(
-        match: Match, *, event: str, include_samples: bool = False
-    ) -> None:
+    def publish_party_closed(party: Party) -> None:
+        event_hub.publish(
+            channel=_party_channel(party.code),
+            payload={
+                "type": "party.closed",
+                "event": "closed",
+                "code": party.code,
+                "message": "Party lobby was closed by the leader",
+            },
+        )
+
+    def publish_match_update(match: Match, *, event: str, include_samples: bool = False) -> None:
         event_hub.publish(
             channel=_match_channel(match.id),
             payload={
@@ -394,6 +406,18 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         publish_party_update(party, event="member_kicked")
         return jsonify(_party_payload(data, party))
 
+    @app.route("/api/parties/<code>/close", methods=["POST"])
+    def close_party(code: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        closed_party, locked_match = data.close_party(
+            code=code,
+            leader_id=payload_user_id(payload),
+        )
+        if locked_match is not None:
+            publish_match_update(locked_match, event="lobby_closed")
+        publish_party_closed(closed_party)
+        return jsonify({"ok": True, "match_locked": locked_match is not None})
+
     @app.route("/api/parties/<code>/start", methods=["POST"])
     def start_match(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
@@ -404,6 +428,26 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         )
         publish_match_update(match, event="started")
         return jsonify(_match_payload(data, match))
+
+    @app.route("/api/ranked/queue", methods=["GET"])
+    def ranked_queue_status() -> Any:
+        entry = data.ranked_queue_status(user_id=session_user_id())
+        return jsonify(_ranked_queue_payload(data, entry))
+
+    @app.route("/api/ranked/queue", methods=["POST"])
+    def join_ranked_queue() -> Any:
+        payload = request.get_json(silent=True) or {}
+        entry = data.join_ranked_queue(
+            user_id=payload_user_id(payload),
+            seed=_optional_int(payload.get("seed")),
+        )
+        return jsonify(_ranked_queue_payload(data, entry))
+
+    @app.route("/api/ranked/queue/leave", methods=["POST"])
+    def leave_ranked_queue() -> Any:
+        payload = request.get_json(silent=True) or {}
+        data.leave_ranked_queue(user_id=payload_user_id(payload))
+        return jsonify(_ranked_queue_payload(data, None))
 
     @app.route("/api/matches/<match_id>", methods=["GET"])
     def get_match(match_id: str) -> Any:
@@ -418,13 +462,13 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             user_id=payload_user_id(payload),
             code=str(payload.get("code", "")),
         )
-        publish_match_update(data.get_match(match_id=match_id), event="submission")
+        match = data.get_match(match_id=match_id)
+        publish_match_update(match, event="submission")
         return jsonify(
             {
                 **_judge_result_payload(result),
-                "sample_tests": _sample_tests_payload(
-                    data.get_match(match_id=match_id)
-                ),
+                "sample_tests": _sample_tests_payload(match),
+                "finished": match.finished,
                 "standings": data.standings(match_id=match_id),
             }
         )
@@ -533,8 +577,14 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     def forfeit(match_id: str) -> Any:
         payload = request.get_json(silent=True) or {}
         data.forfeit(match_id=match_id, user_id=payload_user_id(payload))
-        publish_match_update(data.get_match(match_id=match_id), event="forfeit")
-        return jsonify({"standings": data.standings(match_id=match_id)})
+        match = data.get_match(match_id=match_id)
+        publish_match_update(match, event="forfeit")
+        return jsonify(
+            {
+                "finished": match.finished,
+                "standings": data.standings(match_id=match_id),
+            }
+        )
 
     @app.route("/api/matches/<match_id>/finish", methods=["POST"])
     def finish(match_id: str) -> Any:
@@ -608,6 +658,43 @@ def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
     }
 
 
+def _ranked_queue_payload(
+    store: MemoryStore,
+    entry: RankedQueueEntry | None,
+) -> dict[str, Any]:
+    if entry is None:
+        return {
+            "status": "idle",
+            "queued_players": 0,
+            "queued_at": None,
+            "queued_elo": None,
+            "search_range": None,
+            "match": None,
+        }
+
+    queued_players = sum(
+        1 for queue_entry in store.ranked_queue.values() if queue_entry.match_id is None
+    )
+    wait_seconds = max(0.0, time() - entry.joined_at)
+    match = (
+        store.matches.get(entry.match_id)
+        if entry.match_id is not None
+        else None
+    )
+    return {
+        "status": "matched" if match is not None and not match.finished else "queued",
+        "queued_players": queued_players,
+        "queued_at": entry.joined_at,
+        "queued_elo": entry.queued_elo,
+        "search_range": ranked_matchmaking_window(wait_seconds),
+        "match": (
+            _match_payload(store, match)
+            if match is not None and not match.finished
+            else None
+        ),
+    }
+
+
 def _match_payload(
     store: MemoryStore,
     match: Match,
@@ -621,6 +708,7 @@ def _match_payload(
         "party_code": match.party_code,
         "mode": match.mode,
         "finished": match.finished,
+        "locked": match.locked,
         "theme": match.theme,
         "difficulty": match.difficulty,
         "time_limit_seconds": match.time_limit_seconds,

@@ -65,6 +65,47 @@ def _sample_only_solution(sample_tests: list[dict[str, Any]]) -> str:
     )
 
 
+def _start_two_player_casual_match(
+    client: Any, *, seed: int = 3
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    leader = client.post(
+        "/api/users", json={"name": "LeaderOne", "guest": False}
+    ).get_json()
+    assert leader is not None
+
+    teammate = client.post(
+        "/api/users", json={"name": "TeammateTwo", "guest": False}
+    ).get_json()
+    assert teammate is not None
+
+    party = client.post(
+        "/api/parties",
+        json={
+            "leader_id": leader["id"],
+            "mode": "casual",
+            "theme": THEMES[0],
+            "difficulty": "easy",
+            "time_limit_seconds": 900,
+            "member_limit": 2,
+            "seed": seed,
+        },
+    ).get_json()
+    assert party is not None
+
+    joined = client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": teammate["id"]},
+    )
+    assert joined.status_code == 200
+
+    match = client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"seed": seed, "user_id": leader["id"]},
+    ).get_json()
+    assert match is not None
+    return leader, teammate, party, match
+
+
 def test_auth_session_register_login_logout() -> None:
     app = create_app(MemoryStore())
     client = app.test_client()
@@ -273,6 +314,95 @@ def test_ranked_party_falls_back_to_casual_with_guest() -> None:
     ).get_json()
     assert match is not None
     assert match["mode"] == "casual"
+
+
+def test_ranked_queue_matches_registered_players_by_elo() -> None:
+    app = create_app(MemoryStore())
+    first_client = app.test_client()
+    second_client = app.test_client()
+
+    first_register = first_client.post(
+        "/api/auth/register",
+        json={"name": "RankedOne", "password": "secret123"},
+    )
+    second_register = second_client.post(
+        "/api/auth/register",
+        json={"name": "RankedTwo", "password": "secret123"},
+    )
+    assert first_register.status_code == 200
+    assert second_register.status_code == 200
+
+    store = cast(MemoryStore, app.config["store"])
+    first_user = first_register.get_json()["user"]
+    second_user = second_register.get_json()["user"]
+    store.users[first_user["id"]].elo = 1040
+    store.users[second_user["id"]].elo = 1095
+
+    queued = first_client.post("/api/ranked/queue", json={"seed": 13})
+    assert queued.status_code == 200
+    queued_payload = queued.get_json()
+    assert queued_payload is not None
+    assert queued_payload["status"] == "queued"
+    assert queued_payload["queued_players"] == 1
+    assert queued_payload["match"] is None
+
+    matched = second_client.post("/api/ranked/queue", json={"seed": 13})
+    assert matched.status_code == 200
+    matched_payload = matched.get_json()
+    assert matched_payload is not None
+    assert matched_payload["status"] == "matched"
+    assert matched_payload["match"]["mode"] == "ranked"
+    assert matched_payload["match"]["difficulty"] == "medium"
+
+    first_status = first_client.get("/api/ranked/queue")
+    assert first_status.status_code == 200
+    first_payload = first_status.get_json()
+    assert first_payload is not None
+    assert first_payload["status"] == "matched"
+    assert first_payload["match"]["match_id"] == matched_payload["match"]["match_id"]
+    assert {
+        row["name"] for row in first_payload["match"]["standings"]
+    } == {"RankedOne", "RankedTwo"}
+
+
+def test_ranked_queue_rejects_guest_accounts() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    guest = client.post("/api/users", json={"name": "Guesty", "guest": True}).get_json()
+    assert guest is not None
+
+    with client.session_transaction() as session_data:
+        session_data["user_id"] = guest["id"]
+
+    response = client.post("/api/ranked/queue")
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "Ranked matchmaking requires a registered account"
+    }
+
+
+def test_ranked_queue_leave_clears_entry() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+
+    register = client.post(
+        "/api/auth/register",
+        json={"name": "QueueExit", "password": "secret123"},
+    )
+    assert register.status_code == 200
+
+    join = client.post("/api/ranked/queue")
+    assert join.status_code == 200
+    assert join.get_json()["status"] == "queued"
+
+    leave = client.post("/api/ranked/queue/leave")
+    assert leave.status_code == 200
+    assert leave.get_json()["status"] == "idle"
+
+    status = client.get("/api/ranked/queue")
+    assert status.status_code == 200
+    assert status.get_json()["status"] == "idle"
 
 
 def test_casual_party_join_code_and_member_limit_are_enforced() -> None:
@@ -632,6 +762,127 @@ def test_sample_test_endpoint_runs_samples_only_and_returns_stdout() -> None:
     assert submit_run is not None
     assert submit_run["verdict"] == "wrong_answer"
     assert submit_run["first_failed_hidden_test"] is not None
+
+
+def test_casual_match_auto_finishes_when_all_players_solve() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    leader, teammate, party, match = _start_two_player_casual_match(client, seed=31)
+
+    def _accepted_submission(
+        code: str,
+        sample_tests: Any,
+        hidden_tests: Any,
+        contract: Any,
+        shared_inputs: tuple[Any, ...] = (),
+        timeout_seconds: float = 1.0,
+        include_hidden_tests: bool = True,
+    ) -> JudgeResult:
+        hidden_total = len(hidden_tests) if include_hidden_tests else 0
+        return JudgeResult(
+            verdict="accepted",
+            sample_passed=len(sample_tests),
+            sample_total=len(sample_tests),
+            hidden_passed=hidden_total,
+            hidden_total=hidden_total,
+            runtime_ms=1,
+        )
+
+    original_judge_submission = store_module.judge_submission
+    store_module.judge_submission = cast(Any, _accepted_submission)
+    try:
+        first_submit = client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={
+                "user_id": leader["id"],
+                "code": "def solution(arg1):\n    return arg1\n",
+            },
+        ).get_json()
+        second_submit = client.post(
+            f"/api/matches/{match['match_id']}/submit",
+            json={
+                "user_id": teammate["id"],
+                "code": "def solution(arg1):\n    return arg1\n",
+            },
+        ).get_json()
+    finally:
+        store_module.judge_submission = cast(Any, original_judge_submission)
+
+    assert first_submit is not None
+    assert second_submit is not None
+    assert first_submit["finished"] is False
+    assert second_submit["finished"] is True
+    assert all(row["rating_delta"] == 0 for row in second_submit["standings"])
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["finished"] is True
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}").get_json()
+    assert refreshed_party is not None
+    assert refreshed_party["active_match_finished"] is True
+
+
+def test_casual_match_auto_finishes_when_all_players_forfeit() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    leader, teammate, party, match = _start_two_player_casual_match(client, seed=32)
+
+    first_forfeit = client.post(
+        f"/api/matches/{match['match_id']}/forfeit",
+        json={"user_id": leader["id"]},
+    ).get_json()
+    second_forfeit = client.post(
+        f"/api/matches/{match['match_id']}/forfeit",
+        json={"user_id": teammate["id"]},
+    ).get_json()
+
+    assert first_forfeit is not None
+    assert second_forfeit is not None
+    assert first_forfeit["finished"] is False
+    assert second_forfeit["finished"] is True
+    assert all(row["forfeited"] is True for row in second_forfeit["standings"])
+
+    refreshed_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert refreshed_match is not None
+    assert refreshed_match["finished"] is True
+
+    refreshed_party = client.get(f"/api/parties/{party['code']}").get_json()
+    assert refreshed_party is not None
+    assert refreshed_party["active_match_finished"] is True
+
+
+def test_close_party_locks_active_match_and_blocks_actions() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    leader, teammate, party, match = _start_two_player_casual_match(client, seed=33)
+
+    closed = client.post(
+        f"/api/parties/{party['code']}/close",
+        json={"user_id": leader["id"]},
+    )
+    assert closed.status_code == 200
+    closed_payload = closed.get_json()
+    assert closed_payload == {"ok": True, "match_locked": True}
+
+    get_closed_party = client.get(f"/api/parties/{party['code']}")
+    assert get_closed_party.status_code == 400
+    assert get_closed_party.get_json() == {"error": "Party not found"}
+
+    locked_match = client.get(f"/api/matches/{match['match_id']}").get_json()
+    assert locked_match is not None
+    assert locked_match["locked"] is True
+    assert locked_match["finished"] is False
+
+    blocked_submit = client.post(
+        f"/api/matches/{match['match_id']}/submit",
+        json={
+            "user_id": teammate["id"],
+            "code": "def solution(arg1):\n    return arg1\n",
+        },
+    )
+    assert blocked_submit.status_code == 400
+    assert blocked_submit.get_json() == {"error": "This match has been closed"}
 
 
 def test_promote_failed_hidden_test_caps_visible_samples_at_four() -> None:

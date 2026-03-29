@@ -4,7 +4,13 @@ export type View = "home" | "arena" | "leaderboard" | "postmatch" | "settings";
 export type KeybindMode = "normal" | "vim" | "custom";
 export type VimMode = "insert" | "normal";
 export type EditorAction = "submit" | "test" | "hint" | "forfeit";
-export type EditorFontSize = "compact" | "default" | "large";
+export type EditorFontFamily =
+  | "roboto-mono"
+  | "fira-code"
+  | "jetbrains-mono"
+  | "source-code-pro"
+  | "ibm-plex-mono";
+export type EditorFontSize = number;
 export type AuthMode = "register" | "login";
 export type Mode = "zen" | "casual" | "ranked";
 export type Difficulty = "easy" | "medium" | "hard" | "expert";
@@ -65,6 +71,7 @@ export type MatchPayload = {
   party_code: string;
   mode: Mode;
   finished: boolean;
+  locked: boolean;
   theme: string;
   difficulty: Difficulty;
   time_limit_seconds: number;
@@ -75,6 +82,17 @@ export type MatchPayload = {
   scaffold: string;
   sample_tests: SampleTest[];
   standings: Standing[];
+};
+
+export type RankedQueueStatus = "idle" | "queued" | "matched";
+
+export type RankedQueuePayload = {
+  status: RankedQueueStatus;
+  queued_players: number;
+  queued_at: number | null;
+  queued_elo: number | null;
+  search_range: number | null;
+  match: MatchPayload | null;
 };
 
 export type PartySettingsPayload = {
@@ -127,6 +145,7 @@ export type JudgePayload = {
   stdout: string;
   first_failed_hidden_test: FailedHiddenTest | null;
   sample_tests: SampleTest[];
+  finished?: boolean;
   standings: Standing[];
 };
 

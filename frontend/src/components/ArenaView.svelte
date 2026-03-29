@@ -15,7 +15,7 @@
   export let busy = false;
   export let timerText = "00:00";
   export let keybindMode: KeybindMode = "normal";
-  export let editorFontSize = "default";
+  export let editorFontSize = 14;
   export let lineNumbers = "1";
   export let editorScrollLeft = 0;
   export let highlightedCode = "";
@@ -184,6 +184,7 @@
       });
     }
   }
+  $: actionLocked = !!match?.locked;
 </script>
 
 <main id="race-view">
@@ -237,6 +238,12 @@
         >
       </div>
     </div>
+
+    {#if actionLocked}
+      <p class="flash notice">
+        Lobby closed by leader. Timer stopped and submissions are disabled.
+      </p>
+    {/if}
 
     <div class="game-layout">
       <section class="prompt-panel">
@@ -341,7 +348,7 @@
                 type="button"
                 class="btn"
                 on:click={promoteFailedTest}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 Add first failed test to samples
               </button>
@@ -353,11 +360,7 @@
       <section class="editor-panel">
           <div
             class="editor-container"
-            style={`--editor-font-size: ${editorFontSize === "compact"
-              ? "0.82rem"
-              : editorFontSize === "large"
-                ? "1rem"
-                : "0.9rem"}`}
+            style={`--editor-font-size: ${editorFontSize}px;`}
           >
             <div class="editor-stack">
               {#if keybindMode === "vim"}
@@ -396,7 +399,7 @@
               type="button"
               class="btn"
               on:click={requestHint}
-              disabled={busy || hints.length >= 3}
+              disabled={busy || actionLocked || hints.length >= 3}
             >
               <i class="fas fa-lightbulb" aria-hidden="true"></i> Hint
             </button>
@@ -406,7 +409,7 @@
                 type="button"
                 class="btn"
                 on:click={forfeit}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 <i class="fas fa-flag" aria-hidden="true"></i> Forfeit
               </button>
@@ -414,7 +417,7 @@
                 type="button"
                 class="btn"
                 on:click={testSamples}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 <i class="fas fa-vial" aria-hidden="true"></i> Run Samples
               </button>
@@ -422,7 +425,7 @@
                 type="button"
                 class="btn primary"
                 on:click={submit}
-                disabled={busy}
+                disabled={busy || actionLocked}
               >
                 {#if busy}
                   <i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Running...
