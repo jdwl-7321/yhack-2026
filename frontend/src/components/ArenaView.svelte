@@ -264,68 +264,87 @@
             <section class="samples-panel">
               <p class="samples-title">Samples</p>
               <div class="samples-scroll">
-                <div class="samples-grid">
-                  <span class="sample-head index-head">#</span>
-                  <span class="sample-head">Input</span>
-                  <span class="sample-head">Output</span>
-                  {#each match.sample_tests as sample, index}
-                    <span class="sample-index">{index + 1}</span>
-                    {#if samplesAreEditable}
-                      <textarea
-                        class="sample-cell sample-input-edit"
-                        rows="1"
-                        bind:value={sampleInputDrafts[index]}
-                        bind:this={sampleInputEls[index]}
-                        spellcheck="false"
-                        on:input={(event) =>
-                          resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
-                        on:blur={() => saveSampleOnBlur(index)}
-                      ></textarea>
-                    {:else}
-                      <pre class="sample-cell">{sampleInputDrafts[index]}</pre>
-                    {/if}
-                    <div class="sample-cell sample-output-cell">
-                      <pre>{sample.output}</pre>
-                      {#if samplesAreEditable}
-                        <button
-                          type="button"
-                          class="sample-delete-button"
-                          on:click={() => void deleteSampleTest(index)}
-                          disabled={busy}
-                          title="Delete sample"
-                        >
-                          <i class="fas fa-trash" aria-hidden="true"></i>
-                        </button>
-                      {/if}
-                    </div>
-                  {/each}
+                <table class="samples-table">
+                  <thead>
+                    <tr>
+                      <th class="sample-head sample-col-index">#</th>
+                      <th class="sample-head">Input</th>
+                      <th class="sample-head">Output</th>
+                      <th class="sample-head sample-col-action">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each match.sample_tests as sample, index}
+                      <tr>
+                        <td class="sample-index">{index + 1}</td>
+                        <td class="sample-cell sample-input-cell">
+                          {#if samplesAreEditable}
+                            <textarea
+                              class="sample-input-edit"
+                              rows="1"
+                              bind:value={sampleInputDrafts[index]}
+                              bind:this={sampleInputEls[index]}
+                              spellcheck="false"
+                              on:input={(event) =>
+                                resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
+                              on:blur={() => saveSampleOnBlur(index)}
+                            ></textarea>
+                          {:else}
+                            <pre>{sampleInputDrafts[index]}</pre>
+                          {/if}
+                        </td>
+                        <td class="sample-cell sample-output-cell">
+                          <pre>{sample.output}</pre>
+                        </td>
+                        <td class="sample-cell sample-action-cell">
+                          {#if samplesAreEditable}
+                            <button
+                              type="button"
+                              class="sample-delete-button"
+                              on:click={() => void deleteSampleTest(index)}
+                              disabled={busy}
+                              title="Delete sample"
+                            >
+                              <i class="fas fa-trash" aria-hidden="true"></i>
+                            </button>
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
 
-                  {#if samplesAreEditable}
-                    <span class="sample-index sample-index-add">+</span>
-                    <textarea
-                      class="sample-cell sample-input-edit"
-                      rows="1"
-                      bind:value={newSampleInputs}
-                      bind:this={newSampleInputEl}
-                      spellcheck="false"
-                      placeholder="Use arg1 = ..., arg2 = ... and click away to add"
-                      on:input={(event) =>
-                        resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
-                      on:blur={() => void commitNewSample()}
-                    ></textarea>
-                    <div class="sample-cell sample-output-hint">
-                      <span>Output auto-generated on add</span>
-                      <button
-                        type="button"
-                        class="btn"
-                        on:click={() => void commitNewSample()}
-                        disabled={busy}
-                      >
-                        Add
-                      </button>
-                    </div>
-                  {/if}
-                </div>
+                    {#if samplesAreEditable}
+                      <tr>
+                        <td class="sample-index sample-index-add">+</td>
+                        <td class="sample-cell sample-input-cell">
+                          <textarea
+                            class="sample-input-edit"
+                            rows="1"
+                            bind:value={newSampleInputs}
+                            bind:this={newSampleInputEl}
+                            spellcheck="false"
+                            placeholder="Use arg1 = ..., arg2 = ... and click away to add"
+                            on:input={(event) =>
+                              resizeSampleTextarea(event.currentTarget as HTMLTextAreaElement)}
+                            on:blur={() => void commitNewSample()}
+                          ></textarea>
+                        </td>
+                        <td class="sample-cell sample-output-hint">
+                          <span>Output auto-generated</span>
+                        </td>
+                        <td class="sample-cell sample-action-cell">
+                          <button
+                            type="button"
+                            class="btn sample-add-button"
+                            on:click={() => void commitNewSample()}
+                            disabled={busy}
+                          >
+                            Add
+                          </button>
+                        </td>
+                      </tr>
+                    {/if}
+                  </tbody>
+                </table>
               </div>
               {#if !samplesAreEditable}
                 <p class="sample-lock-note">

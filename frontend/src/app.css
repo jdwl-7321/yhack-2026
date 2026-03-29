@@ -1257,13 +1257,13 @@ select:focus {
   overflow-x: hidden;
   border-radius: 0.45rem;
   background-color: var(--bg-color);
+  border: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
-.samples-grid {
-  display: grid;
-  grid-template-columns: 3rem minmax(0, 1fr) minmax(0, 1fr);
-  align-items: stretch;
-  border: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+.samples-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
 }
 
 .sample-head {
@@ -1277,30 +1277,40 @@ select:focus {
   position: sticky;
   top: 0;
   z-index: 1;
+  text-align: left;
 }
 
-.sample-head + .sample-head {
+.samples-table th + th,
+.samples-table td + td {
   border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
 }
 
-.index-head {
+.sample-col-index,
+.sample-col-action {
   text-align: center;
 }
 
+.sample-col-index,
 .sample-index {
-  display: block;
-  box-sizing: border-box;
+  width: 3rem;
+}
+
+.sample-col-action,
+.sample-action-cell {
+  width: 4.5rem;
+}
+
+.sample-index {
   color: var(--sub-color);
   font-size: 0.8rem;
   line-height: 1.4;
   padding: 0.7rem 0.3rem;
   text-align: center;
-  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
-  align-self: stretch;
+  border-top: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  vertical-align: top;
 }
 
 .sample-cell {
-  display: block;
   margin: 0;
   box-sizing: border-box;
   white-space: pre-wrap;
@@ -1309,17 +1319,24 @@ select:focus {
   padding: 0.7rem;
   font-size: 0.83rem;
   line-height: 1.4;
-  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  vertical-align: top;
+  min-width: 0;
+}
+
+.samples-table tbody tr:first-child .sample-index,
+.samples-table tbody tr:first-child .sample-cell {
+  border-top: none;
 }
 
 .sample-input-edit {
+  display: block;
   width: 100%;
   box-sizing: border-box;
   background: transparent;
   border: none;
-  border-left: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--sub-color) 20%, transparent);
+  margin: 0;
+  padding: 0;
   resize: none;
   min-height: calc(1.4em + 0.2rem);
   overflow: hidden;
@@ -1328,12 +1345,15 @@ select:focus {
   line-height: 1.4;
   font-family: var(--font-family);
   outline: none;
-  padding: 0.7rem;
   white-space: pre-wrap;
 }
 
 .sample-input-edit::placeholder {
   color: var(--sub-color);
+}
+
+.sample-input-cell pre {
+  margin: 0;
 }
 
 .sample-delete-button {
@@ -1358,19 +1378,17 @@ select:focus {
   font-weight: 700;
 }
 
-.sample-output-cell {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
 .sample-output-cell pre {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--main-color);
-  flex: 1;
+}
+
+.sample-action-cell {
+  text-align: center;
+  vertical-align: middle;
+  padding: 0.45rem;
 }
 
 .sample-lock-note {
@@ -1380,14 +1398,10 @@ select:focus {
 }
 
 .sample-output-hint {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.45rem;
   color: var(--sub-color);
 }
 
-.sample-output-hint .btn {
+.sample-add-button {
   padding: 0.35rem 0.5rem;
   font-size: 0.74rem;
 }
@@ -2526,11 +2540,6 @@ footer a:hover {
 
   .game-layout {
     grid-template-columns: 1fr;
-  }
-
-  .sample-output-hint {
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   #leaderboard-view {
