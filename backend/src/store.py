@@ -17,6 +17,7 @@ from puzzle import (
     expected_output_for_primary_inputs,
     generate_additional_hidden_test,
     generate_puzzle,
+    to_json_value,
 )
 from rating import (
     RankedResult,
@@ -954,7 +955,9 @@ class MemoryStore:
         if len(inputs) == total_arity and total_arity != primary_arity:
             expected_shared_inputs = list(match.puzzle.shared_inputs)
             provided_shared_inputs = inputs[primary_arity:]
-            if provided_shared_inputs != expected_shared_inputs:
+            if to_json_value(provided_shared_inputs) != to_json_value(
+                expected_shared_inputs
+            ):
                 raise ValueError("shared sample inputs cannot be edited")
             primary_inputs = inputs[:primary_arity]
         elif len(inputs) == primary_arity:

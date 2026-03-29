@@ -90,6 +90,7 @@ Top-level layout:
   - Generates deterministic sample/hidden tests from `theme + difficulty + seed`.
   - Starts each puzzle with 3 visible sample tests.
   - Maintains template registry (`_TEMPLATES`) and mapping by theme/key.
+  - Caesar/substitution inference templates expose scaffold args as `arg1`/`samples`, with `samples` typed as `list[tuple[str, str]]` and backed by auto-generated sample pairs.
   - `Algorithms` now contains classic algorithm/search/string/data-structure/greedy templates with explicit difficulty assignments covering easy/medium/hard/expert.
   - `Numeric` includes dedicated templates for GCD, LCM, prime checking, total factor-count summation, and linear `a*x + b` inference.
   - Produces `fingerprint` (template/params context) and `signature` (includes all tests) hashes.
@@ -253,7 +254,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, and casual party time extension.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence, ranked-forfeit auto-win, casual party time extension, and cipher sample-row editing with locked shared arg behavior.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.

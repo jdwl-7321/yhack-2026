@@ -137,25 +137,26 @@ def test_cryptography_templates_are_mapped_by_difficulty(
     assert puzzle.template_key == template_key
 
 
-def test_cryptography_contract_includes_examples_argument() -> None:
+def test_cryptography_contract_includes_samples_argument() -> None:
     puzzle = _crypto_puzzle_for_difficulty("hard")
 
-    assert puzzle.contract.parameter_types == ("str", "list[list[str]]")
+    assert puzzle.contract.parameter_types == ("str", "list[tuple[str, str]]")
     assert puzzle.contract.return_type == "str"
+    assert puzzle.contract.parameter_names == ("arg1", "samples")
     assert len(puzzle.shared_inputs) == 1
 
-    examples = puzzle.shared_inputs[0]
-    assert isinstance(examples, list)
-    assert len(examples) == len(puzzle.sample_tests)
+    samples = puzzle.shared_inputs[0]
+    assert isinstance(samples, list)
+    assert len(samples) == len(puzzle.sample_tests)
 
-    for example, sample_case in zip(examples, puzzle.sample_tests, strict=True):
-        assert example == [sample_case.inputs[0], sample_case.output]
+    for sample_pair, sample_case in zip(samples, puzzle.sample_tests, strict=True):
+        assert sample_pair == (sample_case.inputs[0], sample_case.output)
 
 
-def test_cryptography_scaffold_uses_samples_parameter_name() -> None:
+def test_cryptography_scaffold_uses_arg_names_and_tuple_samples_type() -> None:
     puzzle = _crypto_puzzle_for_difficulty("medium")
     scaffold = solution_scaffold(puzzle.contract)
-    assert "def solution(text: str, samples: list[list[str]]) -> str:" in scaffold
+    assert "def solution(arg1: str, samples: list[tuple[str, str]]) -> str:" in scaffold
 
 
 def test_cryptography_xor_template_contract() -> None:
