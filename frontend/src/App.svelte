@@ -2495,11 +2495,6 @@
         <div class="settings-title-row">
           <div>
             <p class="eyebrow">Configuration</p>
-            <h2>Workspace Control Panel</h2>
-            <p class="settings-title-copy">
-              Inspired by the reference mockup, but rebuilt in Enigma's native
-              terminal-first style.
-            </p>
           </div>
           <span class="leaderboard-badge">Local settings</span>
         </div>
