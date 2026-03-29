@@ -7,6 +7,7 @@ import random
 import sqlite3
 import string
 from time import time
+from typing import Callable
 import uuid
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -33,6 +34,67 @@ from rating import (
 from domain_types import Difficulty, Mode
 
 
+def default_account_preferences() -> dict[str, object]:
+    return {
+        "appearanceMode": "light",
+        "lightEditorTheme": "everforest-light",
+        "darkEditorTheme": "catppuccin-mocha",
+        "keybindMode": "normal",
+        "customShortcuts": {
+            "submit": "s",
+            "test": "r",
+            "hint": "h",
+            "forfeit": "f",
+        },
+        "editorFontFamily": "roboto-mono",
+        "editorFontSize": 14,
+    }
+
+
+def default_account_stats() -> dict[str, object]:
+    return {
+        "matchesStarted": 0,
+        "matchesSolved": 0,
+        "rankedFinished": 0,
+        "rankedWins": 0,
+        "hintsUsed": 0,
+        "sampleRuns": 0,
+        "submissions": 0,
+        "forfeits": 0,
+        "bestHiddenPassed": 0,
+        "recentRuns": [],
+        "recordedMatchIds": [],
+    }
+
+
+def _clone_json_object(value: dict[str, object]) -> dict[str, object]:
+    return json.loads(json.dumps(value))
+
+
+def _json_object_or_default(
+    value: object,
+    *,
+    default_factory: Callable[[], dict[str, object]],
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return default_factory()
+    return _clone_json_object(value)
+
+
+def _json_object_from_db(
+    value: object,
+    *,
+    default_factory: Callable[[], dict[str, object]],
+) -> dict[str, object]:
+    if value is None:
+        return default_factory()
+    try:
+        decoded = json.loads(str(value))
+    except (TypeError, ValueError):
+        return default_factory()
+    return _json_object_or_default(decoded, default_factory=default_factory)
+
+
 @dataclass(slots=True)
 class User:
     id: str
@@ -42,6 +104,10 @@ class User:
     password_hash: str | None = None
     profile_image_url: str | None = None
     recent_ai_topics: list[str] = field(default_factory=list)
+    account_preferences: dict[str, object] = field(
+        default_factory=default_account_preferences
+    )
+    account_stats: dict[str, object] = field(default_factory=default_account_stats)
 
 
 @dataclass(slots=True)
@@ -121,6 +187,8 @@ class MemoryStore:
         elo: int = 1000,
         password_hash: str | None = None,
         recent_ai_topics: list[str] | None = None,
+        account_preferences: dict[str, object] | None = None,
+        account_stats: dict[str, object] | None = None,
     ) -> User:
         user = User(
             id=f"u_{uuid.uuid4().hex[:8]}",
@@ -129,6 +197,14 @@ class MemoryStore:
             elo=elo,
             password_hash=password_hash,
             recent_ai_topics=list(recent_ai_topics or []),
+            account_preferences=_json_object_or_default(
+                account_preferences,
+                default_factory=default_account_preferences,
+            ),
+            account_stats=_json_object_or_default(
+                account_stats,
+                default_factory=default_account_stats,
+            ),
         )
         self.users[user.id] = user
         return user
@@ -191,6 +267,32 @@ class MemoryStore:
     ) -> User:
         user = self._require_user(user_id)
         user.profile_image_url = profile_image_url
+        return user
+
+    def update_account_preferences(
+        self,
+        *,
+        user_id: str,
+        account_preferences: dict[str, object],
+    ) -> User:
+        user = self._require_user(user_id)
+        user.account_preferences = _json_object_or_default(
+            account_preferences,
+            default_factory=default_account_preferences,
+        )
+        return user
+
+    def update_account_stats(
+        self,
+        *,
+        user_id: str,
+        account_stats: dict[str, object],
+    ) -> User:
+        user = self._require_user(user_id)
+        user.account_stats = _json_object_or_default(
+            account_stats,
+            default_factory=default_account_stats,
+        )
         return user
 
     def create_party(
@@ -775,6 +877,7 @@ class MemoryStore:
                 "elo": user.elo,
                 "guest": user.guest,
                 "profile_image_url": user.profile_image_url,
+                "account_stats": _clone_json_object(user.account_stats),
             }
             if placement <= limit:
                 top_entries.append(entry)
@@ -1272,6 +1375,8 @@ class SqliteStore(MemoryStore):
         normalized_name: str | None = None,
         profile_image_url: str | None = None,
         recent_ai_topics: list[str] | None = None,
+        account_preferences: dict[str, object] | None = None,
+        account_stats: dict[str, object] | None = None,
     ) -> User:
         user = User(
             id=f"u_{uuid.uuid4().hex[:8]}",
@@ -1281,6 +1386,14 @@ class SqliteStore(MemoryStore):
             password_hash=password_hash,
             profile_image_url=profile_image_url,
             recent_ai_topics=list(recent_ai_topics or []),
+            account_preferences=_json_object_or_default(
+                account_preferences,
+                default_factory=default_account_preferences,
+            ),
+            account_stats=_json_object_or_default(
+                account_stats,
+                default_factory=default_account_stats,
+            ),
         )
 
         with self._conn:
@@ -1294,9 +1407,11 @@ class SqliteStore(MemoryStore):
                     elo,
                     password_hash,
                     profile_image_url,
-                    recent_ai_topics_json
+                    recent_ai_topics_json,
+                    account_preferences_json,
+                    account_stats_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.id,
@@ -1307,6 +1422,8 @@ class SqliteStore(MemoryStore):
                     user.password_hash,
                     user.profile_image_url,
                     json.dumps(user.recent_ai_topics, separators=(",", ":")),
+                    json.dumps(user.account_preferences),
+                    json.dumps(user.account_stats),
                 ),
             )
 
@@ -1364,6 +1481,40 @@ class SqliteStore(MemoryStore):
             self._conn.execute(
                 "UPDATE users SET profile_image_url = ? WHERE id = ?",
                 (user.profile_image_url, user.id),
+            )
+        return user
+
+    def update_account_preferences(
+        self,
+        *,
+        user_id: str,
+        account_preferences: dict[str, object],
+    ) -> User:
+        user = super().update_account_preferences(
+            user_id=user_id,
+            account_preferences=account_preferences,
+        )
+        with self._conn:
+            self._conn.execute(
+                "UPDATE users SET account_preferences_json = ? WHERE id = ?",
+                (json.dumps(user.account_preferences), user.id),
+            )
+        return user
+
+    def update_account_stats(
+        self,
+        *,
+        user_id: str,
+        account_stats: dict[str, object],
+    ) -> User:
+        user = super().update_account_stats(
+            user_id=user_id,
+            account_stats=account_stats,
+        )
+        with self._conn:
+            self._conn.execute(
+                "UPDATE users SET account_stats_json = ? WHERE id = ?",
+                (json.dumps(user.account_stats), user.id),
             )
         return user
 
@@ -1447,7 +1598,9 @@ class SqliteStore(MemoryStore):
                     elo INTEGER NOT NULL,
                     password_hash TEXT,
                     profile_image_url TEXT,
-                    recent_ai_topics_json TEXT NOT NULL DEFAULT '[]'
+                    recent_ai_topics_json TEXT NOT NULL DEFAULT '[]',
+                    account_preferences_json TEXT,
+                    account_stats_json TEXT
                 )
                 """
             )
@@ -1460,6 +1613,22 @@ class SqliteStore(MemoryStore):
                 try:
                     self._conn.execute(
                         "ALTER TABLE users ADD COLUMN profile_image_url TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).casefold():
+                        raise
+            if "account_preferences_json" not in columns:
+                try:
+                    self._conn.execute(
+                        "ALTER TABLE users ADD COLUMN account_preferences_json TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).casefold():
+                        raise
+            if "account_stats_json" not in columns:
+                try:
+                    self._conn.execute(
+                        "ALTER TABLE users ADD COLUMN account_stats_json TEXT"
                     )
                 except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc).casefold():
@@ -1486,7 +1655,9 @@ class SqliteStore(MemoryStore):
                 elo,
                 password_hash,
                 profile_image_url,
-                recent_ai_topics_json
+                recent_ai_topics_json,
+                account_preferences_json,
+                account_stats_json
             FROM users
             """
         ).fetchall()
@@ -1509,6 +1680,14 @@ class SqliteStore(MemoryStore):
                 ),
                 recent_ai_topics=self._decode_recent_ai_topics(
                     row["recent_ai_topics_json"]
+                ),
+                account_preferences=_json_object_from_db(
+                    row["account_preferences_json"],
+                    default_factory=default_account_preferences,
+                ),
+                account_stats=_json_object_from_db(
+                    row["account_stats_json"],
+                    default_factory=default_account_stats,
                 ),
             )
             self.users[user.id] = user

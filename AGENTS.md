@@ -74,7 +74,7 @@ Top-level layout:
   - Also exposes ranked queue payloads via `_ranked_queue_payload`.
   - Match payloads include `template_key` so the client can apply template-specific UI behavior.
   - Auth session payload includes `is_admin` (resolved by configured admin username).
-  - User payloads now include `profile_image_url`; `POST /api/auth/profile-image` lets authenticated users save/clear their own avatar image data URL.
+  - User payloads include `profile_image_url`, `account_preferences`, and `account_stats`; `POST /api/auth/profile-image` updates avatars and `GET/POST /api/auth/account` reads/writes persisted account settings/stats.
   - Provides admin endpoints for dashboard listing, resetting all ELOs, setting per-user ELO, deleting users, canceling active matches, and file-backed puzzle-template create/update/delete.
   - Admin puzzle payloads include editable module source (`source_path`, `source_code`); `POST /api/admin/puzzles` creates template files, `POST /api/admin/puzzles/<template_key>` updates source, and `DELETE /api/admin/puzzles/<template_key>` removes template files.
   - Enables permissive CORS headers for local frontend dev.
@@ -138,12 +138,13 @@ Top-level layout:
   - Core in-memory domain state and gameplay operations.
   - Dataclasses: `User`, `PartySettings`, `Party`, `MatchPlayer`, `Match`, `RankedQueueEntry`.
   - `MemoryStore` handles auth, parties, ranked queue matchmaking, matches, hints, submissions, standings, leaderboard, and finish logic.
-  - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO/profile-image/recent-AI-topic updates.
+  - Leaderboard entries include per-user `account_stats` alongside avatar metadata.
+  - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO/profile-image updates plus account preferences/stats JSON.
   - Important behavior:
     - Parties and matches are in-memory only.
     - Ranked queue entries are in-memory only and expire if the client stops polling for ~20 seconds before a match is found.
     - Because lobby/queue/match state is in-memory, Gunicorn must run with exactly one worker process.
-    - Users (including `profile_image_url` and `recent_ai_topics`) are persisted in SQLite only when using `SqliteStore`.
+    - Users (including `profile_image_url`, `account_preferences`, and `account_stats`) are persisted in SQLite only when using `SqliteStore`.
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
@@ -180,6 +181,8 @@ Defined in `backend/src/app.py`:
   - `POST /api/auth/logout`
   - `POST /api/auth/password`
   - `POST /api/auth/profile-image`
+  - `GET /api/auth/account`
+  - `POST /api/auth/account`
 
 - User utility:
   - `POST /api/users` (direct user creation helper endpoint)
@@ -243,7 +246,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/app-types.ts`
   - Central TypeScript contracts for backend payloads and UI state.
   - Includes admin dashboard payload contracts (`AdminDashboardPayload`, `AdminMatch`, `AdminMatchPlayer`, `AdminPuzzleTemplate`) and `is_admin` session/auth flags.
-  - `SessionUser`/`LeaderboardEntry` include `profile_image_url` for shared avatar rendering.
+  - `SessionUser` includes `profile_image_url`, `account_preferences`, and `account_stats`; `LeaderboardEntry` includes `profile_image_url` plus `account_stats` for profile preview cards.
   - Admin puzzle payloads include editable module source (`source_path`, `source_code`).
 
 - `frontend/src/app.css`
@@ -256,7 +259,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/App.svelte`
   - Large orchestration component (state hub).
   - Responsibilities include:
-    - auth/session, account stats localStorage, and stored active-party restore after refresh/login
+    - auth/session, server-backed account preferences/stats sync via `/api/auth/account`, and stored active-party restore after refresh/login
     - casual party lifecycle, ranked queue polling, and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
@@ -265,7 +268,7 @@ Defined in `backend/src/app.py`:
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
     - editor behavior (normal/custom shortcuts + custom vim handling)
     - syntax highlighting/theming via highlight.js + Shiki
-    - appearance persistence with light-mode startup default, explicit light fallback for system mode, and Everforest Light / Catppuccin Mocha as the default light/dark palettes
+    - account-scoped appearance/keybind/editor persistence in backend storage (localStorage now only tracks active-party restore), with light startup default and Everforest Light / Catppuccin Mocha as default light/dark palettes
     - profile-photo upload with client-side square crop/compression, then server persistence via `/api/auth/profile-image`
     - leaderboard refresh when entering leaderboard view so initial render reflects current server users
     - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match, create/delete puzzle templates, save puzzle template source code)
@@ -308,7 +311,7 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/LeaderboardView.svelte`
   - Ranked leaderboard display and refresh.
-  - Rows show profile avatars from leaderboard payload `profile_image_url` and a hover/focus profile card with ladder stats (run stats remain local-cache based).
+  - Rows show profile avatars from leaderboard payload `profile_image_url` and a hover/focus profile card with ladder stats sourced from leaderboard `account_stats`.
 
 - `frontend/src/components/PostMatchView.svelte`
   - End-of-match summary and final standings board.
@@ -327,7 +330,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence (including profile image persistence), ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and admin puzzle create/delete file operations.
+  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence (including profile image and account-state persistence), ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and admin puzzle create/delete file operations.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
@@ -341,7 +344,7 @@ Defined in `backend/src/app.py`:
 ## Persistence and State Boundaries
 
 - Persisted:
-  - Users (id, name, guest, elo, password hash, profile image URL) in SQLite via `SqliteStore`.
+  - Users (id, name, guest, elo, password hash, profile image URL, account preferences, account stats) in SQLite via `SqliteStore`.
   - Puzzle template source/metadata through files under `backend/src/puzzles/` (not SQLite).
 
 - In-memory only:

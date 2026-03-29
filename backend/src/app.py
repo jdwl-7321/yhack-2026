@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
 import os
 from pathlib import Path
@@ -37,11 +36,25 @@ from store import (
     RankedQueueEntry,
     SqliteStore,
     User,
+    default_account_preferences,
+    default_account_stats,
 )
 from domain_types import Difficulty, Mode
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "yhack.sqlite3"
 DEFAULT_FRONTEND_DIST_PATH = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+VALID_APPEARANCE_MODES = {"light", "dark", "system"}
+VALID_KEYBIND_MODES = {"normal", "vim", "custom"}
+VALID_EDITOR_FONT_FAMILIES = {
+    "roboto-mono",
+    "fira-code",
+    "jetbrains-mono",
+    "source-code-pro",
+    "ibm-plex-mono",
+}
+VALID_SHORTCUT_ACTIONS = ("submit", "test", "hint", "forfeit")
+ACCOUNT_RECENT_RUN_LIMIT = 6
+ACCOUNT_RECORDED_MATCH_LIMIT = 30
 
 
 class EventHub:
@@ -363,6 +376,35 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             ),
         )
         return jsonify({"user": _user_payload(user)})
+
+    @app.route("/api/auth/account", methods=["GET"])
+    def auth_account() -> Any:
+        return jsonify({"user": _user_payload(session_user())})
+
+    @app.route("/api/auth/account", methods=["POST"])
+    def auth_update_account() -> Any:
+        payload = request.get_json(silent=True) or {}
+        user_id = session_user_id()
+
+        has_preferences = "account_preferences" in payload
+        has_stats = "account_stats" in payload
+        if not has_preferences and not has_stats:
+            raise ValueError("account_preferences and/or account_stats are required")
+
+        if has_preferences:
+            data.update_account_preferences(
+                user_id=user_id,
+                account_preferences=_normalize_account_preferences(
+                    payload.get("account_preferences")
+                ),
+            )
+        if has_stats:
+            data.update_account_stats(
+                user_id=user_id,
+                account_stats=_normalize_account_stats(payload.get("account_stats")),
+            )
+
+        return jsonify({"user": _user_payload(data.users[user_id])})
 
     @app.route("/api/users", methods=["POST"])
     def create_user() -> Any:
@@ -894,6 +936,182 @@ def _optional_int(value: object) -> int | None:
     raise ValueError("Expected an integer-like value")
 
 
+def _normalize_shortcut_key(value: object, *, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    normalized = "".join(char for char in value.strip().lower() if char.isalnum())
+    if not normalized:
+        return fallback
+    return normalized[-1]
+
+
+def _normalize_account_preferences(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("account_preferences must be an object")
+
+    defaults = default_account_preferences()
+    normalized = default_account_preferences()
+
+    raw_appearance_mode = value.get("appearanceMode")
+    if (
+        isinstance(raw_appearance_mode, str)
+        and raw_appearance_mode in VALID_APPEARANCE_MODES
+    ):
+        normalized["appearanceMode"] = raw_appearance_mode
+
+    raw_light_theme = value.get("lightEditorTheme")
+    if isinstance(raw_light_theme, str):
+        trimmed = raw_light_theme.strip()
+        if trimmed:
+            normalized["lightEditorTheme"] = trimmed
+
+    raw_dark_theme = value.get("darkEditorTheme")
+    if isinstance(raw_dark_theme, str):
+        trimmed = raw_dark_theme.strip()
+        if trimmed:
+            normalized["darkEditorTheme"] = trimmed
+
+    raw_keybind_mode = value.get("keybindMode")
+    if isinstance(raw_keybind_mode, str) and raw_keybind_mode in VALID_KEYBIND_MODES:
+        normalized["keybindMode"] = raw_keybind_mode
+
+    shortcut_defaults = defaults["customShortcuts"]
+    if not isinstance(shortcut_defaults, dict):
+        shortcut_defaults = {action: "" for action in VALID_SHORTCUT_ACTIONS}
+    shortcuts = dict(shortcut_defaults)
+    raw_shortcuts = value.get("customShortcuts")
+    if isinstance(raw_shortcuts, dict):
+        for action in VALID_SHORTCUT_ACTIONS:
+            shortcuts[action] = _normalize_shortcut_key(
+                raw_shortcuts.get(action),
+                fallback=str(shortcuts[action]),
+            )
+
+    if len(set(shortcuts.values())) != len(shortcuts):
+        raise ValueError("custom shortcut keys must be unique")
+    normalized["customShortcuts"] = shortcuts
+
+    raw_font_family = value.get("editorFontFamily")
+    if (
+        isinstance(raw_font_family, str)
+        and raw_font_family in VALID_EDITOR_FONT_FAMILIES
+    ):
+        normalized["editorFontFamily"] = raw_font_family
+
+    raw_font_size = value.get("editorFontSize")
+    if isinstance(raw_font_size, (int, float, str)) and not isinstance(
+        raw_font_size, bool
+    ):
+        try:
+            parsed_size = int(raw_font_size)
+            normalized["editorFontSize"] = max(12, min(22, parsed_size))
+        except ValueError:
+            pass
+
+    return normalized
+
+
+def _normalize_account_stats(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("account_stats must be an object")
+
+    defaults = default_account_stats()
+    normalized = default_account_stats()
+
+    counter_keys = (
+        "matchesStarted",
+        "matchesSolved",
+        "rankedFinished",
+        "rankedWins",
+        "hintsUsed",
+        "sampleRuns",
+        "submissions",
+        "forfeits",
+        "bestHiddenPassed",
+    )
+    for key in counter_keys:
+        raw_count = value.get(key)
+        if isinstance(raw_count, (int, float, str)) and not isinstance(raw_count, bool):
+            try:
+                normalized[key] = max(0, int(raw_count))
+            except ValueError:
+                normalized[key] = defaults[key]
+
+    recent_runs: list[dict[str, object]] = []
+    raw_recent_runs = value.get("recentRuns")
+    if isinstance(raw_recent_runs, list):
+        for item in raw_recent_runs:
+            if not isinstance(item, dict):
+                continue
+
+            match_id = item.get("match_id")
+            mode = item.get("mode")
+            theme = item.get("theme")
+            difficulty = item.get("difficulty")
+            outcome = item.get("outcome")
+            hidden_passed = item.get("hidden_passed")
+            rating_delta = item.get("rating_delta")
+            at = item.get("at")
+
+            if not isinstance(match_id, str) or not match_id.strip():
+                continue
+            if not isinstance(mode, str) or mode not in {"zen", "casual", "ranked"}:
+                continue
+            if not isinstance(theme, str) or not theme.strip():
+                continue
+            if not isinstance(difficulty, str) or difficulty not in {
+                "easy",
+                "medium",
+                "hard",
+                "expert",
+            }:
+                continue
+            if not isinstance(outcome, str) or outcome not in {"solved", "forfeit"}:
+                continue
+            if not isinstance(hidden_passed, (int, float)) or isinstance(
+                hidden_passed, bool
+            ):
+                continue
+            if not isinstance(rating_delta, (int, float)) or isinstance(
+                rating_delta, bool
+            ):
+                continue
+            if not isinstance(at, str) or not at.strip():
+                continue
+
+            recent_runs.append(
+                {
+                    "match_id": match_id,
+                    "mode": mode,
+                    "theme": theme,
+                    "difficulty": difficulty,
+                    "outcome": outcome,
+                    "hidden_passed": int(hidden_passed),
+                    "rating_delta": int(rating_delta),
+                    "at": at,
+                }
+            )
+            if len(recent_runs) >= ACCOUNT_RECENT_RUN_LIMIT:
+                break
+    normalized["recentRuns"] = recent_runs
+
+    recorded_match_ids: list[str] = []
+    raw_recorded_match_ids = value.get("recordedMatchIds")
+    if isinstance(raw_recorded_match_ids, list):
+        for item in raw_recorded_match_ids:
+            if not isinstance(item, str):
+                continue
+            trimmed = item.strip()
+            if not trimmed:
+                continue
+            recorded_match_ids.append(trimmed)
+            if len(recorded_match_ids) >= ACCOUNT_RECORDED_MATCH_LIMIT:
+                break
+    normalized["recordedMatchIds"] = recorded_match_ids
+
+    return normalized
+
+
 def _optional_profile_image_url(value: object) -> str | None:
     if value is None:
         return None
@@ -917,6 +1135,8 @@ def _user_payload(user: User) -> dict[str, Any]:
         "guest": user.guest,
         "elo": user.elo,
         "profile_image_url": user.profile_image_url,
+        "account_preferences": user.account_preferences,
+        "account_stats": user.account_stats,
     }
 
 

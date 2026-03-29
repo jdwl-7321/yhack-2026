@@ -28,6 +28,8 @@ export type SessionUser = {
   guest: boolean;
   elo: number;
   profile_image_url: string | null;
+  account_preferences: AccountPreferences;
+  account_stats: AccountStats;
 };
 
 export type SessionPayload = {
@@ -60,6 +62,7 @@ export type LeaderboardEntry = {
   elo: number;
   guest: boolean;
   profile_image_url: string | null;
+  account_stats: AccountStats;
 };
 
 export type LeaderboardPayload = {
@@ -203,6 +206,16 @@ export type EditorThemePalette = {
 };
 
 export type AccountOutcome = "solved" | "forfeit";
+
+export type AccountPreferences = {
+  appearanceMode: AppearanceMode;
+  lightEditorTheme: string;
+  darkEditorTheme: string;
+  keybindMode: KeybindMode;
+  customShortcuts: Record<EditorAction, string>;
+  editorFontFamily: EditorFontFamily;
+  editorFontSize: EditorFontSize;
+};
 
 export type AccountRecentRun = {
   match_id: string;
