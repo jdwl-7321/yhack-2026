@@ -16,9 +16,9 @@ template_key = "numeric-add-reversed-number-v1"
 theme = "Numeric"
 difficulties: tuple[Difficulty, ...] = ("hard",)
 prompt = "Given a non-negative integer, return the sum of the integer and its digit-reversed form."
-hint_level_1 = "Reverse digits in base-10 (for example, 120 becomes 21)."
-hint_level_2 = "Compute the reversed number first, then add it to the original input."
-hint_level_3 = "Return n + int(str(n)[::-1])."
+hint_level_1 = "Think about the ordering of the digits in each number."
+hint_level_2 = "Reverse digits in base-10 (for example, 120 becomes 21)."
+hint_level_3 = "Compute the reversed number first, then add it to the original input."
 contract = FunctionContract(parameter_types=("int",), return_type="int")
 
 
