@@ -1360,6 +1360,11 @@ select:focus {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 0 0.2rem;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--sub-alt-color) 92%, var(--bg-color) 8%);
+  border-radius: 0.6rem;
 }
 
 .admin-users-row {
@@ -1489,6 +1494,46 @@ select:focus {
   gap: 0.25rem;
   color: var(--sub-color);
   font-size: 0.78rem;
+}
+
+.admin-search-field {
+  margin-bottom: 0.75rem;
+}
+
+.admin-scroll-panel {
+  max-height: min(58vh, 30rem);
+  overflow-y: auto;
+  padding-right: 0.15rem;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--main-color) 52%, var(--sub-color) 48%)
+    color-mix(in srgb, var(--bg-color) 82%, var(--sub-alt-color) 18%);
+}
+
+.admin-scroll-panel::-webkit-scrollbar {
+  width: 0.72rem;
+}
+
+.admin-scroll-panel::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--bg-color) 82%, var(--sub-alt-color) 18%);
+  border-radius: 999px;
+}
+
+.admin-scroll-panel::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--main-color) 52%, var(--sub-color) 48%);
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--bg-color) 82%, var(--sub-alt-color) 18%);
+}
+
+.admin-scroll-panel-users {
+  max-height: min(54vh, 26rem);
+}
+
+.admin-scroll-panel-matches {
+  max-height: min(50vh, 22rem);
+}
+
+.admin-scroll-panel-puzzles {
+  max-height: min(72vh, 48rem);
 }
 
 .admin-filter-actions {
@@ -3407,6 +3452,13 @@ footer a:hover {
   .admin-users-row {
     grid-template-columns: 1fr;
     gap: 0.45rem;
+  }
+
+  .admin-scroll-panel,
+  .admin-scroll-panel-users,
+  .admin-scroll-panel-matches,
+  .admin-scroll-panel-puzzles {
+    max-height: none;
   }
 
   .admin-elo-actions {

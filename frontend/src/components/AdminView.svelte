@@ -46,6 +46,8 @@
 
   let draftEloByUser: Record<string, string> = {};
   let localError = "";
+  let playerFilterQuery = "";
+  let matchFilterQuery = "";
   let puzzleFilterQuery = "";
   let puzzleFilterTheme = "all";
   let puzzleFilterDifficulty: TemplateDifficultyFilter = "all";
@@ -138,6 +140,37 @@
   $: availableTemplateThemes = Array.from(
     new Set(adminPuzzleTemplates.map((template) => template.theme)),
   ).sort((left, right) => left.localeCompare(right));
+
+  $: filteredAdminUsers = adminUsers.filter((user) => {
+    const query = playerFilterQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+
+    return [user.name, user.id, String(user.elo)]
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  });
+
+  $: filteredAdminMatches = adminMatches.filter((match) => {
+    const query = matchFilterQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+
+    return [
+      match.match_id,
+      match.party_code,
+      match.mode,
+      match.theme,
+      match.difficulty,
+      ...match.players.map((player) => player.name),
+    ]
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  });
 
   $: filteredPuzzleTemplates = adminPuzzleTemplates.filter((template) => {
     if (puzzleFilterTheme !== "all" && template.theme !== puzzleFilterTheme) {
@@ -363,88 +396,120 @@
       <article class="admin-card">
         <div class="admin-card-head">
           <h2>Players</h2>
-          <span>{adminUsers.length} total</span>
+          <span>{filteredAdminUsers.length} of {adminUsers.length}</span>
         </div>
 
-        <div class="admin-users-grid">
-          <div class="admin-users-head">
-            <span>Player</span>
-            <span>Current ELO</span>
-            <span>Update ELO</span>
-            <span>Delete</span>
-          </div>
-          {#each adminUsers as user}
-            <div class="admin-users-row">
-              <div class="admin-player-cell">
-                <strong>{user.name}</strong>
-                <small>{user.id}</small>
+        <label class="admin-filter-field admin-search-field">
+          <span>Search Players</span>
+          <input
+            class="admin-input"
+            type="search"
+            placeholder="name, id, elo"
+            bind:value={playerFilterQuery}
+            disabled={busy}
+          />
+        </label>
+
+        {#if filteredAdminUsers.length === 0}
+          <p class="admin-muted">No players match the current search.</p>
+        {:else}
+          <div class="admin-scroll-panel admin-scroll-panel-users">
+            <div class="admin-users-grid">
+              <div class="admin-users-head">
+                <span>Player</span>
+                <span>Current ELO</span>
+                <span>Update ELO</span>
+                <span>Delete</span>
               </div>
-              <span>{user.elo}</span>
-              <div class="admin-elo-actions">
-                <input
-                  class="admin-input"
-                  type="number"
-                  min="0"
-                  value={eloDraft(user)}
-                  on:input={(event) => {
-                    setEloDraft(user.id, (event.currentTarget as HTMLInputElement).value);
-                  }}
-                  disabled={busy}
-                />
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={() => void submitUserElo(user)}
-                  disabled={busy}
-                >
-                  Set
-                </button>
-              </div>
-              <button
-                type="button"
-                class="btn admin-delete-btn"
-                on:click={() => void confirmDelete(user)}
-                disabled={busy || user.id === sessionUser.id}
-              >
-                Delete
-              </button>
+              {#each filteredAdminUsers as user}
+                <div class="admin-users-row">
+                  <div class="admin-player-cell">
+                    <strong>{user.name}</strong>
+                    <small>{user.id}</small>
+                  </div>
+                  <span>{user.elo}</span>
+                  <div class="admin-elo-actions">
+                    <input
+                      class="admin-input"
+                      type="number"
+                      min="0"
+                      value={eloDraft(user)}
+                      on:input={(event) => {
+                        setEloDraft(user.id, (event.currentTarget as HTMLInputElement).value);
+                      }}
+                      disabled={busy}
+                    />
+                    <button
+                      type="button"
+                      class="btn"
+                      on:click={() => void submitUserElo(user)}
+                      disabled={busy}
+                    >
+                      Set
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn admin-delete-btn"
+                    on:click={() => void confirmDelete(user)}
+                    disabled={busy || user.id === sessionUser.id}
+                  >
+                    Delete
+                  </button>
+                </div>
+              {/each}
             </div>
-          {/each}
-        </div>
+          </div>
+        {/if}
       </article>
 
       <article class="admin-card">
         <div class="admin-card-head">
           <h2>Active Matches</h2>
-          <span>{adminMatches.length} live</span>
+          <span>{filteredAdminMatches.length} of {adminMatches.length}</span>
         </div>
+
+        <label class="admin-filter-field admin-search-field">
+          <span>Search Matches</span>
+          <input
+            class="admin-input"
+            type="search"
+            placeholder="match, mode, theme, player"
+            bind:value={matchFilterQuery}
+            disabled={busy}
+          />
+        </label>
 
         {#if adminMatches.length === 0}
           <p class="admin-muted">No active matches right now.</p>
+        {:else if filteredAdminMatches.length === 0}
+          <p class="admin-muted">No active matches match the current search.</p>
         {:else}
-          <div class="admin-match-list">
-            {#each adminMatches as match}
-              <section class="admin-match-row">
-                <div class="admin-match-copy">
-                  <strong>{match.match_id}</strong>
-                  <p>
-                    {match.mode.toUpperCase()} · {match.theme} · {match.difficulty.toUpperCase()} ·
-                    {formatDuration(match.time_limit_seconds)}
-                  </p>
-                  <p class="admin-muted">
-                    Players: {match.players.map((player) => player.name).join(", ")}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  class="btn"
-                  on:click={() => void confirmCancelMatch(match.match_id)}
-                  disabled={busy}
-                >
-                  Cancel Match
-                </button>
-              </section>
-            {/each}
+          <div class="admin-scroll-panel admin-scroll-panel-matches">
+            <div class="admin-match-list">
+              {#each filteredAdminMatches as match}
+                <section class="admin-match-row">
+                  <div class="admin-match-copy">
+                    <strong>{match.match_id}</strong>
+                    <p>
+                      {match.mode.toUpperCase()} · {match.theme} · {match.difficulty.toUpperCase()} ·
+                      {formatDuration(match.time_limit_seconds)}
+                    </p>
+                    <p class="admin-muted">
+                      Players: {match.players.map((player) => player.name).join(", ")}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn"
+                    on:click={() => void confirmCancelMatch(match.match_id)}
+                    disabled={busy}
+                  >
+                    Cancel Match
+                  </button>
+                </section>
+              {/each}
+            </div>
           </div>
         {/if}
       </article>
@@ -548,69 +613,71 @@
         {#if filteredPuzzleTemplates.length === 0}
           <p class="admin-muted">No puzzle templates match the current filters.</p>
         {:else}
-          <div class="admin-puzzle-list">
-            {#each filteredPuzzleTemplates as template (template.template_key)}
-              <details
-                class="admin-puzzle-item"
-                open={openTemplateKeys.has(template.template_key)}
-                on:toggle={(event) => syncTemplateOpenState(template.template_key, event)}
-              >
-                <summary class="admin-puzzle-summary">
-                  <div class="admin-puzzle-summary-copy">
-                    <strong>{template.template_key}</strong>
-                    <p class="admin-muted">{template.theme} · {template.difficulty.toUpperCase()}</p>
-                  </div>
-                  <span class="admin-puzzle-summary-tag">
-                    {#if openTemplateKeys.has(template.template_key)}Open{:else}Collapsed{/if}
-                  </span>
-                </summary>
-
-                <form
-                  class="admin-puzzle-form"
-                  on:submit|preventDefault={(event) => void submitPuzzleUpdate(template, event)}
+          <div class="admin-scroll-panel admin-scroll-panel-puzzles">
+            <div class="admin-puzzle-list">
+              {#each filteredPuzzleTemplates as template (template.template_key)}
+                <details
+                  class="admin-puzzle-item"
+                  open={openTemplateKeys.has(template.template_key)}
+                  on:toggle={(event) => syncTemplateOpenState(template.template_key, event)}
                 >
-                  <div class="admin-puzzle-meta-grid">
-                    <p>
-                      <span>Theme</span>
-                      <strong>{template.theme}</strong>
-                    </p>
-                    <p>
-                      <span>Difficulty</span>
-                      <strong>{template.difficulty.toUpperCase()}</strong>
-                    </p>
-                    <p class="admin-puzzle-path">
-                      <span>File</span>
-                      <code>{template.source_path}</code>
-                    </p>
-                  </div>
+                  <summary class="admin-puzzle-summary">
+                    <div class="admin-puzzle-summary-copy">
+                      <strong>{template.template_key}</strong>
+                      <p class="admin-muted">{template.theme} · {template.difficulty.toUpperCase()}</p>
+                    </div>
+                    <span class="admin-puzzle-summary-tag">
+                      {#if openTemplateKeys.has(template.template_key)}Open{:else}Collapsed{/if}
+                    </span>
+                  </summary>
 
-                  <div class="admin-source-field">
-                    <span>Puzzle Source (Python)</span>
-                    <div
-                      class="admin-source-editor"
-                      use:sourceEditorHost={{
-                        templateKey: template.template_key,
-                        sourceCode: template.source_code,
-                      }}
-                    ></div>
-                  </div>
+                  <form
+                    class="admin-puzzle-form"
+                    on:submit|preventDefault={(event) => void submitPuzzleUpdate(template, event)}
+                  >
+                    <div class="admin-puzzle-meta-grid">
+                      <p>
+                        <span>Theme</span>
+                        <strong>{template.theme}</strong>
+                      </p>
+                      <p>
+                        <span>Difficulty</span>
+                        <strong>{template.difficulty.toUpperCase()}</strong>
+                      </p>
+                      <p class="admin-puzzle-path">
+                        <span>File</span>
+                        <code>{template.source_path}</code>
+                      </p>
+                    </div>
 
-                  <div class="admin-puzzle-actions">
-                    <button type="submit" class="btn admin-save-btn" disabled={busy}>
-                      Save Source
-                    </button>
-                    <button
-                      type="button"
-                      class="btn admin-delete-btn"
-                      disabled={busy}
-                      on:click={() => void confirmDeletePuzzle(template)}
-                    >
-                      Delete Template
-                    </button>
-                  </div>
-                </form>
-              </details>
-            {/each}
+                    <div class="admin-source-field">
+                      <span>Puzzle Source (Python)</span>
+                      <div
+                        class="admin-source-editor"
+                        use:sourceEditorHost={{
+                          templateKey: template.template_key,
+                          sourceCode: template.source_code,
+                        }}
+                      ></div>
+                    </div>
+
+                    <div class="admin-puzzle-actions">
+                      <button type="submit" class="btn admin-save-btn" disabled={busy}>
+                        Save Source
+                      </button>
+                      <button
+                        type="button"
+                        class="btn admin-delete-btn"
+                        disabled={busy}
+                        on:click={() => void confirmDeletePuzzle(template)}
+                      >
+                        Delete Template
+                      </button>
+                    </div>
+                  </form>
+                </details>
+              {/each}
+            </div>
           </div>
         {/if}
       </article>

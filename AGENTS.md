@@ -10,6 +10,7 @@ It is a living map of the codebase and a maintenance contract to keep that map a
 3. Refactor when it makes code meaningfully less convoluted and easier to read.
 4. Do not leave dead branches, stale comments, or duplicated logic when a small cleanup is safe.
 5. Keep behavior unchanged unless the task explicitly asks for behavior changes.
+6. Update backend tests whenever implementing a new endpoint
 
 ## AGENTS.md Freshness Contract (Mandatory)
 
@@ -285,6 +286,7 @@ Defined in `backend/src/app.py`:
 - `frontend/src/components/AdminView.svelte`
   - Admin dashboard UI for account, puzzle-template, and live-match operations.
   - Supports: refresh dashboard, reset all ELO to 1000, set per-player ELO, delete player account, cancel active match, create/delete puzzle templates, filter/search puzzle templates, collapse/expand template cards, and edit template Python source.
+  - Player and active-match sections include client-side search inputs, and the players, active matches, and puzzle templates lists render inside capped internal scroll areas instead of expanding the whole page indefinitely.
   - New-template theme selector includes `AI` alongside existing themes.
   - Puzzle template cards keep prompt/hint metadata informational; source code is the only editable template input and uses an embedded CodeMirror Python editor.
 
@@ -372,6 +374,7 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 - Backend dev: `cd backend && uv sync && uv run yhack-backend`
 - Backend gunicorn: `cd backend && uv sync && ./src/run-gunicorn.sh`
 - Backend tests: `cd backend && uv run pytest`
+- Backend type checks: `cd backend && uvx 
 - Frontend dev: `cd frontend && npm install && npm run dev`
 - Frontend production build: `cd frontend && npm install && npm run build`
 - Frontend type checks: `cd frontend && npm run check`
