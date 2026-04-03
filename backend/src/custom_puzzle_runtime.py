@@ -1,33 +1,33 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 import json
 import random
-import sys
 from typing import Any, Sequence, cast
 
-from domain_types import Difficulty, JsonScalar, JsonValue
-from puzzle import FunctionContract, TestCase
-from puzzles.common import (
-    is_scalar,
-    no_shared_inputs,
-    require_arity,
-    require_int_sequence,
-    require_int_value,
-    require_intervals,
-    require_str_sequence,
-    require_str_value,
-    require_variable_int,
-    require_variable_str,
-    sample_pairs_shared_inputs,
-    sample_pairs_shared_json_inputs,
-    sample_pairs_shared_scalar_inputs,
-)
+Difficulty = str
+JsonScalar = str | int | float | bool
+JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 CUSTOM_DIFFICULTY: Difficulty = "easy"
 CUSTOM_HINT = "Infer the rule from the visible samples."
 CUSTOM_HIDDEN_TEST_COUNT = 10
 MAX_CASE_ATTEMPTS = 400
+
+
+@dataclass(frozen=True, slots=True)
+class TestCase:
+    inputs: tuple[Any, ...]
+    output: Any
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionContract:
+    parameter_types: tuple[str, ...]
+    return_type: str
+    parameter_names: tuple[str, ...] | None = None
+
 
 _FORBIDDEN_TOP_LEVEL_EXPORTS = {
     "template_key",
@@ -45,7 +45,6 @@ _REQUIRED_EXPORTS = {
     "shared_input_factory",
     "expected_output_for_primary_inputs",
 }
-_OPTIONAL_EXPORTS = {"contract_factory", "distinct_sample_outputs"}
 _FORBIDDEN_NAMES = {
     "__import__",
     "breakpoint",
@@ -103,52 +102,15 @@ _SAFE_BUILTINS: dict[str, Any] = {
     "tuple": tuple,
     "zip": zip,
 }
-_SANDBOX_GLOBALS: dict[str, Any] = {
-    "__builtins__": _SAFE_BUILTINS,
-    "Any": Any,
-    "Difficulty": Difficulty,
-    "FunctionContract": FunctionContract,
-    "JsonScalar": JsonScalar,
-    "Sequence": Sequence,
-    "TestCase": TestCase,
-    "CUSTOM_HINT": CUSTOM_HINT,
-    "CUSTOM_DIFFICULTY": CUSTOM_DIFFICULTY,
-    "is_scalar": is_scalar,
-    "no_shared_inputs": no_shared_inputs,
-    "random": random,
-    "require_arity": require_arity,
-    "require_int_sequence": require_int_sequence,
-    "require_int_value": require_int_value,
-    "require_intervals": require_intervals,
-    "require_str_sequence": require_str_sequence,
-    "require_str_value": require_str_value,
-    "require_variable_int": require_variable_int,
-    "require_variable_str": require_variable_str,
-    "sample_pairs_shared_inputs": sample_pairs_shared_inputs,
-    "sample_pairs_shared_json_inputs": sample_pairs_shared_json_inputs,
-    "sample_pairs_shared_scalar_inputs": sample_pairs_shared_scalar_inputs,
-}
+_SANDBOX_GLOBALS: dict[str, Any] = {}
 
 
-def main() -> None:
-    raw = sys.stdin.read()
-    if not raw:
-        _write_error("Missing payload")
-        return
-
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        _write_error("Invalid JSON payload")
-        return
-
+def run_payload(payload: object) -> dict[str, Any]:
     try:
         result = _handle(payload)
-    except Exception as exc:  # pragma: no cover - exercised via subprocess boundary
-        _write_error(str(exc))
-        return
-
-    sys.stdout.write(json.dumps({"ok": True, "result": result}))
+    except Exception as exc:  # pragma: no cover - exercised via snekbox boundary
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "result": result}
 
 
 def _handle(payload: object) -> dict[str, Any]:
@@ -317,7 +279,6 @@ def _generate_snapshot(exports: dict[str, Any], *, seed: int) -> dict[str, Any]:
         existing_cases=sample_tests,
     )
 
-    # Verify the exported expected_output helper matches visible and hidden cases.
     for case in [*sample_tests, *hidden_tests]:
         expected = exports["expected_output_for_primary_inputs"](
             variables=normalized_variables,
@@ -338,7 +299,9 @@ def _generate_snapshot(exports: dict[str, Any], *, seed: int) -> dict[str, Any]:
             "parameter_types": list(contract.parameter_types),
             "return_type": contract.return_type,
             "parameter_names": (
-                None if contract.parameter_names is None else list(contract.parameter_names)
+                None
+                if contract.parameter_names is None
+                else list(contract.parameter_names)
             ),
         },
         "shared_inputs": _json_value(list(shared_inputs)),
@@ -414,9 +377,133 @@ def _json_value(value: Any) -> JsonValue:
     raise ValueError(f"Unsupported value type: {type(value).__name__}")
 
 
-def _write_error(message: str) -> None:
-    sys.stdout.write(json.dumps({"ok": False, "error": message}))
+def _is_scalar(value: Any) -> bool:
+    return isinstance(value, (str, int, float, bool))
 
 
-if __name__ == "__main__":
-    main()
+def _require_arity(values: Sequence[Any], *, expected: int) -> None:
+    if len(values) != expected:
+        raise ValueError(f"inputs must contain exactly {expected} argument(s)")
+
+
+def _require_int_value(value: Any, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _require_str_value(value: Any, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _require_int_sequence(value: Any, *, label: str) -> list[int]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of integers")
+    parsed: list[int] = []
+    for index, item in enumerate(value):
+        parsed.append(_require_int_value(item, label=f"{label}[{index}]"))
+    return parsed
+
+
+def _require_str_sequence(value: Any, *, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of strings")
+    parsed: list[str] = []
+    for index, item in enumerate(value):
+        parsed.append(_require_str_value(item, label=f"{label}[{index}]"))
+    return parsed
+
+
+def _require_intervals(value: Any) -> list[tuple[int, int]]:
+    if not isinstance(value, list):
+        raise ValueError("intervals must be a list")
+    intervals: list[tuple[int, int]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(f"interval[{index}] must be a two-item list")
+        start = _require_int_value(item[0], label=f"interval[{index}][0]")
+        end = _require_int_value(item[1], label=f"interval[{index}][1]")
+        intervals.append((start, end))
+    return intervals
+
+
+def _require_variable_int(variables: dict[str, JsonScalar], *, name: str) -> int:
+    value = variables.get(name)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Puzzle variable {name} must be an integer")
+    return value
+
+
+def _require_variable_str(variables: dict[str, JsonScalar], *, name: str) -> str:
+    value = variables.get(name)
+    if not isinstance(value, str):
+        raise ValueError(f"Puzzle variable {name} must be a string")
+    return value
+
+
+def _sample_pairs_shared_inputs(
+    _params: dict[str, JsonScalar], sample_tests: list[TestCase]
+) -> tuple[Any, ...]:
+    pairs: list[tuple[str, str]] = []
+    for case in sample_tests:
+        if len(case.inputs) != 1:
+            raise ValueError("Expected one primary input for sample-pair context")
+        input_value = case.inputs[0]
+        if not isinstance(input_value, str) or not isinstance(case.output, str):
+            raise ValueError("Sample-pair context requires string-to-string cases")
+        pairs.append((input_value, case.output))
+    return (pairs,)
+
+
+def _sample_pairs_shared_scalar_inputs(
+    _params: dict[str, JsonScalar], sample_tests: list[TestCase]
+) -> tuple[Any, ...]:
+    pairs: list[list[JsonScalar]] = []
+    for case in sample_tests:
+        if len(case.inputs) != 1:
+            raise ValueError("Expected one primary input for sample-pair context")
+        input_value = case.inputs[0]
+        if not _is_scalar(input_value) or not _is_scalar(case.output):
+            raise ValueError("Sample-pair context requires scalar-to-scalar cases")
+        pairs.append([cast(JsonScalar, input_value), cast(JsonScalar, case.output)])
+    return (pairs,)
+
+
+def _sample_pairs_shared_json_inputs(
+    _params: dict[str, JsonScalar], sample_tests: list[TestCase]
+) -> tuple[Any, ...]:
+    pairs: list[tuple[Any, Any]] = []
+    for case in sample_tests:
+        if len(case.inputs) != 1:
+            raise ValueError("Expected one primary input for sample-pair context")
+        pairs.append((case.inputs[0], case.output))
+    return (pairs,)
+
+
+_SANDBOX_GLOBALS = {
+    "__builtins__": _SAFE_BUILTINS,
+    "Any": Any,
+    "Difficulty": Difficulty,
+    "FunctionContract": FunctionContract,
+    "JsonScalar": JsonScalar,
+    "Sequence": Sequence,
+    "TestCase": TestCase,
+    "CUSTOM_HINT": CUSTOM_HINT,
+    "CUSTOM_DIFFICULTY": CUSTOM_DIFFICULTY,
+    "is_scalar": _is_scalar,
+    "no_shared_inputs": lambda _params, _sample_tests: (),
+    "random": random,
+    "require_arity": _require_arity,
+    "require_int_sequence": _require_int_sequence,
+    "require_int_value": _require_int_value,
+    "require_intervals": _require_intervals,
+    "require_str_sequence": _require_str_sequence,
+    "require_str_value": _require_str_value,
+    "require_variable_int": _require_variable_int,
+    "require_variable_str": _require_variable_str,
+    "sample_pairs_shared_inputs": _sample_pairs_shared_inputs,
+    "sample_pairs_shared_json_inputs": _sample_pairs_shared_json_inputs,
+    "sample_pairs_shared_scalar_inputs": _sample_pairs_shared_scalar_inputs,
+}

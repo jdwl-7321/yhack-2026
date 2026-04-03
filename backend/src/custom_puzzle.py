@@ -4,11 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import subprocess
-import sys
 from typing import Any, Sequence, cast
 
 from puzzle import FunctionContract, PuzzleInstance, TestCase
+from snekbox import execute_python
 
 RUNTIME_TIMEOUT_SECONDS = 2.5
 CUSTOM_THEME = "Custom"
@@ -59,6 +58,7 @@ def expected_output_for_primary_inputs(
 """
 
 _RUNTIME_PATH = Path(__file__).with_name("custom_puzzle_runtime.py")
+_RUNTIME_SOURCE = _RUNTIME_PATH.read_text(encoding="utf-8")
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
@@ -117,32 +117,56 @@ def expected_output_for_custom_primary_inputs(
 
 
 def _run_runtime(payload: dict[str, Any]) -> dict[str, Any]:
-    completed = subprocess.run(
-        [sys.executable, str(_RUNTIME_PATH)],
-        input=json.dumps(payload),
-        text=True,
-        capture_output=True,
-        timeout=RUNTIME_TIMEOUT_SECONDS,
-        check=False,
-    )
-    stdout = completed.stdout.strip()
-    if not stdout:
-        raise ValueError("Custom puzzle validation failed without output")
-
     try:
-        decoded = json.loads(stdout)
-    except json.JSONDecodeError:
-        raise ValueError("Custom puzzle validation returned invalid output") from None
+        execution = execute_python(
+            _runtime_script(payload),
+            timeout_seconds=RUNTIME_TIMEOUT_SECONDS,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Custom puzzle sandbox request failed: {exc}") from None
+
+    if execution.returncode != 0:
+        if execution.returncode == 137:
+            raise ValueError("Custom puzzle validation exceeded sandbox limits")
+        detail = execution.stdout.strip()
+        if not detail:
+            detail = f"Sandbox returned code {execution.returncode}"
+        raise ValueError(f"Custom puzzle validation failed: {detail}")
+
+    decoded = _decode_json_line(execution.stdout)
+    if decoded is None:
+        raise ValueError("Custom puzzle validation failed without output")
 
     if not isinstance(decoded, dict):
         raise ValueError("Custom puzzle validation returned invalid payload")
-    if not decoded.get("ok"):
-        raise ValueError(str(decoded.get("error", "Custom puzzle validation failed")))
+    decoded_payload = cast(dict[str, object], decoded)
+    if not decoded_payload.get("ok"):
+        raise ValueError(
+            str(decoded_payload.get("error", "Custom puzzle validation failed"))
+        )
 
-    result = decoded.get("result")
+    result = decoded_payload.get("result")
     if not isinstance(result, dict):
         raise ValueError("Custom puzzle validation returned invalid result")
     return cast(dict[str, Any], result)
+
+
+def _runtime_script(payload: dict[str, Any]) -> str:
+    encoded_payload = json.dumps(payload, separators=(",", ":"))
+    return f"""{_RUNTIME_SOURCE}
+
+print(json.dumps(run_payload(json.loads({encoded_payload!r})), separators=(",", ":")))
+"""
+
+
+def _decode_json_line(stdout: str) -> object:
+    stripped_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    for line in reversed(stripped_lines):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _puzzle_instance_from_runtime_payload(
@@ -174,7 +198,9 @@ def _puzzle_instance_from_runtime_payload(
             "parameter_types": list(contract.parameter_types),
             "return_type": contract.return_type,
             "parameter_names": (
-                None if contract.parameter_names is None else list(contract.parameter_names)
+                None
+                if contract.parameter_names is None
+                else list(contract.parameter_names)
             ),
         },
         "shared_inputs": list(shared_inputs),

@@ -39,12 +39,14 @@ Ranked is the competitive mode. Players race on the same puzzle, solve order mat
 ### Backend
 
 ```bash
+docker run --ipc=none --privileged -p 8060:8060 ghcr.io/python-discord/snekbox
+
 cd backend
 uv sync
 uv run yhack-backend
 ```
 
-This starts the backend at `http://localhost:5000`.
+This starts the backend at `http://localhost:5000` and expects Snekbox at `http://localhost:8060/eval`.
 
 ### Frontend
 
@@ -73,7 +75,7 @@ npm run build
 ```bash
 cd backend
 uv sync
-NOUS_API_KEY="replace-me" ./src/run-gunicorn.sh
+NOUS_API_KEY="replace-me" YHACK_SNEKBOX_URL="http://127.0.0.1:8060/eval" ./src/run-gunicorn.sh
 ```
 
 By default:

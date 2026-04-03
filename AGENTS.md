@@ -93,13 +93,17 @@ Top-level layout:
 
 - `backend/src/custom_puzzle.py`
   - Main-process wrapper around the regular-user custom puzzle sandbox.
-  - Validates/synthesizes custom `PuzzleInstance`s by spawning `backend/src/custom_puzzle_runtime.py` instead of importing user-authored modules into the Flask process.
+  - Validates/synthesizes custom `PuzzleInstance`s by sending a self-contained runtime script to Snekbox (`YHACK_SNEKBOX_URL`, default `http://127.0.0.1:8060/eval`) instead of importing user-authored modules into the Flask process.
   - Provides default source boilerplate, slug helpers, internal template-key generation, and expected-output evaluation for live sample editing in custom matches.
 
 - `backend/src/custom_puzzle_runtime.py`
-  - Sandboxed subprocess entrypoint for regular-user puzzle source.
+  - Self-contained runtime module that is inlined into Snekbox requests for regular-user puzzle source operations.
   - Rejects imports/dunder access/unsafe builtins via AST validation, exposes only the allowed puzzle-definition surface, and verifies that generated cases agree with `expected_output_for_primary_inputs`.
   - Supports `validate`, `generate`, and `expected_output` operations used by the store layer.
+
+- `backend/src/snekbox.py`
+  - Shared Snekbox execution client used by both judge and custom puzzle runtime.
+  - Posts Python snippets to `/eval`, validates response shape, and supports a `local://` execution mode for tests.
 
 - `backend/src/config.py`
   - Backend app config for admin identity.
@@ -148,8 +152,8 @@ Top-level layout:
   - AI theme templates are split per difficulty (`ai_generated_easy_v1_puzzle.py`, `ai_generated_medium_v1_puzzle.py`, `ai_generated_hard_v1_puzzle.py`, `ai_generated_expert_v1_puzzle.py`) and use dynamic typed contracts (`arg1`/return can be `str`, `int`, or `list[int]`) while keeping `solution(arg1, samples)` and auto-built visible sample pairs.
 
 - `backend/src/judge.py`
-  - Sandbox-ish execution for user code using a child process per case (`multiprocessing`).
-  - Blocks dangerous builtins (`exec`, `eval`, `open`, `__import__`, etc.).
+  - Executes each sample/hidden case inside Snekbox by sending a runner harness script that compiles user code, validates `solution` arity, and normalizes outputs.
+  - Treats Snekbox resource-kill return code `137` as sandbox-limits exceeded.
   - Enforces function existence and arity (`solution(...)`).
   - Runs sample tests first, then hidden tests unless sample-only mode is requested.
   - Captures stdout and returns structured verdict with optional first failed hidden test details.
@@ -386,6 +390,9 @@ Defined in `backend/src/app.py`:
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
 
+- `backend/tests/conftest.py`
+  - Forces backend tests to use `YHACK_SNEKBOX_URL=local://` so test runs do not depend on an external Snekbox service.
+
 - `backend/tests/test_puzzle.py`
   - Puzzle schema validation, deterministic generation, cryptography template expectations, scaffold typing, and AI-theme contract/output checks (with NOUS disabled in-test via env).
 
@@ -424,6 +431,7 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 
 - Backend dev: `cd backend && uv sync && uv run yhack-backend`
 - Backend gunicorn: `cd backend && uv sync && ./src/run-gunicorn.sh`
+- Sandbox service (required outside tests/local:// mode): `docker run --ipc=none --privileged -p 8060:8060 ghcr.io/python-discord/snekbox`
 - Backend tests: `cd backend && uv run pytest`
 - Backend type checks: `cd backend && uvx ty check src tests`
 - Frontend dev: `cd frontend && npm install && npm run dev`
@@ -443,8 +451,9 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 - AI theme match-start calls can include an outbound NOUS request; if `NOUS_API_KEY` is missing/unreachable/invalid payload, generation falls back to built-in AI-theme copy and still produces solvable deterministic cases.
 - AI generation enforces per-user recent-topic avoidance; if you shrink operation diversity too far for a difficulty, AI match start can fail with "Unable to generate a novel AI puzzle topic for these players".
 - Sample editor input in the frontend supports `argN = <json>` lines (and accepts raw JSON-array format); outputs are recomputed server-side from the active puzzle rule.
-- Regular-user shared puzzle code is validated/executed only in the subprocess sandbox; if you change that surface, treat it as security-sensitive and update both `custom_puzzle.py` and `custom_puzzle_runtime.py`.
-- Judge security is constrained but still process-based Python execution; treat sandbox changes as security-sensitive.
+- Production code execution now depends on reachable Snekbox (`YHACK_SNEKBOX_URL`); if it is down/unreachable, submit/test/custom-puzzle operations fail with validation errors.
+- `local://` Snekbox mode is intentionally for test/dev fallback only and executes code with the local interpreter (not hardened isolation).
+- Regular-user shared puzzle code and submission judging both pass through Snekbox-backed harnesses; if you change these surfaces, treat them as security-sensitive.
 
 ## Documentation Discipline for Future Agents
 

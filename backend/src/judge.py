@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import builtins
-import contextlib
 from dataclasses import dataclass
-import io
-import inspect
-import multiprocessing as mp
+import json
 from time import perf_counter
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 
 from puzzle import (
     FunctionContract,
@@ -16,28 +12,9 @@ from puzzle import (
     format_value,
     invocation_inputs,
 )
+from snekbox import execute_python
 
 Verdict = Literal["accepted", "sample_failed", "wrong_answer", "error"]
-
-_BLOCKED_BUILTINS = {
-    "__import__",
-    "breakpoint",
-    "compile",
-    "eval",
-    "exec",
-    "globals",
-    "help",
-    "input",
-    "locals",
-    "open",
-    "vars",
-}
-
-_ALLOWED_BUILTINS = {
-    name: value
-    for name, value in builtins.__dict__.items()
-    if name not in _BLOCKED_BUILTINS
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,75 +164,137 @@ def _run_case(
     contract: FunctionContract,
     timeout_seconds: float,
 ) -> tuple[bool, Any, str, int, str]:
-    queue: mp.Queue[tuple[str, Any, str, int, str]] = mp.Queue(maxsize=1)
-    proc = mp.Process(
-        target=_worker,
-        args=(code, inputs, len(contract.parameter_types), queue),
-        daemon=True,
-    )
-    proc.start()
-    proc.join(timeout_seconds)
-
-    if proc.is_alive():
-        proc.terminate()
-        proc.join()
-        return (
-            False,
-            "",
-            f"Timeout after {timeout_seconds:.2f}s",
-            int(timeout_seconds * 1000),
-            "",
-        )
-
-    if queue.empty():
-        return (False, "", "Execution failed without output", 0, "")
-
-    status, output, error, elapsed_ms, stdout = queue.get()
-    return (status == "ok", output, error, elapsed_ms, stdout)
-
-
-def _worker(
-    code: str,
-    inputs: tuple[Any, ...],
-    expected_arity: int,
-    queue: mp.Queue[tuple[str, Any, str, int, str]],
-) -> None:
+    payload = {
+        "code": code,
+        "inputs": list(inputs),
+        "expected_arity": len(contract.parameter_types),
+    }
     started = perf_counter()
+    try:
+        execution = execute_python(
+            _runner_script(payload),
+            timeout_seconds=timeout_seconds,
+        )
+    except ValueError as exc:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        return (False, "", str(exc), elapsed_ms, "")
+    elapsed_ms = int((perf_counter() - started) * 1000)
+
+    if execution.returncode != 0:
+        if execution.returncode == 137:
+            return (
+                False,
+                "",
+                "Sandbox execution exceeded time or memory limits",
+                elapsed_ms,
+                "",
+            )
+        output = execution.stdout.strip()
+        detail = output or f"Sandbox returned code {execution.returncode}"
+        return (False, "", detail, elapsed_ms, "")
+
+    decoded = _decode_json_line(execution.stdout)
+    if not isinstance(decoded, dict):
+        return (False, "", "Sandbox returned invalid payload", elapsed_ms, "")
+    decoded_payload = cast(dict[str, object], decoded)
+
+    ok = bool(decoded_payload.get("ok"))
+    stdout = decoded_payload.get("stdout")
+    if not isinstance(stdout, str):
+        stdout = ""
+
+    if not ok:
+        error = decoded_payload.get("error")
+        if not isinstance(error, str) or not error:
+            error = "Execution failed"
+        return (False, "", error, elapsed_ms, stdout)
+
+    return (True, decoded_payload.get("output"), "", elapsed_ms, stdout)
+
+
+def _runner_script(payload: dict[str, Any]) -> str:
+    encoded_payload = json.dumps(payload, separators=(",", ":"))
+    return f"""
+import contextlib
+import inspect
+import io
+import json
+
+PAYLOAD = json.loads({encoded_payload!r})
+
+
+def _normalize_value(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (str, int, float)):
+        return value
+    if isinstance(value, tuple):
+        return [_normalize_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {{
+            str(key): _normalize_value(item)
+            for key, item in sorted(value.items(), key=lambda kv: str(kv[0]))
+        }}
+    if isinstance(value, set):
+        return sorted((_normalize_value(item) for item in value), key=repr)
+    raise TypeError(
+        "Unsupported return type from solution. "
+        "Use primitives, lists, tuples, dicts, or sets."
+    )
+
+
+def _run():
     stdout_capture = io.StringIO()
     try:
-        namespace: dict[str, object] = {"__builtins__": _ALLOWED_BUILTINS}
+        namespace = {{}}
         with contextlib.redirect_stdout(stdout_capture):
-            compiled = compile(code, "<submission>", "exec")
+            compiled = compile(PAYLOAD["code"], "<submission>", "exec")
             exec(compiled, namespace, namespace)
 
             solution_candidate = namespace.get("solution")
             if not callable(solution_candidate):
                 raise TypeError("Missing solution function")
-            solution = cast(Callable[..., object], solution_candidate)
 
-            signature = inspect.signature(solution)
+            signature = inspect.signature(solution_candidate)
+            expected_arity = PAYLOAD["expected_arity"]
             if len(signature.parameters) != expected_arity:
                 raise TypeError(
-                    f"solution must take exactly {expected_arity} argument"
-                    f"{'s' if expected_arity != 1 else ''}"
+                    f"solution must take exactly {{expected_arity}} argument"
+                    f"{{'s' if expected_arity != 1 else ''}}"
                 )
 
-            output = solution(*inputs)
+            output = solution_candidate(*PAYLOAD["inputs"])
             normalized_output = _normalize_value(output)
 
-        elapsed_ms = int((perf_counter() - started) * 1000)
-        queue.put(("ok", normalized_output, "", elapsed_ms, stdout_capture.getvalue()))
-    except BaseException as exc:  # noqa: BLE001
-        elapsed_ms = int((perf_counter() - started) * 1000)
-        queue.put(
-            (
-                "error",
-                "",
-                f"{type(exc).__name__}: {exc}",
-                elapsed_ms,
-                stdout_capture.getvalue(),
-            )
-        )
+        result = {{
+            "ok": True,
+            "output": normalized_output,
+            "stdout": stdout_capture.getvalue(),
+        }}
+    except BaseException as exc:
+        result = {{
+            "ok": False,
+            "error": f"{{type(exc).__name__}}: {{exc}}",
+            "stdout": stdout_capture.getvalue(),
+        }}
+
+    print(json.dumps(result, separators=(",", ":")))
+
+
+_run()
+"""
+
+
+def _decode_json_line(stdout: str) -> object:
+    stripped_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    for line in reversed(stripped_lines):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _values_equal(actual: Any, expected: Any) -> bool:
