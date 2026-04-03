@@ -7,7 +7,7 @@ import random
 import sqlite3
 import string
 from time import time
-from typing import Callable
+from typing import Callable, cast
 import uuid
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -79,7 +79,7 @@ def _json_object_or_default(
 ) -> dict[str, object]:
     if not isinstance(value, dict):
         return default_factory()
-    return _clone_json_object(value)
+    return _clone_json_object(cast(dict[str, object], value))
 
 
 def _json_object_from_db(

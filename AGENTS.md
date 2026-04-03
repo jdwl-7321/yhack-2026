@@ -374,7 +374,7 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 - Backend dev: `cd backend && uv sync && uv run yhack-backend`
 - Backend gunicorn: `cd backend && uv sync && ./src/run-gunicorn.sh`
 - Backend tests: `cd backend && uv run pytest`
-- Backend type checks: `cd backend && uvx 
+- Backend type checks: `cd backend && uvx ty check src tests`
 - Frontend dev: `cd frontend && npm install && npm run dev`
 - Frontend production build: `cd frontend && npm install && npm run build`
 - Frontend type checks: `cd frontend && npm run check`

@@ -948,30 +948,31 @@ def _normalize_shortcut_key(value: object, *, fallback: str) -> str:
 def _normalize_account_preferences(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("account_preferences must be an object")
+    preferences = cast(dict[str, object], value)
 
     defaults = default_account_preferences()
     normalized = default_account_preferences()
 
-    raw_appearance_mode = value.get("appearanceMode")
+    raw_appearance_mode = preferences.get("appearanceMode")
     if (
         isinstance(raw_appearance_mode, str)
         and raw_appearance_mode in VALID_APPEARANCE_MODES
     ):
         normalized["appearanceMode"] = raw_appearance_mode
 
-    raw_light_theme = value.get("lightEditorTheme")
+    raw_light_theme = preferences.get("lightEditorTheme")
     if isinstance(raw_light_theme, str):
         trimmed = raw_light_theme.strip()
         if trimmed:
             normalized["lightEditorTheme"] = trimmed
 
-    raw_dark_theme = value.get("darkEditorTheme")
+    raw_dark_theme = preferences.get("darkEditorTheme")
     if isinstance(raw_dark_theme, str):
         trimmed = raw_dark_theme.strip()
         if trimmed:
             normalized["darkEditorTheme"] = trimmed
 
-    raw_keybind_mode = value.get("keybindMode")
+    raw_keybind_mode = preferences.get("keybindMode")
     if isinstance(raw_keybind_mode, str) and raw_keybind_mode in VALID_KEYBIND_MODES:
         normalized["keybindMode"] = raw_keybind_mode
 
@@ -979,11 +980,12 @@ def _normalize_account_preferences(value: object) -> dict[str, object]:
     if not isinstance(shortcut_defaults, dict):
         shortcut_defaults = {action: "" for action in VALID_SHORTCUT_ACTIONS}
     shortcuts = dict(shortcut_defaults)
-    raw_shortcuts = value.get("customShortcuts")
+    raw_shortcuts = preferences.get("customShortcuts")
     if isinstance(raw_shortcuts, dict):
+        shortcut_values = cast(dict[str, object], raw_shortcuts)
         for action in VALID_SHORTCUT_ACTIONS:
             shortcuts[action] = _normalize_shortcut_key(
-                raw_shortcuts.get(action),
+                shortcut_values.get(action),
                 fallback=str(shortcuts[action]),
             )
 
@@ -991,14 +993,14 @@ def _normalize_account_preferences(value: object) -> dict[str, object]:
         raise ValueError("custom shortcut keys must be unique")
     normalized["customShortcuts"] = shortcuts
 
-    raw_font_family = value.get("editorFontFamily")
+    raw_font_family = preferences.get("editorFontFamily")
     if (
         isinstance(raw_font_family, str)
         and raw_font_family in VALID_EDITOR_FONT_FAMILIES
     ):
         normalized["editorFontFamily"] = raw_font_family
 
-    raw_font_size = value.get("editorFontSize")
+    raw_font_size = preferences.get("editorFontSize")
     if isinstance(raw_font_size, (int, float, str)) and not isinstance(
         raw_font_size, bool
     ):
@@ -1014,6 +1016,7 @@ def _normalize_account_preferences(value: object) -> dict[str, object]:
 def _normalize_account_stats(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("account_stats must be an object")
+    stats = cast(dict[str, object], value)
 
     defaults = default_account_stats()
     normalized = default_account_stats()
@@ -1030,7 +1033,7 @@ def _normalize_account_stats(value: object) -> dict[str, object]:
         "bestHiddenPassed",
     )
     for key in counter_keys:
-        raw_count = value.get(key)
+        raw_count = stats.get(key)
         if isinstance(raw_count, (int, float, str)) and not isinstance(raw_count, bool):
             try:
                 normalized[key] = max(0, int(raw_count))
@@ -1038,20 +1041,21 @@ def _normalize_account_stats(value: object) -> dict[str, object]:
                 normalized[key] = defaults[key]
 
     recent_runs: list[dict[str, object]] = []
-    raw_recent_runs = value.get("recentRuns")
+    raw_recent_runs = stats.get("recentRuns")
     if isinstance(raw_recent_runs, list):
         for item in raw_recent_runs:
             if not isinstance(item, dict):
                 continue
+            run = cast(dict[str, object], item)
 
-            match_id = item.get("match_id")
-            mode = item.get("mode")
-            theme = item.get("theme")
-            difficulty = item.get("difficulty")
-            outcome = item.get("outcome")
-            hidden_passed = item.get("hidden_passed")
-            rating_delta = item.get("rating_delta")
-            at = item.get("at")
+            match_id = run.get("match_id")
+            mode = run.get("mode")
+            theme = run.get("theme")
+            difficulty = run.get("difficulty")
+            outcome = run.get("outcome")
+            hidden_passed = run.get("hidden_passed")
+            rating_delta = run.get("rating_delta")
+            at = run.get("at")
 
             if not isinstance(match_id, str) or not match_id.strip():
                 continue
@@ -1096,7 +1100,7 @@ def _normalize_account_stats(value: object) -> dict[str, object]:
     normalized["recentRuns"] = recent_runs
 
     recorded_match_ids: list[str] = []
-    raw_recorded_match_ids = value.get("recordedMatchIds")
+    raw_recorded_match_ids = stats.get("recordedMatchIds")
     if isinstance(raw_recorded_match_ids, list):
         for item in raw_recorded_match_ids:
             if not isinstance(item, str):
