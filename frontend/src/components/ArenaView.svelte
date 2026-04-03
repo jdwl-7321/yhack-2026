@@ -49,12 +49,15 @@
   export let forfeit: () => void | Promise<void> = () => {};
   export let addPartyTime: () => void | Promise<void> = () => {};
   export let canAddPartyTime = false;
+  export let skipCollectionPuzzle: () => void | Promise<void> = () => {};
+  export let canSkipCollectionPuzzle = false;
   export let testSamples: () => void | Promise<void> = () => {};
   export let submit: () => void | Promise<void> = () => {};
   export let handleEditorInput: (event: Event) => void = () => {};
   export let handleEditorKeydown: (event: KeyboardEvent) => void = () => {};
   export let syncEditorScroll: (event: Event) => void = () => {};
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
+  export let puzzleSourceLabel: (source: MatchPayload["puzzle_source"] | null | undefined) => string = () => "";
 
   let sampleInputDrafts: string[] = [];
   let sampleDraftMatchId: string | null = null;
@@ -242,14 +245,18 @@
       <div class="group">
         <span
           ><i class="fas fa-brain" aria-hidden="true"></i>
-          {match.theme}</span
+          {puzzleSourceLabel(match.puzzle_source)}</span
         >
       </div>
       <div class="divider"></div>
       <div class="group">
         <span
           ><i class="fas fa-layer-group" aria-hidden="true"></i>
-          {match.difficulty}</span
+          {match.puzzle_source.kind === "catalog"
+            ? match.difficulty
+            : match.puzzle_source.kind === "shared_collection"
+              ? `${match.puzzle_source.run_mode ?? "fixed"} run`
+              : "custom"}</span
         >
       </div>
       <div class="divider"></div>
@@ -265,6 +272,16 @@
             disabled={busy || actionLocked}
           >
             +5 min
+          </button>
+        {/if}
+        {#if canSkipCollectionPuzzle}
+          <button
+            type="button"
+            class="btn timer-extend-btn"
+            on:click={skipCollectionPuzzle}
+            disabled={busy || actionLocked}
+          >
+            Skip to next
           </button>
         {/if}
       </div>

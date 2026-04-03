@@ -7,12 +7,21 @@ import random
 import sqlite3
 import string
 from time import time
-from typing import Callable, cast
+from typing import Callable, Literal, cast
 import uuid
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from constants import THEMES
 from config import is_admin_username
+from custom_puzzle import (
+    CUSTOM_DIFFICULTY,
+    CUSTOM_THEME,
+    DEFAULT_CUSTOM_PUZZLE_SOURCE,
+    build_custom_puzzle_instance,
+    expected_output_for_custom_primary_inputs,
+    slugify_title,
+    validate_custom_puzzle_source,
+)
 from judge import JudgeResult, judge_submission
 from puzzle import (
     HardcodedPuzzleTemplate,
@@ -33,6 +42,9 @@ from rating import (
     resolve_mode,
 )
 from domain_types import Difficulty, Mode
+
+PuzzleSelectionKind = Literal["catalog", "shared_puzzle", "shared_collection"]
+CollectionRunMode = Literal["fixed", "random"]
 
 
 def default_account_preferences() -> dict[str, object]:
@@ -111,12 +123,80 @@ class User:
     account_stats: dict[str, object] = field(default_factory=default_account_stats)
 
 
+@dataclass(frozen=True, slots=True)
+class CatalogPuzzleSelection:
+    kind: Literal["catalog"]
+    theme: str
+    difficulty: Difficulty
+
+
+@dataclass(frozen=True, slots=True)
+class SharedPuzzleSelection:
+    kind: Literal["shared_puzzle"]
+    puzzle_id: str
+    puzzle_slug: str
+    owner_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class SharedCollectionSelection:
+    kind: Literal["shared_collection"]
+    collection_id: str
+    collection_slug: str
+    owner_id: str
+    run_mode: CollectionRunMode
+
+
+PuzzleSelection = (
+    CatalogPuzzleSelection | SharedPuzzleSelection | SharedCollectionSelection
+)
+
+
+@dataclass(slots=True)
+class UserPuzzle:
+    id: str
+    owner_id: str
+    title: str
+    slug: str
+    source_code: str
+    created_at: float
+    updated_at: float
+
+
+@dataclass(slots=True)
+class UserCollection:
+    id: str
+    owner_id: str
+    title: str
+    slug: str
+    puzzle_ids: list[str]
+    created_at: float
+    updated_at: float
+
+
+@dataclass(slots=True)
+class CollectionRun:
+    collection_id: str
+    current_puzzle_id: str | None
+    completed_puzzle_ids: list[str] = field(default_factory=list)
+    skipped_puzzle_ids: list[str] = field(default_factory=list)
+    remaining_puzzle_ids: list[str] = field(default_factory=list)
+    run_mode: CollectionRunMode = "fixed"
+
+
 @dataclass(slots=True)
 class PartySettings:
     theme: str
     difficulty: Difficulty
     time_limit_seconds: int
     seed: int | None = None
+    puzzle_selection: PuzzleSelection = field(
+        default_factory=lambda: CatalogPuzzleSelection(
+            kind="catalog",
+            theme=THEMES[0],
+            difficulty="easy",
+        )
+    )
 
 
 @dataclass(slots=True)
@@ -128,6 +208,7 @@ class Party:
     member_limit: int
     active_match_id: str | None = None
     members: list[str] = field(default_factory=list)
+    collection_run: CollectionRun | None = None
 
 
 @dataclass(slots=True)
@@ -157,6 +238,12 @@ class Match:
     rating_deltas: dict[str, int] | None = None
     finished: bool = False
     locked: bool = False
+    puzzle_source: dict[str, object] = field(default_factory=dict)
+    custom_source_code: str | None = None
+    custom_puzzle_id: str | None = None
+    collection_id: str | None = None
+    collection_puzzle_id: str | None = None
+    skipped: bool = False
 
 
 @dataclass(slots=True)
@@ -176,6 +263,10 @@ class MemoryStore:
     def __init__(self) -> None:
         self.users: dict[str, User] = {}
         self.user_name_index: dict[str, str] = {}
+        self.user_puzzles: dict[str, UserPuzzle] = {}
+        self.user_puzzle_slug_index: dict[str, str] = {}
+        self.user_collections: dict[str, UserCollection] = {}
+        self.user_collection_slug_index: dict[str, str] = {}
         self.parties: dict[str, Party] = {}
         self.matches: dict[str, Match] = {}
         self.ranked_queue: dict[str, RankedQueueEntry] = {}
@@ -297,6 +388,147 @@ class MemoryStore:
         )
         return user
 
+    def list_user_puzzles(self, *, owner_id: str) -> list[UserPuzzle]:
+        self._require_user(owner_id)
+        return sorted(
+            (
+                puzzle
+                for puzzle in self.user_puzzles.values()
+                if puzzle.owner_id == owner_id
+            ),
+            key=lambda puzzle: (-puzzle.updated_at, puzzle.title.casefold(), puzzle.id),
+        )
+
+    def create_user_puzzle(
+        self,
+        *,
+        owner_id: str,
+        title: str,
+        source_code: str | None = None,
+    ) -> UserPuzzle:
+        self._require_user_content_owner(owner_id)
+        normalized_title = self._normalize_content_title(title, label="Puzzle title")
+        resolved_source = (
+            source_code if isinstance(source_code, str) and source_code.strip() else DEFAULT_CUSTOM_PUZZLE_SOURCE
+        )
+        validate_custom_puzzle_source(source_code=resolved_source)
+        now = time()
+        puzzle = UserPuzzle(
+            id=f"up_{uuid.uuid4().hex[:10]}",
+            owner_id=owner_id,
+            title=normalized_title,
+            slug=self._new_content_slug(normalized_title, existing=self.user_puzzle_slug_index),
+            source_code=resolved_source,
+            created_at=now,
+            updated_at=now,
+        )
+        self.user_puzzles[puzzle.id] = puzzle
+        self.user_puzzle_slug_index[puzzle.slug] = puzzle.id
+        return puzzle
+
+    def update_user_puzzle(
+        self,
+        *,
+        owner_id: str,
+        slug: str,
+        title: str,
+        source_code: str,
+    ) -> UserPuzzle:
+        self._require_user_content_owner(owner_id)
+        puzzle = self.get_user_puzzle_by_slug(slug=slug)
+        if puzzle.owner_id != owner_id:
+            raise ValueError("Only the owner can edit this puzzle")
+        normalized_title = self._normalize_content_title(title, label="Puzzle title")
+        if not source_code.strip():
+            raise ValueError("source_code is required")
+        validate_custom_puzzle_source(source_code=source_code)
+        puzzle.title = normalized_title
+        puzzle.source_code = source_code
+        puzzle.updated_at = time()
+        return puzzle
+
+    def get_user_puzzle_by_slug(self, *, slug: str) -> UserPuzzle:
+        normalized_slug = self._normalize_slug_lookup(slug)
+        puzzle_id = self.user_puzzle_slug_index.get(normalized_slug)
+        if puzzle_id is None:
+            raise ValueError("Puzzle not found")
+        return self.user_puzzles[puzzle_id]
+
+    def list_user_collections(self, *, owner_id: str) -> list[UserCollection]:
+        self._require_user(owner_id)
+        return sorted(
+            (
+                collection
+                for collection in self.user_collections.values()
+                if collection.owner_id == owner_id
+            ),
+            key=lambda collection: (
+                -collection.updated_at,
+                collection.title.casefold(),
+                collection.id,
+            ),
+        )
+
+    def create_user_collection(
+        self,
+        *,
+        owner_id: str,
+        title: str,
+        puzzle_ids: list[str],
+    ) -> UserCollection:
+        self._require_user_content_owner(owner_id)
+        normalized_title = self._normalize_content_title(
+            title,
+            label="Collection title",
+        )
+        resolved_puzzle_ids = self._validate_owned_collection_puzzles(
+            owner_id=owner_id,
+            puzzle_ids=puzzle_ids,
+        )
+        now = time()
+        collection = UserCollection(
+            id=f"uc_{uuid.uuid4().hex[:10]}",
+            owner_id=owner_id,
+            title=normalized_title,
+            slug=self._new_content_slug(
+                normalized_title,
+                existing=self.user_collection_slug_index,
+            ),
+            puzzle_ids=resolved_puzzle_ids,
+            created_at=now,
+            updated_at=now,
+        )
+        self.user_collections[collection.id] = collection
+        self.user_collection_slug_index[collection.slug] = collection.id
+        return collection
+
+    def update_user_collection(
+        self,
+        *,
+        owner_id: str,
+        slug: str,
+        title: str,
+        puzzle_ids: list[str],
+    ) -> UserCollection:
+        self._require_user_content_owner(owner_id)
+        collection = self.get_user_collection_by_slug(slug=slug)
+        if collection.owner_id != owner_id:
+            raise ValueError("Only the owner can edit this collection")
+        collection.title = self._normalize_content_title(title, label="Collection title")
+        collection.puzzle_ids = self._validate_owned_collection_puzzles(
+            owner_id=owner_id,
+            puzzle_ids=puzzle_ids,
+        )
+        collection.updated_at = time()
+        return collection
+
+    def get_user_collection_by_slug(self, *, slug: str) -> UserCollection:
+        normalized_slug = self._normalize_slug_lookup(slug)
+        collection_id = self.user_collection_slug_index.get(normalized_slug)
+        if collection_id is None:
+            raise ValueError("Collection not found")
+        return self.user_collections[collection_id]
+
     def create_party(
         self,
         *,
@@ -305,14 +537,22 @@ class MemoryStore:
         theme: str,
         difficulty: Difficulty,
         time_limit_seconds: int,
+        puzzle_selection: PuzzleSelection | None = None,
         member_limit: int | None = None,
         seed: int | None = None,
     ) -> Party:
         if leader_id not in self.users:
             raise ValueError("Leader user does not exist")
-        self._validate_party_settings(
+        resolved_selection = puzzle_selection or CatalogPuzzleSelection(
+            kind="catalog",
             theme=theme,
             difficulty=difficulty,
+        )
+        selection_theme, selection_difficulty = self._selection_theme_and_difficulty(
+            resolved_selection
+        )
+        self._validate_party_settings(
+            puzzle_selection=resolved_selection,
             time_limit_seconds=time_limit_seconds,
         )
 
@@ -327,10 +567,11 @@ class MemoryStore:
             mode=mode,
             leader_id=leader_id,
             settings=PartySettings(
-                theme=theme,
-                difficulty=difficulty,
+                theme=selection_theme,
+                difficulty=selection_difficulty,
                 time_limit_seconds=time_limit_seconds,
                 seed=seed,
+                puzzle_selection=resolved_selection,
             ),
             member_limit=resolved_member_limit,
             members=[leader_id],
@@ -393,21 +634,32 @@ class MemoryStore:
         theme: str,
         difficulty: Difficulty,
         time_limit_seconds: int,
+        puzzle_selection: PuzzleSelection | None = None,
         seed: int | None = None,
     ) -> Party:
         party = self._require_party(code)
         self._require_party_leader(party, leader_id)
 
-        self._validate_party_settings(
+        resolved_selection = puzzle_selection or CatalogPuzzleSelection(
+            kind="catalog",
             theme=theme,
             difficulty=difficulty,
+        )
+        selection_theme, selection_difficulty = self._selection_theme_and_difficulty(
+            resolved_selection
+        )
+        self._validate_party_settings(
+            puzzle_selection=resolved_selection,
             time_limit_seconds=time_limit_seconds,
         )
 
-        party.settings.theme = theme
-        party.settings.difficulty = difficulty
+        party.settings.theme = selection_theme
+        party.settings.difficulty = selection_difficulty
         party.settings.time_limit_seconds = time_limit_seconds
         party.settings.seed = seed
+        if party.settings.puzzle_selection != resolved_selection:
+            party.collection_run = None
+        party.settings.puzzle_selection = resolved_selection
         return party
 
     def add_party_time(
@@ -479,10 +731,12 @@ class MemoryStore:
                 difficulty=party.settings.difficulty,
                 time_limit_seconds=party.settings.time_limit_seconds,
                 seed=party.settings.seed,
+                puzzle_selection=party.settings.puzzle_selection,
             ),
             member_limit=party.member_limit,
             active_match_id=None,
             members=list(party.members),
+            collection_run=None,
         )
         self.parties.pop(code, None)
         return closed_party, locked_match
@@ -496,6 +750,7 @@ class MemoryStore:
         theme: str | None = None,
         difficulty: Difficulty | None = None,
         time_limit_seconds: int | None = None,
+        puzzle_selection: PuzzleSelection | None = None,
     ) -> Match:
         party = self._require_party(code)
         if requester_id is not None and requester_id != party.leader_id:
@@ -518,6 +773,7 @@ class MemoryStore:
                 theme is not None
                 or difficulty is not None
                 or time_limit_seconds is not None
+                or puzzle_selection is not None
             ):
                 raise ValueError("Ranked matches do not support custom settings")
             ranked_template_override = self._ranked_template_override_for_members(
@@ -529,35 +785,72 @@ class MemoryStore:
             match_time_limit_seconds = 3600
         else:
             ranked_template_override = None
-            match_theme = theme if theme is not None else party.settings.theme
-            match_difficulty = (
-                difficulty if difficulty is not None else party.settings.difficulty
-            )
             match_time_limit_seconds = (
                 time_limit_seconds
                 if time_limit_seconds is not None
                 else party.settings.time_limit_seconds
             )
+            match_selection = self._selection_for_match_start(
+                party=party,
+                puzzle_selection=puzzle_selection,
+                theme=theme,
+                difficulty=difficulty,
+            )
             self._validate_party_settings(
-                theme=match_theme,
-                difficulty=match_difficulty,
+                puzzle_selection=match_selection,
                 time_limit_seconds=match_time_limit_seconds,
+            )
+            match_theme, match_difficulty = self._selection_theme_and_difficulty(
+                match_selection
             )
             party.settings.theme = match_theme
             party.settings.difficulty = match_difficulty
             party.settings.time_limit_seconds = match_time_limit_seconds
+            if party.settings.puzzle_selection != match_selection:
+                party.collection_run = None
+            party.settings.puzzle_selection = match_selection
 
         match_seed = seed if seed is not None else random.randint(1, 10**9)
-        puzzle = self._generate_match_puzzle(
-            theme=match_theme,
-            difficulty=match_difficulty,
-            seed=match_seed,
-            participant_user_ids=[member.id for member in members],
-            forced_template_key=ranked_template_override,
-        )
+        puzzle_source: dict[str, object]
+        custom_source_code: str | None = None
+        custom_puzzle_id: str | None = None
+        collection_id: str | None = None
+        collection_puzzle_id: str | None = None
+        if effective_mode == "ranked":
+            puzzle = self._generate_match_puzzle(
+                theme=match_theme,
+                difficulty=match_difficulty,
+                seed=match_seed,
+                participant_user_ids=[member.id for member in members],
+                forced_template_key=ranked_template_override,
+            )
+            puzzle_source = self.describe_catalog_source(
+                theme=match_theme,
+                difficulty=match_difficulty,
+            )
+        else:
+            (
+                puzzle,
+                puzzle_source,
+                custom_source_code,
+                custom_puzzle_id,
+                collection_id,
+                collection_puzzle_id,
+            ) = self._generate_party_match_content(
+                party=party,
+                selection=party.settings.puzzle_selection,
+                seed=match_seed,
+                participant_user_ids=[member.id for member in members],
+            )
+            match_theme = puzzle.theme
+            match_difficulty = puzzle.difficulty
         if ranked_template_override is not None:
             match_theme = puzzle.theme
             match_difficulty = puzzle.difficulty
+            puzzle_source = self.describe_catalog_source(
+                theme=match_theme,
+                difficulty=match_difficulty,
+            )
 
         match = Match(
             id=f"m_{uuid.uuid4().hex[:10]}",
@@ -572,11 +865,66 @@ class MemoryStore:
                 user.id: MatchPlayer(user_id=user.id, hint_level=1, hints_used={1})
                 for user in members
             },
+            puzzle_source=puzzle_source,
+            custom_source_code=custom_source_code,
+            custom_puzzle_id=custom_puzzle_id,
+            collection_id=collection_id,
+            collection_puzzle_id=collection_puzzle_id,
         )
 
         self.matches[match.id] = match
         party.active_match_id = match.id
         return match
+
+    def skip_collection_match(
+        self,
+        *,
+        match_id: str,
+        leader_id: str,
+        seed: int | None = None,
+    ) -> tuple[Match, Match]:
+        match = self._require_match(match_id)
+        if match.mode not in {"casual", "zen"}:
+            raise ValueError("Collection skip is only available in casual or zen matches")
+        if match.finished or match.locked:
+            raise ValueError("This match can no longer be skipped")
+        if match.collection_id is None or match.collection_puzzle_id is None:
+            raise ValueError("This match is not part of a collection run")
+
+        party = self._require_party(match.party_code)
+        self._require_party_leader(party, leader_id)
+        run = party.collection_run
+        if run is None or run.collection_id != match.collection_id:
+            raise ValueError("This party has no active collection run")
+        if run.current_puzzle_id != match.collection_puzzle_id:
+            raise ValueError("Collection run state is out of sync")
+        if not run.remaining_puzzle_ids:
+            raise ValueError("No remaining puzzle exists in this collection run")
+
+        next_puzzle_id = self._choose_next_collection_puzzle(
+            run=run,
+            seed=seed if seed is not None else party.settings.seed,
+        )
+        if next_puzzle_id is None:
+            raise ValueError("No remaining puzzle exists in this collection run")
+
+        run.skipped_puzzle_ids.append(match.collection_puzzle_id)
+        run.current_puzzle_id = next_puzzle_id
+        run.remaining_puzzle_ids = [
+            puzzle_id for puzzle_id in run.remaining_puzzle_ids if puzzle_id != next_puzzle_id
+        ]
+
+        match.finished = True
+        match.locked = True
+        match.rating_deltas = {}
+        match.skipped = True
+
+        next_match = self.start_match(
+            code=party.code,
+            requester_id=leader_id,
+            seed=seed,
+        )
+        return match, next_match
 
     def join_ranked_queue(
         self,
@@ -801,6 +1149,7 @@ class MemoryStore:
         match.finished = True
         if match.mode != "ranked":
             match.rating_deltas = {}
+            self._mark_collection_match_completed(match)
             return {}
 
         now = time()
@@ -827,6 +1176,7 @@ class MemoryStore:
             self.ranked_queue.pop(user_id, None)
 
         match.rating_deltas = deltas
+        self._mark_collection_match_completed(match)
         return deltas
 
     def standings(self, *, match_id: str) -> list[dict[str, object]]:
@@ -949,6 +1299,16 @@ class MemoryStore:
         self, *, user_id: str
     ) -> tuple[User, list[Match], list[Party]]:
         user = self._require_user(user_id)
+        owned_puzzle_ids = [
+            puzzle.id
+            for puzzle in self.user_puzzles.values()
+            if puzzle.owner_id == user_id
+        ]
+        owned_collection_ids = [
+            collection.id
+            for collection in self.user_collections.values()
+            if collection.owner_id == user_id
+        ]
 
         match_ids_to_cancel = [
             match.id
@@ -980,6 +1340,35 @@ class MemoryStore:
                 if active_match is None or active_match.finished:
                     party.active_match_id = None
 
+            selection = party.settings.puzzle_selection
+            should_reset_selection = False
+            if selection.kind == "shared_puzzle" and cast(
+                SharedPuzzleSelection, selection
+            ).owner_id == user_id:
+                should_reset_selection = True
+            if selection.kind == "shared_collection" and cast(
+                SharedCollectionSelection, selection
+            ).owner_id == user_id:
+                should_reset_selection = True
+            if party.collection_run is not None and party.collection_run.collection_id in owned_collection_ids:
+                party.collection_run = None
+            if should_reset_selection:
+                fallback_theme = (
+                    party.settings.theme if party.settings.theme in THEMES else THEMES[0]
+                )
+                fallback_difficulty = (
+                    party.settings.difficulty
+                    if party.settings.difficulty in {"easy", "medium", "hard", "expert"}
+                    else cast(Difficulty, "easy")
+                )
+                party.settings.puzzle_selection = CatalogPuzzleSelection(
+                    kind="catalog",
+                    theme=fallback_theme,
+                    difficulty=fallback_difficulty,
+                )
+                party.settings.theme = fallback_theme
+                party.settings.difficulty = fallback_difficulty
+
             updated_parties.append(party)
 
         for match in self.matches.values():
@@ -990,6 +1379,11 @@ class MemoryStore:
                 match.rating_deltas.pop(user_id, None)
 
         self.ranked_queue.pop(user_id, None)
+        self._delete_owned_custom_content(
+            owner_id=user_id,
+            owned_puzzle_ids=owned_puzzle_ids,
+            owned_collection_ids=owned_collection_ids,
+        )
         self._remove_user_name_index(user_id=user_id)
         self.users.pop(user_id, None)
         return user, cancelled_matches, updated_parties
@@ -1018,16 +1412,354 @@ class MemoryStore:
     @staticmethod
     def _validate_party_settings(
         *,
-        theme: str,
-        difficulty: Difficulty,
+        puzzle_selection: PuzzleSelection,
         time_limit_seconds: int,
     ) -> None:
-        if theme not in THEMES:
-            raise ValueError("Theme must be from the hardcoded catalog")
-        if difficulty not in {"easy", "medium", "hard", "expert"}:
-            raise ValueError("Invalid difficulty")
         if time_limit_seconds <= 0:
             raise ValueError("time_limit_seconds must be positive")
+        if puzzle_selection.kind == "catalog":
+            catalog = cast(CatalogPuzzleSelection, puzzle_selection)
+            if catalog.theme not in THEMES:
+                raise ValueError("Theme must be from the hardcoded catalog")
+            if catalog.difficulty not in {"easy", "medium", "hard", "expert"}:
+                raise ValueError("Invalid difficulty")
+            return
+        if puzzle_selection.kind == "shared_collection":
+            collection = cast(SharedCollectionSelection, puzzle_selection)
+            if collection.run_mode not in {"fixed", "random"}:
+                raise ValueError("run_mode must be fixed or random")
+
+    def _selection_for_match_start(
+        self,
+        *,
+        party: Party,
+        puzzle_selection: PuzzleSelection | None,
+        theme: str | None,
+        difficulty: Difficulty | None,
+    ) -> PuzzleSelection:
+        if puzzle_selection is not None:
+            return puzzle_selection
+        if theme is not None or difficulty is not None:
+            return CatalogPuzzleSelection(
+                kind="catalog",
+                theme=theme if theme is not None else party.settings.theme,
+                difficulty=(
+                    difficulty if difficulty is not None else party.settings.difficulty
+                ),
+            )
+        return party.settings.puzzle_selection
+
+    @staticmethod
+    def _selection_theme_and_difficulty(
+        selection: PuzzleSelection,
+    ) -> tuple[str, Difficulty]:
+        if selection.kind == "catalog":
+            catalog = cast(CatalogPuzzleSelection, selection)
+            return catalog.theme, catalog.difficulty
+        return CUSTOM_THEME, cast(Difficulty, CUSTOM_DIFFICULTY)
+
+    def describe_catalog_source(
+        self, *, theme: str, difficulty: Difficulty
+    ) -> dict[str, object]:
+        return {
+            "kind": "catalog",
+            "title": f"{theme} · {difficulty.upper()}",
+            "theme": theme,
+            "difficulty": difficulty,
+            "slug": None,
+            "owner_id": None,
+            "owner_name": None,
+            "share_path": None,
+            "run_mode": None,
+            "collection_progress": None,
+            "current_puzzle_title": None,
+            "current_puzzle_slug": None,
+        }
+
+    def describe_puzzle_source(
+        self,
+        *,
+        selection: PuzzleSelection,
+        collection_run: CollectionRun | None = None,
+        current_puzzle_id: str | None = None,
+    ) -> dict[str, object]:
+        if selection.kind == "catalog":
+            catalog = cast(CatalogPuzzleSelection, selection)
+            return self.describe_catalog_source(
+                theme=catalog.theme,
+                difficulty=catalog.difficulty,
+            )
+
+        if selection.kind == "shared_puzzle":
+            puzzle_selection = cast(SharedPuzzleSelection, selection)
+            owner = self._require_user(puzzle_selection.owner_id)
+            puzzle = self._require_user_puzzle(puzzle_selection.puzzle_id)
+            return {
+                "kind": puzzle_selection.kind,
+                "title": puzzle.title,
+                "theme": CUSTOM_THEME,
+                "difficulty": CUSTOM_DIFFICULTY,
+                "slug": puzzle.slug,
+                "owner_id": owner.id,
+                "owner_name": owner.name,
+                "share_path": f"/puzzles/{puzzle.slug}",
+                "run_mode": None,
+                "collection_progress": None,
+                "current_puzzle_title": None,
+                "current_puzzle_slug": None,
+            }
+
+        collection_selection = cast(SharedCollectionSelection, selection)
+        owner = self._require_user(collection_selection.owner_id)
+        collection = self._require_user_collection(collection_selection.collection_id)
+        progress = None
+        current_title: str | None = None
+        current_slug: str | None = None
+        if current_puzzle_id is not None:
+            current_puzzle = self._require_user_puzzle(current_puzzle_id)
+            current_title = current_puzzle.title
+            current_slug = current_puzzle.slug
+        if collection_run is not None and collection_run.collection_id == collection.id:
+            progress = {
+                "completed_puzzle_ids": list(collection_run.completed_puzzle_ids),
+                "skipped_puzzle_ids": list(collection_run.skipped_puzzle_ids),
+                "remaining_puzzle_ids": list(collection_run.remaining_puzzle_ids),
+                "current_puzzle_id": collection_run.current_puzzle_id,
+                "total_puzzles": len(collection.puzzle_ids),
+            }
+        return {
+            "kind": selection.kind,
+            "title": collection.title,
+            "theme": CUSTOM_THEME,
+            "difficulty": CUSTOM_DIFFICULTY,
+            "slug": collection.slug,
+            "owner_id": owner.id,
+            "owner_name": owner.name,
+            "share_path": f"/collections/{collection.slug}",
+            "run_mode": collection_selection.run_mode,
+            "collection_progress": progress,
+            "current_puzzle_title": current_title,
+            "current_puzzle_slug": current_slug,
+        }
+
+    def _generate_party_match_content(
+        self,
+        *,
+        party: Party,
+        selection: PuzzleSelection,
+        seed: int,
+        participant_user_ids: list[str],
+    ) -> tuple[
+        PuzzleInstance,
+        dict[str, object],
+        str | None,
+        str | None,
+        str | None,
+        str | None,
+    ]:
+        if selection.kind == "catalog":
+            catalog = cast(CatalogPuzzleSelection, selection)
+            puzzle = self._generate_match_puzzle(
+                theme=catalog.theme,
+                difficulty=catalog.difficulty,
+                seed=seed,
+                participant_user_ids=participant_user_ids,
+            )
+            return (
+                puzzle,
+                self.describe_puzzle_source(selection=selection),
+                None,
+                None,
+                None,
+                None,
+            )
+
+        if selection.kind == "shared_puzzle":
+            puzzle_selection = cast(SharedPuzzleSelection, selection)
+            puzzle_record = self._require_user_puzzle(puzzle_selection.puzzle_id)
+            puzzle = build_custom_puzzle_instance(
+                owner_id=puzzle_record.owner_id,
+                puzzle_id=puzzle_record.id,
+                source_code=puzzle_record.source_code,
+                seed=seed,
+            )
+            return (
+                puzzle,
+                self.describe_puzzle_source(selection=selection),
+                puzzle_record.source_code,
+                puzzle_record.id,
+                None,
+                None,
+            )
+
+        collection_selection = cast(SharedCollectionSelection, selection)
+        collection = self._require_user_collection(collection_selection.collection_id)
+        run = self._ensure_collection_run(
+            party=party,
+            collection=collection,
+            run_mode=collection_selection.run_mode,
+            seed=seed,
+        )
+        current_puzzle_id = run.current_puzzle_id
+        if current_puzzle_id is None:
+            current_puzzle_id = self._choose_next_collection_puzzle(
+                run=run,
+                seed=seed,
+            )
+            if current_puzzle_id is None:
+                raise ValueError("Collection run is complete")
+            run.current_puzzle_id = current_puzzle_id
+            run.remaining_puzzle_ids = [
+                puzzle_id
+                for puzzle_id in run.remaining_puzzle_ids
+                if puzzle_id != current_puzzle_id
+            ]
+
+        puzzle_record = self._require_user_puzzle(current_puzzle_id)
+        puzzle = build_custom_puzzle_instance(
+            owner_id=puzzle_record.owner_id,
+            puzzle_id=puzzle_record.id,
+            source_code=puzzle_record.source_code,
+            seed=seed,
+        )
+        return (
+            puzzle,
+            self.describe_puzzle_source(
+                selection=collection_selection,
+                collection_run=run,
+                current_puzzle_id=current_puzzle_id,
+            ),
+            puzzle_record.source_code,
+            puzzle_record.id,
+            collection.id,
+            current_puzzle_id,
+        )
+
+    def _ensure_collection_run(
+        self,
+        *,
+        party: Party,
+        collection: UserCollection,
+        run_mode: CollectionRunMode,
+        seed: int,
+    ) -> CollectionRun:
+        run = party.collection_run
+        if run is not None and run.collection_id == collection.id and run.run_mode == run_mode:
+            return run
+        if not collection.puzzle_ids:
+            raise ValueError("Collections must contain at least one puzzle")
+
+        ordered_ids = list(collection.puzzle_ids)
+        current_puzzle_id: str | None
+        remaining_puzzle_ids: list[str]
+        if run_mode == "fixed":
+            current_puzzle_id = ordered_ids[0]
+            remaining_puzzle_ids = ordered_ids[1:]
+        else:
+            chooser = random.Random(seed)
+            current_puzzle_id = chooser.choice(ordered_ids)
+            remaining_puzzle_ids = [
+                puzzle_id for puzzle_id in ordered_ids if puzzle_id != current_puzzle_id
+            ]
+
+        run = CollectionRun(
+            collection_id=collection.id,
+            current_puzzle_id=current_puzzle_id,
+            remaining_puzzle_ids=remaining_puzzle_ids,
+            run_mode=run_mode,
+        )
+        party.collection_run = run
+        return run
+
+    def _choose_next_collection_puzzle(
+        self,
+        *,
+        run: CollectionRun,
+        seed: int | None,
+    ) -> str | None:
+        if not run.remaining_puzzle_ids:
+            return None
+        if run.run_mode == "fixed":
+            return run.remaining_puzzle_ids[0]
+        chooser = random.Random(seed)
+        return chooser.choice(run.remaining_puzzle_ids)
+
+    def _mark_collection_match_completed(self, match: Match) -> None:
+        if (
+            match.skipped
+            or match.collection_id is None
+            or match.collection_puzzle_id is None
+            or not match.party_code
+        ):
+            return
+        party = self.parties.get(match.party_code)
+        if party is None or party.collection_run is None:
+            return
+        run = party.collection_run
+        if run.collection_id != match.collection_id:
+            return
+        if match.collection_puzzle_id not in run.completed_puzzle_ids:
+            run.completed_puzzle_ids.append(match.collection_puzzle_id)
+        if run.current_puzzle_id == match.collection_puzzle_id:
+            run.current_puzzle_id = None
+
+    def _normalize_content_title(self, title: str, *, label: str) -> str:
+        normalized = title.strip()
+        if len(normalized) < 3:
+            raise ValueError(f"{label} must be at least 3 characters")
+        if len(normalized) > 80:
+            raise ValueError(f"{label} must be 80 characters or less")
+        return normalized
+
+    @staticmethod
+    def _normalize_slug_lookup(slug: str) -> str:
+        normalized = slug.strip().casefold()
+        if not normalized:
+            raise ValueError("slug is required")
+        return normalized
+
+    def _new_content_slug(
+        self, title: str, *, existing: dict[str, str]
+    ) -> str:
+        base = slugify_title(title)
+        candidate = base
+        counter = 2
+        while candidate in existing:
+            candidate = f"{base}-{counter}"
+            counter += 1
+        return candidate
+
+    def _validate_owned_collection_puzzles(
+        self,
+        *,
+        owner_id: str,
+        puzzle_ids: list[str],
+    ) -> list[str]:
+        if not isinstance(puzzle_ids, list):
+            raise ValueError("puzzle_ids must be a list")
+        if not puzzle_ids:
+            raise ValueError("Collections must contain at least one puzzle")
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for puzzle_id in puzzle_ids:
+            if not isinstance(puzzle_id, str) or not puzzle_id.strip():
+                raise ValueError("puzzle_ids must contain puzzle ids")
+            if puzzle_id in seen:
+                raise ValueError("Collections cannot contain the same puzzle twice")
+            puzzle = self._require_user_puzzle(puzzle_id)
+            if puzzle.owner_id != owner_id:
+                raise ValueError("Collections can only include your own puzzles")
+            seen.add(puzzle_id)
+            ordered.append(puzzle_id)
+        return ordered
+
+    def _require_user_content_owner(self, user_id: str) -> User:
+        user = self._require_user(user_id)
+        if user.guest:
+            raise ValueError("Registered accounts are required for custom puzzles")
+        if is_admin_username(user.name):
+            raise ValueError("Admin accounts must use the admin puzzle system")
+        return user
 
     def _generate_match_puzzle(
         self,
@@ -1267,6 +1999,10 @@ class MemoryStore:
                 user.id: MatchPlayer(user_id=user.id, hint_level=1, hints_used={1})
                 for user in members
             },
+            puzzle_source=self.describe_catalog_source(
+                theme=theme,
+                difficulty=difficulty,
+            ),
         )
         self.matches[match.id] = match
         return match
@@ -1303,11 +2039,67 @@ class MemoryStore:
             if indexed_user_id == user_id:
                 self.user_name_index.pop(normalized_name, None)
 
+    def _delete_owned_custom_content(
+        self,
+        *,
+        owner_id: str,
+        owned_puzzle_ids: list[str] | None = None,
+        owned_collection_ids: list[str] | None = None,
+    ) -> None:
+        puzzle_ids = (
+            owned_puzzle_ids
+            if owned_puzzle_ids is not None
+            else [
+                puzzle.id
+                for puzzle in self.user_puzzles.values()
+                if puzzle.owner_id == owner_id
+            ]
+        )
+        collection_ids = (
+            owned_collection_ids
+            if owned_collection_ids is not None
+            else [
+                collection.id
+                for collection in self.user_collections.values()
+                if collection.owner_id == owner_id
+            ]
+        )
+        for collection_id in collection_ids:
+            collection = self.user_collections.pop(collection_id, None)
+            if collection is not None:
+                self.user_collection_slug_index.pop(collection.slug, None)
+        for puzzle_id in puzzle_ids:
+            puzzle = self.user_puzzles.pop(puzzle_id, None)
+            if puzzle is not None:
+                self.user_puzzle_slug_index.pop(puzzle.slug, None)
+        if not puzzle_ids:
+            return
+        removed_ids = set(puzzle_ids)
+        for collection in self.user_collections.values():
+            if any(puzzle_id in removed_ids for puzzle_id in collection.puzzle_ids):
+                collection.puzzle_ids = [
+                    puzzle_id
+                    for puzzle_id in collection.puzzle_ids
+                    if puzzle_id not in removed_ids
+                ]
+
     def _require_user(self, user_id: str) -> User:
         user = self.users.get(user_id)
         if user is None:
             raise ValueError("User not found")
         return user
+
+    def _require_user_puzzle(self, puzzle_id: str) -> UserPuzzle:
+        puzzle = self.user_puzzles.get(puzzle_id)
+        if puzzle is None:
+            raise ValueError("Puzzle not found")
+        return puzzle
+
+    def _require_user_collection(self, collection_id: str) -> UserCollection:
+        collection = self.user_collections.get(collection_id)
+        if collection is None:
+            raise ValueError("Collection not found")
+        return collection
 
     @staticmethod
     def _require_sample_test_index(*, match: Match, index: int) -> None:
@@ -1362,11 +2154,18 @@ class MemoryStore:
             MemoryStore._validate_case_value(value)
 
         try:
-            expected_output = expected_output_for_primary_inputs(
-                template_key=match.puzzle.template_key,
-                variables=match.puzzle.variables,
-                primary_inputs=primary_inputs,
-            )
+            if match.custom_source_code is None:
+                expected_output = expected_output_for_primary_inputs(
+                    template_key=match.puzzle.template_key,
+                    variables=match.puzzle.variables,
+                    primary_inputs=primary_inputs,
+                )
+            else:
+                expected_output = expected_output_for_custom_primary_inputs(
+                    source_code=match.custom_source_code,
+                    variables=match.puzzle.variables,
+                    primary_inputs=primary_inputs,
+                )
         except ValueError:
             raise ValueError("sample inputs are invalid for this match") from None
         return TestCase(inputs=tuple(primary_inputs), output=expected_output)
@@ -1400,6 +2199,7 @@ class SqliteStore(MemoryStore):
         self._conn.row_factory = sqlite3.Row
         self._create_schema()
         self._load_users()
+        self._load_custom_content()
 
     def create_user(
         self,
@@ -1554,6 +2354,154 @@ class SqliteStore(MemoryStore):
             )
         return user
 
+    def create_user_puzzle(
+        self,
+        *,
+        owner_id: str,
+        title: str,
+        source_code: str | None = None,
+    ) -> UserPuzzle:
+        puzzle = super().create_user_puzzle(
+            owner_id=owner_id,
+            title=title,
+            source_code=source_code,
+        )
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO user_puzzles (
+                    id,
+                    owner_id,
+                    title,
+                    slug,
+                    source_code,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    puzzle.id,
+                    puzzle.owner_id,
+                    puzzle.title,
+                    puzzle.slug,
+                    puzzle.source_code,
+                    puzzle.created_at,
+                    puzzle.updated_at,
+                ),
+            )
+        return puzzle
+
+    def update_user_puzzle(
+        self,
+        *,
+        owner_id: str,
+        slug: str,
+        title: str,
+        source_code: str,
+    ) -> UserPuzzle:
+        puzzle = super().update_user_puzzle(
+            owner_id=owner_id,
+            slug=slug,
+            title=title,
+            source_code=source_code,
+        )
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE user_puzzles
+                SET title = ?, source_code = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (puzzle.title, puzzle.source_code, puzzle.updated_at, puzzle.id),
+            )
+        return puzzle
+
+    def create_user_collection(
+        self,
+        *,
+        owner_id: str,
+        title: str,
+        puzzle_ids: list[str],
+    ) -> UserCollection:
+        collection = super().create_user_collection(
+            owner_id=owner_id,
+            title=title,
+            puzzle_ids=puzzle_ids,
+        )
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO user_collections (
+                    id,
+                    owner_id,
+                    title,
+                    slug,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    collection.id,
+                    collection.owner_id,
+                    collection.title,
+                    collection.slug,
+                    collection.created_at,
+                    collection.updated_at,
+                ),
+            )
+            self._conn.executemany(
+                """
+                INSERT INTO user_collection_items (collection_id, position, puzzle_id)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (collection.id, position, puzzle_id)
+                    for position, puzzle_id in enumerate(collection.puzzle_ids)
+                ],
+            )
+        return collection
+
+    def update_user_collection(
+        self,
+        *,
+        owner_id: str,
+        slug: str,
+        title: str,
+        puzzle_ids: list[str],
+    ) -> UserCollection:
+        collection = super().update_user_collection(
+            owner_id=owner_id,
+            slug=slug,
+            title=title,
+            puzzle_ids=puzzle_ids,
+        )
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE user_collections
+                SET title = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (collection.title, collection.updated_at, collection.id),
+            )
+            self._conn.execute(
+                "DELETE FROM user_collection_items WHERE collection_id = ?",
+                (collection.id,),
+            )
+            self._conn.executemany(
+                """
+                INSERT INTO user_collection_items (collection_id, position, puzzle_id)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (collection.id, position, puzzle_id)
+                    for position, puzzle_id in enumerate(collection.puzzle_ids)
+                ],
+            )
+        return collection
+
     def admin_reset_all_elos(self, *, elo: int = 1000) -> int:
         updated = super().admin_reset_all_elos(elo=elo)
         with self._conn:
@@ -1576,6 +2524,22 @@ class SqliteStore(MemoryStore):
             user_id=user_id
         )
         with self._conn:
+            self._conn.execute(
+                "DELETE FROM user_collection_items WHERE puzzle_id IN (SELECT id FROM user_puzzles WHERE owner_id = ?)",
+                (deleted_user.id,),
+            )
+            self._conn.execute(
+                "DELETE FROM user_collection_items WHERE collection_id IN (SELECT id FROM user_collections WHERE owner_id = ?)",
+                (deleted_user.id,),
+            )
+            self._conn.execute(
+                "DELETE FROM user_collections WHERE owner_id = ?",
+                (deleted_user.id,),
+            )
+            self._conn.execute(
+                "DELETE FROM user_puzzles WHERE owner_id = ?",
+                (deleted_user.id,),
+            )
             self._conn.execute("DELETE FROM users WHERE id = ?", (deleted_user.id,))
         return deleted_user, cancelled_matches, updated_parties
 
@@ -1637,6 +2601,41 @@ class SqliteStore(MemoryStore):
                     recent_ai_topics_json TEXT NOT NULL DEFAULT '[]',
                     account_preferences_json TEXT,
                     account_stats_json TEXT
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_puzzles (
+                    id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    slug TEXT NOT NULL UNIQUE,
+                    source_code TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_collections (
+                    id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    slug TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_collection_items (
+                    collection_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    puzzle_id TEXT NOT NULL,
+                    PRIMARY KEY (collection_id, position)
                 )
                 """
             )
@@ -1731,6 +2730,57 @@ class SqliteStore(MemoryStore):
             normalized_name = row["normalized_name"]
             if normalized_name is not None:
                 self.user_name_index[str(normalized_name)] = user.id
+
+    def _load_custom_content(self) -> None:
+        puzzle_rows = self._conn.execute(
+            """
+            SELECT id, owner_id, title, slug, source_code, created_at, updated_at
+            FROM user_puzzles
+            """
+        ).fetchall()
+        for row in puzzle_rows:
+            puzzle = UserPuzzle(
+                id=str(row["id"]),
+                owner_id=str(row["owner_id"]),
+                title=str(row["title"]),
+                slug=str(row["slug"]),
+                source_code=str(row["source_code"]),
+                created_at=float(row["created_at"]),
+                updated_at=float(row["updated_at"]),
+            )
+            self.user_puzzles[puzzle.id] = puzzle
+            self.user_puzzle_slug_index[puzzle.slug] = puzzle.id
+
+        collection_rows = self._conn.execute(
+            """
+            SELECT id, owner_id, title, slug, created_at, updated_at
+            FROM user_collections
+            """
+        ).fetchall()
+        items_by_collection: dict[str, list[str]] = {}
+        item_rows = self._conn.execute(
+            """
+            SELECT collection_id, position, puzzle_id
+            FROM user_collection_items
+            ORDER BY collection_id, position
+            """
+        ).fetchall()
+        for row in item_rows:
+            collection_id = str(row["collection_id"])
+            items_by_collection.setdefault(collection_id, []).append(str(row["puzzle_id"]))
+
+        for row in collection_rows:
+            collection = UserCollection(
+                id=str(row["id"]),
+                owner_id=str(row["owner_id"]),
+                title=str(row["title"]),
+                slug=str(row["slug"]),
+                puzzle_ids=items_by_collection.get(str(row["id"]), []),
+                created_at=float(row["created_at"]),
+                updated_at=float(row["updated_at"]),
+            )
+            self.user_collections[collection.id] = collection
+            self.user_collection_slug_index[collection.slug] = collection.id
 
     @staticmethod
     def _decode_recent_ai_topics(raw: object) -> list[str]:

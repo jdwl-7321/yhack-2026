@@ -34,6 +34,7 @@
   export let postMatchForfeitCount: (rows: Standing[]) => number = () => 0;
   export let formatDuration: (totalSeconds: number) => string = () => "0:00";
   export let formatRatingDelta: (value: number) => string = (value) => String(value);
+  export let puzzleSourceLabel: (source: PostMatchState["puzzle_source"] | null | undefined) => string = () => "";
 
   $: winner = postMatch ? postMatchWinner(postMatch.standings) : null;
   $: celebrateWin =
@@ -69,7 +70,7 @@
         <p class="eyebrow">Match complete</p>
         <h1>{postMatch.mode.toUpperCase()} Results</h1>
         <p class="postmatch-subtitle">
-          {postMatch.reason} · {postMatch.theme} · {postMatch.difficulty}
+          {postMatch.reason} · {puzzleSourceLabel(postMatch.puzzle_source)}
         </p>
       </div>
       <div class="postmatch-actions">

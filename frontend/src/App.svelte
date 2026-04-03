@@ -26,6 +26,7 @@
   import PostMatchView from "./components/PostMatchView.svelte";
   import ArenaView from "./components/ArenaView.svelte";
   import AdminView from "./components/AdminView.svelte";
+  import LibraryView from "./components/LibraryView.svelte";
   import type {
     AdminDashboardPayload,
     AdminMatch,
@@ -37,6 +38,7 @@
     AppearanceMode,
     AuthMode,
     AuthResponse,
+    CollectionRunMode,
     ConsoleEntry,
     ConsoleType,
     Difficulty,
@@ -53,6 +55,8 @@
     MatchPayload,
     Mode,
     PartyPayload,
+    PuzzleSelection,
+    PuzzleSource,
     PostMatchState,
     SampleTest,
     RankedQueuePayload,
@@ -61,6 +65,8 @@
     ShikiThemeDefinition,
     Standing,
     UiTheme,
+    UserCollectionPayload,
+    UserPuzzlePayload,
     View,
     VimMode,
   } from "./app-types";
@@ -204,9 +210,29 @@
   let selectedTheme = FALLBACK_THEME;
   let timeLimitSeconds = 900;
   let partyLimit = DEFAULT_PARTY_LIMIT;
+  let puzzleSelectionMode: "built_in" | "shared_link" | "your_library" = "built_in";
+  let selectedLibraryPuzzleSlug = "";
+  let selectedLibraryCollectionSlug = "";
+  let selectedCollectionRunMode: CollectionRunMode = "fixed";
+  let sharedLinkInput = "";
+  let sharedLinkPreviewPuzzle: UserPuzzlePayload | null = null;
+  let sharedLinkPreviewCollection: UserCollectionPayload | null = null;
   let joinCodeInput = "";
   let party: PartyPayload | null = null;
   let rankedQueue: RankedQueuePayload | null = null;
+  let libraryPuzzles: UserPuzzlePayload[] = [];
+  let libraryCollections: UserCollectionPayload[] = [];
+  let currentLibraryPuzzle: UserPuzzlePayload | null = null;
+  let currentLibraryCollection: UserCollectionPayload | null = null;
+  let libraryActiveKind: "puzzle" | "collection" | null = null;
+  let libraryShareRoute = false;
+  let newPuzzleTitle = "";
+  let newCollectionTitle = "";
+  let puzzleDraftTitle = "";
+  let puzzleDraftSource = "";
+  let collectionDraftTitle = "";
+  let collectionDraftPuzzleIds: string[] = [];
+  let previewCollectionRunMode: CollectionRunMode = "fixed";
 
   let themePref: UiTheme = DEFAULT_APPEARANCE_MODE;
   let appearanceMode: AppearanceMode = DEFAULT_APPEARANCE_MODE;
@@ -850,6 +876,7 @@
       difficulty: match.difficulty,
       time_limit_seconds: match.time_limit_seconds,
       standings: rows,
+      puzzle_source: match.puzzle_source,
     };
   }
 
@@ -1260,6 +1287,8 @@
   let editorScrollLeft = 0;
   let vimEditorHostEl: HTMLDivElement | null = null;
   let vimEditorView: EditorView | null = null;
+  let libraryVimEditorHostEl: HTMLDivElement | null = null;
+  let libraryVimEditorView: EditorView | null = null;
   let editorHistory: EditorSnapshot[] = [
     { value: "", selectionStart: 0, selectionEnd: 0 },
   ];
@@ -1280,6 +1309,7 @@
   let isPartyLeader = false;
   let canEditPartySetup = true;
   let canAddPartyTime = false;
+  let canSkipCollectionPuzzle = false;
   let liveStatusText = "Idle";
   let liveStatusTone: LiveStatusTone = "neutral";
 
@@ -1395,6 +1425,23 @@
     stopRankedQueuePolling();
   }
 
+  function clearLibraryState(): void {
+    libraryPuzzles = [];
+    libraryCollections = [];
+    currentLibraryPuzzle = null;
+    currentLibraryCollection = null;
+    libraryActiveKind = null;
+    libraryShareRoute = false;
+    newPuzzleTitle = "";
+    newCollectionTitle = "";
+    puzzleDraftTitle = "";
+    puzzleDraftSource = "";
+    collectionDraftTitle = "";
+    collectionDraftPuzzleIds = [];
+    sharedLinkPreviewPuzzle = null;
+    sharedLinkPreviewCollection = null;
+  }
+
   function loadMatchIntoArena(payload: MatchPayload, consoleMessage: string): void {
     clearRankedQueueState();
     lastArenaSnapshot = null;
@@ -1408,6 +1455,7 @@
     difficulty = payload.difficulty;
     selectedTheme = payload.theme;
     timeLimitSeconds = payload.time_limit_seconds;
+    applySelectionToHome(selectionFromPuzzleSource(payload.puzzle_source));
     syncSessionElo(payload.standings);
     code = payload.scaffold;
     resetEditorHistory(payload.scaffold);
@@ -1430,7 +1478,7 @@
     resetConsole();
     if (!payload.locked) {
       setLiveStatus("Match started", "ok");
-      appendConsole(`Joined live match: ${payload.theme}`, "system");
+      appendConsole(`Joined live match: ${puzzleSourceLabel(payload.puzzle_source)}`, "system");
     }
     // setLiveStatus("Live match in progress", "ok");
     // appendConsole(consoleMessage, "system");
@@ -2168,6 +2216,7 @@
       setLiveStatus("Idle", "neutral");
     }
     accountMenuOpen = false;
+    pushPath("/");
   }
 
   function showResults(): void {
@@ -2344,6 +2393,22 @@
       return;
     }
     showHome();
+  }
+
+  async function loadRouteFromPath(pathname: string): Promise<void> {
+    const puzzleMatch = pathname.match(/^\/puzzles\/([a-z0-9-]+)/i);
+    if (puzzleMatch) {
+      await openLibraryPuzzle(puzzleMatch[1]);
+      return;
+    }
+    const collectionMatch = pathname.match(/^\/collections\/([a-z0-9-]+)/i);
+    if (collectionMatch) {
+      await openLibraryCollection(collectionMatch[1]);
+      return;
+    }
+    if (pathname === "/library") {
+      await showLibrary();
+    }
   }
 
   function resolveSystemTheme(): UiTheme {
@@ -2809,6 +2874,14 @@
     vimEditorView = null;
   }
 
+  function destroyLibraryVimEditor(): void {
+    if (!libraryVimEditorView) {
+      return;
+    }
+    libraryVimEditorView.destroy();
+    libraryVimEditorView = null;
+  }
+
   function initializeVimEditor(): void {
     if (!vimEditorHostEl || vimEditorView) {
       return;
@@ -2852,6 +2925,51 @@
     }
     vimEditorView.dispatch({
       changes: { from: 0, to: currentDoc.length, insert: code },
+    });
+  }
+
+  function initializeLibraryVimEditor(): void {
+    if (!libraryVimEditorHostEl || libraryVimEditorView) {
+      return;
+    }
+
+    libraryVimEditorView = new EditorView({
+      doc: puzzleDraftSource,
+      extensions: [
+        vim({ status: true }),
+        basicSetup,
+        EditorState.tabSize.of(INDENT.length),
+        indentUnit.of(INDENT),
+        cmPython(),
+        syntaxHighlighting(vimHighlightStyle),
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) {
+            puzzleDraftSource = update.state.doc.toString();
+          }
+        }),
+      ],
+      parent: libraryVimEditorHostEl,
+    });
+
+    const cm = getCM(libraryVimEditorView);
+    if (cm?.state.vim) {
+      const vimCm = cm as typeof cm & {
+        state: typeof cm.state & { vim: NonNullable<typeof cm.state.vim> };
+      };
+      Vim.setOption("pcre", false, vimCm);
+    }
+  }
+
+  function syncLibraryVimEditorDoc(): void {
+    if (!libraryVimEditorView) {
+      return;
+    }
+    const currentDoc = libraryVimEditorView.state.doc.toString();
+    if (currentDoc === puzzleDraftSource) {
+      return;
+    }
+    libraryVimEditorView.dispatch({
+      changes: { from: 0, to: currentDoc.length, insert: puzzleDraftSource },
     });
   }
 
@@ -2998,6 +3116,7 @@
     joinCodeInput = partyPayload.join_code;
     mode = partyPayload.mode;
     if (shouldSyncSetup) {
+      applySelectionToHome(partyPayload.settings.puzzle_selection);
       selectedTheme = partyPayload.settings.theme;
       difficulty = partyPayload.settings.difficulty;
       timeLimitSeconds = partyPayload.settings.time_limit_seconds;
@@ -3011,6 +3130,174 @@
       return partyPayload.join_path;
     }
     return `${window.location.origin}${partyPayload.join_path}`;
+  }
+
+  function currentLibrarySelection(): PuzzleSelection | null {
+    if (puzzleSelectionMode === "built_in") {
+      return {
+        kind: "catalog",
+        theme: selectedTheme,
+        difficulty,
+      };
+    }
+    if (puzzleSelectionMode === "shared_link") {
+      if (sharedLinkPreviewPuzzle) {
+        return {
+          kind: "shared_puzzle",
+          slug: sharedLinkPreviewPuzzle.slug,
+          owner_id: sharedLinkPreviewPuzzle.owner.id,
+        };
+      }
+      if (sharedLinkPreviewCollection) {
+        return {
+          kind: "shared_collection",
+          slug: sharedLinkPreviewCollection.slug,
+          owner_id: sharedLinkPreviewCollection.owner.id,
+          run_mode: selectedCollectionRunMode,
+        };
+      }
+      return null;
+    }
+    if (selectedLibraryCollectionSlug) {
+      const collection = libraryCollections.find(
+        (item) => item.slug === selectedLibraryCollectionSlug,
+      );
+      if (collection) {
+        return {
+          kind: "shared_collection",
+          slug: collection.slug,
+          owner_id: collection.owner.id,
+          run_mode: selectedCollectionRunMode,
+        };
+      }
+    }
+    if (selectedLibraryPuzzleSlug) {
+      const puzzle = libraryPuzzles.find((item) => item.slug === selectedLibraryPuzzleSlug);
+      if (puzzle) {
+        return {
+          kind: "shared_puzzle",
+          slug: puzzle.slug,
+          owner_id: puzzle.owner.id,
+        };
+      }
+    }
+    return {
+      kind: "catalog",
+      theme: selectedTheme,
+      difficulty,
+    };
+  }
+
+  function selectionFromPuzzleSource(source: PuzzleSource): PuzzleSelection {
+    if (source.kind === "catalog") {
+      return {
+        kind: "catalog",
+        theme: source.theme,
+        difficulty: source.difficulty,
+      };
+    }
+    if (source.kind === "shared_puzzle" && source.slug) {
+      return {
+        kind: "shared_puzzle",
+        slug: source.slug,
+        owner_id: source.owner_id ?? undefined,
+      };
+    }
+    return {
+      kind: "shared_collection",
+      slug: source.slug ?? "",
+      owner_id: source.owner_id ?? undefined,
+      run_mode: source.run_mode ?? "fixed",
+    };
+  }
+
+  function applySelectionToHome(selection: PuzzleSelection): void {
+    if (selection.kind === "catalog") {
+      puzzleSelectionMode = "built_in";
+      selectedTheme = selection.theme;
+      difficulty = selection.difficulty;
+      selectedLibraryPuzzleSlug = "";
+      selectedLibraryCollectionSlug = "";
+      return;
+    }
+    if (selection.kind === "shared_puzzle") {
+      const isOwned = libraryPuzzles.some((item) => item.slug === selection.slug);
+      puzzleSelectionMode = isOwned ? "your_library" : "shared_link";
+      selectedLibraryCollectionSlug = "";
+      selectedLibraryPuzzleSlug = isOwned ? selection.slug : "";
+      if (isOwned) {
+        sharedLinkPreviewPuzzle = null;
+        return;
+      }
+      if (!sharedLinkPreviewPuzzle || sharedLinkPreviewPuzzle.slug !== selection.slug) {
+        void loadPuzzlePreview(selection.slug);
+      }
+      return;
+    }
+    const isOwned = libraryCollections.some((item) => item.slug === selection.slug);
+    puzzleSelectionMode = isOwned ? "your_library" : "shared_link";
+    selectedLibraryPuzzleSlug = "";
+    selectedLibraryCollectionSlug = isOwned ? selection.slug : "";
+    selectedCollectionRunMode = selection.run_mode;
+    previewCollectionRunMode = selection.run_mode;
+    if (isOwned) {
+      sharedLinkPreviewCollection = null;
+      return;
+    }
+    if (
+      !sharedLinkPreviewCollection ||
+      sharedLinkPreviewCollection.slug !== selection.slug
+    ) {
+      void loadCollectionPreview(selection.slug);
+    }
+  }
+
+  function puzzleSourceLabel(source: PuzzleSource | null | undefined): string {
+    if (!source) {
+      return `${selectedTheme} · ${difficulty.toUpperCase()}`;
+    }
+    if (source.kind === "catalog") {
+      return `${source.theme} · ${source.difficulty.toUpperCase()}`;
+    }
+    if (source.kind === "shared_puzzle") {
+      return source.title;
+    }
+    const suffix = source.current_puzzle_title ? ` · ${source.current_puzzle_title}` : "";
+    return `${source.title}${suffix}`;
+  }
+
+  function parseSharePath(raw: string): { kind: "puzzle" | "collection"; slug: string } | null {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+    let pathname = trimmed;
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      try {
+        pathname = new URL(trimmed).pathname;
+      } catch {
+        return null;
+      }
+    }
+    const puzzleMatch = pathname.match(/\/puzzles\/([a-z0-9-]+)/i);
+    if (puzzleMatch) {
+      return { kind: "puzzle", slug: puzzleMatch[1] };
+    }
+    const collectionMatch = pathname.match(/\/collections\/([a-z0-9-]+)/i);
+    if (collectionMatch) {
+      return { kind: "collection", slug: collectionMatch[1] };
+    }
+    return null;
+  }
+
+  function pushPath(path: string): void {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (window.location.pathname === path) {
+      return;
+    }
+    window.history.pushState({}, "", path);
   }
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -3039,6 +3326,86 @@
     }
   }
 
+  async function loadMyLibrary(): Promise<void> {
+    if (!sessionUser || isAdmin) {
+      libraryPuzzles = [];
+      libraryCollections = [];
+      return;
+    }
+    const [puzzlePayload, collectionPayload] = await Promise.all([
+      api<{ puzzles: UserPuzzlePayload[] }>("/api/puzzles/mine"),
+      api<{ collections: UserCollectionPayload[] }>("/api/collections/mine"),
+    ]);
+    libraryPuzzles = puzzlePayload.puzzles;
+    libraryCollections = collectionPayload.collections;
+  }
+
+  async function loadPuzzlePreview(slug: string): Promise<UserPuzzlePayload | null> {
+    try {
+      const payload = await api<{ puzzle: UserPuzzlePayload }>(`/api/puzzles/${slug}`);
+      sharedLinkPreviewPuzzle = payload.puzzle;
+      sharedLinkPreviewCollection = null;
+      currentLibraryPuzzle = payload.puzzle;
+      currentLibraryCollection = null;
+      libraryActiveKind = "puzzle";
+      libraryShareRoute = !payload.puzzle.can_edit;
+      puzzleDraftTitle = payload.puzzle.title;
+      puzzleDraftSource = payload.puzzle.source_code ?? "";
+      if (payload.puzzle.can_edit) {
+        await loadMyLibrary();
+      }
+      return payload.puzzle;
+    } catch (err) {
+      error = toErrorMessage(err);
+      return null;
+    }
+  }
+
+  async function loadCollectionPreview(slug: string): Promise<UserCollectionPayload | null> {
+    try {
+      const payload = await api<{ collection: UserCollectionPayload }>(
+        `/api/collections/${slug}`,
+      );
+      sharedLinkPreviewCollection = payload.collection;
+      sharedLinkPreviewPuzzle = null;
+      currentLibraryCollection = payload.collection;
+      currentLibraryPuzzle = null;
+      libraryActiveKind = "collection";
+      libraryShareRoute = !payload.collection.can_edit;
+      collectionDraftTitle = payload.collection.title;
+      collectionDraftPuzzleIds = [...(payload.collection.puzzle_ids ?? [])];
+      previewCollectionRunMode = payload.collection.puzzle_source.run_mode ?? "fixed";
+      if (payload.collection.can_edit) {
+        await loadMyLibrary();
+      }
+      return payload.collection;
+    } catch (err) {
+      error = toErrorMessage(err);
+      return null;
+    }
+  }
+
+  async function resolveSharedLinkPreview(): Promise<void> {
+    const parsed = parseSharePath(sharedLinkInput);
+    if (!parsed) {
+      error = "Paste a valid /puzzles/<slug> or /collections/<slug> link.";
+      return;
+    }
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      if (parsed.kind === "puzzle") {
+        await loadPuzzlePreview(parsed.slug);
+      } else {
+        await loadCollectionPreview(parsed.slug);
+      }
+      notice = "Shared preview loaded.";
+    } finally {
+      busy = false;
+    }
+  }
+
   async function loadLeaderboard(): Promise<void> {
     const payload = await api<LeaderboardPayload>(
       `/api/leaderboard?limit=${LEADERBOARD_LIMIT}`,
@@ -3046,6 +3413,231 @@
     leaderboard = payload.leaderboard;
     leaderboardCurrentUser = payload.current_user;
     leaderboardTotalPlayers = payload.total_players;
+  }
+
+  async function openLibraryPuzzle(slug: string): Promise<void> {
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const puzzle = await loadPuzzlePreview(slug);
+      if (!puzzle) {
+        return;
+      }
+      currentLibraryPuzzle = puzzle;
+      currentLibraryCollection = null;
+      libraryActiveKind = "puzzle";
+      libraryShareRoute = !puzzle.can_edit;
+      activeView = "library";
+      pushPath(`/puzzles/${puzzle.slug}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function openLibraryCollection(slug: string): Promise<void> {
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const collection = await loadCollectionPreview(slug);
+      if (!collection) {
+        return;
+      }
+      currentLibraryCollection = collection;
+      currentLibraryPuzzle = null;
+      libraryActiveKind = "collection";
+      libraryShareRoute = !collection.can_edit;
+      activeView = "library";
+      pushPath(`/collections/${collection.slug}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function showLibrary(): Promise<void> {
+    activeView = "library";
+    libraryShareRoute = false;
+    error = "";
+    await loadMyLibrary();
+    if (!currentLibraryPuzzle && !currentLibraryCollection) {
+      currentLibraryPuzzle = libraryPuzzles[0] ?? null;
+      currentLibraryCollection = currentLibraryPuzzle ? null : libraryCollections[0] ?? null;
+      libraryActiveKind = currentLibraryPuzzle
+        ? "puzzle"
+        : currentLibraryCollection
+          ? "collection"
+          : null;
+    }
+    pushPath("/library");
+  }
+
+  async function createLibraryPuzzle(): Promise<void> {
+    if (!sessionUser) {
+      return;
+    }
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ puzzle: UserPuzzlePayload }>("/api/puzzles", {
+        method: "POST",
+        body: JSON.stringify({
+          title: newPuzzleTitle.trim(),
+          source_code: puzzleDraftSource || undefined,
+        }),
+      });
+      newPuzzleTitle = "";
+      await loadMyLibrary();
+      notice = "Custom puzzle created.";
+      await openLibraryPuzzle(payload.puzzle.slug);
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveLibraryPuzzle(): Promise<void> {
+    if (!currentLibraryPuzzle) {
+      return;
+    }
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ puzzle: UserPuzzlePayload }>(
+        `/api/puzzles/${currentLibraryPuzzle.slug}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: puzzleDraftTitle.trim(),
+            source_code: puzzleDraftSource,
+          }),
+        },
+      );
+      currentLibraryPuzzle = payload.puzzle;
+      puzzleDraftTitle = payload.puzzle.title;
+      puzzleDraftSource = payload.puzzle.source_code ?? "";
+      await loadMyLibrary();
+      notice = "Puzzle saved.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function createLibraryCollection(): Promise<void> {
+    if (!sessionUser || libraryPuzzles.length === 0) {
+      return;
+    }
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ collection: UserCollectionPayload }>("/api/collections", {
+        method: "POST",
+        body: JSON.stringify({
+          title: newCollectionTitle.trim(),
+          puzzle_ids: [libraryPuzzles[0].id],
+        }),
+      });
+      newCollectionTitle = "";
+      await loadMyLibrary();
+      notice = "Collection created.";
+      await openLibraryCollection(payload.collection.slug);
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveLibraryCollection(): Promise<void> {
+    if (!currentLibraryCollection) {
+      return;
+    }
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ collection: UserCollectionPayload }>(
+        `/api/collections/${currentLibraryCollection.slug}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: collectionDraftTitle.trim(),
+            puzzle_ids: collectionDraftPuzzleIds,
+          }),
+        },
+      );
+      currentLibraryCollection = payload.collection;
+      collectionDraftTitle = payload.collection.title;
+      collectionDraftPuzzleIds = [...(payload.collection.puzzle_ids ?? [])];
+      await loadMyLibrary();
+      notice = "Collection saved.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function addCollectionPuzzle(puzzleId: string): void {
+    if (!puzzleId || collectionDraftPuzzleIds.includes(puzzleId)) {
+      return;
+    }
+    collectionDraftPuzzleIds = [...collectionDraftPuzzleIds, puzzleId];
+  }
+
+  function removeCollectionPuzzle(puzzleId: string): void {
+    collectionDraftPuzzleIds = collectionDraftPuzzleIds.filter((id) => id !== puzzleId);
+  }
+
+  function moveCollectionPuzzle(puzzleId: string, direction: -1 | 1): void {
+    const index = collectionDraftPuzzleIds.indexOf(puzzleId);
+    if (index < 0) {
+      return;
+    }
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= collectionDraftPuzzleIds.length) {
+      return;
+    }
+    const next = [...collectionDraftPuzzleIds];
+    next[index] = next[nextIndex];
+    next[nextIndex] = puzzleId;
+    collectionDraftPuzzleIds = next;
+  }
+
+  async function copyCustomShareLink(sharePath: string): Promise<void> {
+    const full = typeof window === "undefined" ? sharePath : `${window.location.origin}${sharePath}`;
+    try {
+      await navigator.clipboard.writeText(full);
+      notice = "Share link copied.";
+    } catch {
+      notice = full;
+    }
+  }
+
+  async function useCurrentLibraryPreviewInSetup(): Promise<void> {
+    const source = currentLibraryPuzzle?.puzzle_source ?? currentLibraryCollection?.puzzle_source;
+    if (!source) {
+      return;
+    }
+    applySelectionToHome(
+      source.kind === "shared_collection"
+        ? {
+            kind: "shared_collection",
+            slug: source.slug ?? "",
+            owner_id: source.owner_id ?? undefined,
+            run_mode: previewCollectionRunMode,
+          }
+        : selectionFromPuzzleSource(source),
+    );
+    activeView = "home";
+    pushPath("/");
+    notice = "Puzzle setup updated from shared content.";
   }
 
   async function resetAllElos(): Promise<void> {
@@ -3294,6 +3886,7 @@
       accountStatsDirty = false;
       clearProfileImage();
       clearAdminState();
+      clearLibraryState();
       accountMenuOpen = false;
       activeView = "home";
       match = null;
@@ -3316,6 +3909,11 @@
     loadAccountState(payload.user);
     loadProfileImage(payload.user);
     await loadLeaderboard();
+    if (!payload.is_admin) {
+      await loadMyLibrary();
+    } else {
+      clearLibraryState();
+    }
     await refreshRankedQueue(true);
     await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
     if (isAdmin && activeView === "admin") {
@@ -3366,6 +3964,7 @@
       difficulty = activeMatch.difficulty;
       selectedTheme = activeMatch.theme;
       timeLimitSeconds = activeMatch.time_limit_seconds;
+      applySelectionToHome(selectionFromPuzzleSource(activeMatch.puzzle_source));
       hints = activeMatch.free_hint ? [activeMatch.free_hint] : [];
       code = activeMatch.scaffold;
       resetEditorHistory(activeMatch.scaffold);
@@ -3407,6 +4006,11 @@
           ? "Account created. Session is active."
           : "Signed in.";
       await loadLeaderboard();
+      if (!payload.is_admin) {
+        await loadMyLibrary();
+      } else {
+        clearLibraryState();
+      }
       await restorePartyAndMatch(payload.user, storedPartyCodeForUser(payload.user.id));
     } catch (err) {
       error = toErrorMessage(err);
@@ -3437,6 +4041,7 @@
       accountStatsDirty = false;
       clearProfileImage();
       clearAdminState();
+      clearLibraryState();
       accountMenuOpen = false;
       activeView = "home";
       match = null;
@@ -3514,11 +4119,13 @@
     error = "";
     notice = "";
     try {
+      const puzzleSelection = currentLibrarySelection();
       const payload = await api<PartyPayload>("/api/parties", {
         method: "POST",
         body: JSON.stringify({
           leader_id: sessionUser.id,
           mode,
+          puzzle_selection: puzzleSelection,
           member_limit: mode === "zen"
             ? 1
             : Math.min(
@@ -3704,6 +4311,31 @@
     }
   }
 
+  async function skipCollectionPuzzle(): Promise<void> {
+    if (!match || !sessionUser || !canSkipCollectionPuzzle) {
+      return;
+    }
+
+    busy = true;
+    error = "";
+    notice = "";
+    try {
+      const payload = await api<{ match: MatchPayload }>(
+        `/api/matches/${match.match_id}/skip-collection-puzzle`,
+        {
+          method: "POST",
+          body: JSON.stringify({ user_id: sessionUser.id }),
+        },
+      );
+      loadMatchIntoArena(payload.match, "Advanced to the next collection puzzle");
+      notice = "Skipped to the next remaining puzzle.";
+    } catch (err) {
+      error = toErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function kickPartyMember(memberId: string): Promise<void> {
     if (!party || !sessionUser || party.leader_id !== sessionUser.id) {
       return;
@@ -3790,6 +4422,7 @@
     hints = [];
     const requestedMode = mode;
     let codeToStart = partyCode;
+    const puzzleSelection = currentLibrarySelection();
 
     try {
       if (!codeToStart) {
@@ -3798,8 +4431,7 @@
           body: JSON.stringify({
             leader_id: sessionUser.id,
             mode,
-            theme: selectedTheme,
-            difficulty,
+            puzzle_selection: puzzleSelection,
             time_limit_seconds: mode === "ranked" ? 3600 : timeLimitSeconds,
             member_limit: mode === "zen" ? 1 : partyLimit,
           }),
@@ -3817,10 +4449,9 @@
           method: "POST",
           body: JSON.stringify({
             user_id: sessionUser.id,
-            ...(requestedMode === "casual"
+            ...(requestedMode !== "ranked"
               ? {
-                  theme: selectedTheme,
-                  difficulty,
+                  puzzle_selection: puzzleSelection,
                   time_limit_seconds: timeLimitSeconds,
                 }
               : {}),
@@ -4279,6 +4910,16 @@
         (!party || (party.mode === "zen" && party.leader_id === sessionUser.id))
       )
     );
+  $: canSkipCollectionPuzzle =
+    !!match &&
+    !!sessionUser &&
+    !!party &&
+    !match.finished &&
+    !match.locked &&
+    match.puzzle_source.kind === "shared_collection" &&
+    match.puzzle_source.collection_progress !== null &&
+    match.puzzle_source.collection_progress.remaining_puzzle_ids.length > 0 &&
+    party.leader_id === sessionUser.id;
   $: {
     sessionUser;
     party;
@@ -4348,6 +4989,17 @@
   $: if (keybindMode !== "vim") {
     destroyVimEditor();
   }
+  $: if (keybindMode === "vim" && libraryVimEditorHostEl) {
+    puzzleDraftSource;
+    initializeLibraryVimEditor();
+    syncLibraryVimEditorDoc();
+  }
+  $: if (keybindMode === "vim" && !libraryVimEditorHostEl) {
+    destroyLibraryVimEditor();
+  }
+  $: if (keybindMode !== "vim") {
+    destroyLibraryVimEditor();
+  }
 
   onMount(() => {
     applyEditorTypography();
@@ -4399,9 +5051,21 @@
       error = toErrorMessage(err);
     });
 
-    void refreshSession().catch((err) => {
-      error = toErrorMessage(err);
-    });
+    const handlePopState = () => {
+      void loadRouteFromPath(window.location.pathname).catch((err) => {
+        error = toErrorMessage(err);
+      });
+    };
+    window.addEventListener("popstate", handlePopState);
+
+    void (async () => {
+      try {
+        await refreshSession();
+        await loadRouteFromPath(window.location.pathname);
+      } catch (err) {
+        error = toErrorMessage(err);
+      }
+    })();
 
     return () => {
       clearTimer();
@@ -4412,10 +5076,12 @@
       disconnectLiveSocket();
       stopRankedQueuePolling();
       destroyVimEditor();
+      destroyLibraryVimEditor();
       if (systemMatcher && mediaListener) {
         systemMatcher.removeEventListener("change", mediaListener);
       }
       document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("popstate", handlePopState);
     };
   });
 </script>
@@ -4447,6 +5113,7 @@
     bind:accountMenuEl
     {showHome}
     {showPlayView}
+    {showLibrary}
     {toggleLeaderboardView}
     {showAdmin}
     {showSettings}
@@ -4483,7 +5150,16 @@
       bind:selectedTheme
       bind:timeLimitSeconds
       bind:partyLimit
+      bind:puzzleSelectionMode
+      bind:sharedLinkInput
+      bind:selectedLibraryPuzzleSlug
+      bind:selectedLibraryCollectionSlug
+      bind:selectedCollectionRunMode
       bind:joinCodeInput
+      {sharedLinkPreviewPuzzle}
+      {sharedLinkPreviewCollection}
+      libraryPuzzles={libraryPuzzles}
+      libraryCollections={libraryCollections}
       {party}
       {rankedQueue}
       {match}
@@ -4509,6 +5185,7 @@
       {updatePartyLimit}
       {copyPartyInvite}
       {refreshPartyLobby}
+      {resolveSharedLinkPreview}
       {joinPartyLobby}
       {kickPartyMember}
       {clearPartyLobby}
@@ -4519,6 +5196,7 @@
       {forfeit}
       {logout}
       {normalizePartyCode}
+      {puzzleSourceLabel}
     />
   {:else if activeView === "leaderboard"}
     <LeaderboardView
@@ -4597,6 +5275,40 @@
       {passwordError}
       {changePassword}
     />
+  {:else if activeView === "library"}
+    <LibraryView
+      {sessionUser}
+      {busy}
+      {notice}
+      {error}
+      puzzles={libraryPuzzles}
+      collections={libraryCollections}
+      currentPuzzle={currentLibraryPuzzle}
+      currentCollection={currentLibraryCollection}
+      activeKind={libraryActiveKind}
+      shareRoute={libraryShareRoute}
+      bind:newPuzzleTitle
+      bind:newCollectionTitle
+      bind:puzzleDraftTitle
+      bind:puzzleDraftSource
+      bind:collectionDraftTitle
+      bind:collectionDraftPuzzleIds
+      bind:previewCollectionRunMode
+      {keybindMode}
+      bind:libraryVimEditorHostEl
+      {showHome}
+      openPuzzle={openLibraryPuzzle}
+      openCollection={openLibraryCollection}
+      createPuzzle={createLibraryPuzzle}
+      createCollection={createLibraryCollection}
+      savePuzzle={saveLibraryPuzzle}
+      saveCollection={saveLibraryCollection}
+      copyShareLink={copyCustomShareLink}
+      usePreviewInSetup={useCurrentLibraryPreviewInSetup}
+      {addCollectionPuzzle}
+      {removeCollectionPuzzle}
+      {moveCollectionPuzzle}
+    />
   {:else if activeView === "postmatch"}
     <PostMatchView
       {postMatch}
@@ -4611,6 +5323,7 @@
       {postMatchForfeitCount}
       {formatDuration}
       {formatRatingDelta}
+      {puzzleSourceLabel}
     />
   {:else}
     <ArenaView
@@ -4647,12 +5360,15 @@
       {forfeit}
       {addPartyTime}
       {canAddPartyTime}
+      {skipCollectionPuzzle}
+      {canSkipCollectionPuzzle}
       {testSamples}
       {submit}
       {handleEditorInput}
       {handleEditorKeydown}
       {syncEditorScroll}
       {formatRatingDelta}
+      {puzzleSourceLabel}
       {showResults}
     />
   {/if}

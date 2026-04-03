@@ -12,6 +12,12 @@ It is a living map of the codebase and a maintenance contract to keep that map a
 5. Keep behavior unchanged unless the task explicitly asks for behavior changes.
 6. Update backend tests whenever implementing a new endpoint
 
+## Discovery Workflow
+
+- Prefer the `cocoindex` MCP server for codebase discovery and cross-file navigation when it is available in the current session.
+- If `cocoindex` MCP is not available, fall back to local repository inspection with fast tools such as `rg`, `sed`, and targeted file reads.
+- Do not assume `cocoindex` is configured everywhere; check availability in the current environment before relying on it.
+
 ## AGENTS.md Freshness Contract (Mandatory)
 
 When you change code, you must also evaluate whether this file needs updates.
@@ -67,19 +73,33 @@ Top-level layout:
   - Main Flask app wiring (`create_app`, `main`).
   - Defines all REST endpoints and WebSocket endpoint (`/ws/events`).
   - Serves built SPA assets from `frontend/dist` (or `YHACK_FRONTEND_DIST`) via a catch-all route, while excluding `/api` and `/ws` prefixes from SPA fallback.
-  - `POST /api/parties` accepts minimal lobby creation payloads (mode + optional member limit) and fills default match settings (`theme=THEMES[0]`, `difficulty=easy`, `time_limit_seconds=900`) when omitted.
-  - `POST /api/parties/<code>/start` accepts optional non-ranked match settings (`theme`, `difficulty`, `time_limit_seconds`) so casual lobbies can set puzzle config at match start.
+  - `POST /api/parties` still accepts minimal lobby creation payloads, but non-ranked setup now supports `puzzle_selection` in addition to legacy built-in `theme`/`difficulty`; omitted values default to the built-in catalog (`theme=THEMES[0]`, `difficulty=easy`, `time_limit_seconds=900`).
+  - `POST /api/parties/<code>/start` accepts optional non-ranked `puzzle_selection` plus `time_limit_seconds`; legacy `theme`/`difficulty` payloads still map to built-in catalog selection.
   - Uses `EventHub` for in-process pub/sub fanout to party/match channels.
   - Converts domain/store objects into API payloads (`_party_payload`, `_match_payload`, `_judge_result_payload`).
   - Adds admin payload conversion via `_admin_match_payload` for dashboard match inspection.
   - Also exposes ranked queue payloads via `_ranked_queue_payload`.
+  - Party and match payloads now include `puzzle_source`; party settings also expose `puzzle_selection` so the client can resume built-in/shared puzzle/shared collection setup accurately.
   - Match payloads include `template_key` so the client can apply template-specific UI behavior.
   - Auth session payload includes `is_admin` (resolved by configured admin username).
   - User payloads include `profile_image_url`, `account_preferences`, and `account_stats`; `POST /api/auth/profile-image` updates avatars and `GET/POST /api/auth/account` reads/writes persisted account settings/stats.
+  - Adds authenticated regular-user custom-content APIs: `GET /api/puzzles/mine`, `POST /api/puzzles`, `GET/POST /api/puzzles/<slug>`, `GET /api/collections/mine`, `POST /api/collections`, and `GET/POST /api/collections/<slug>`.
+  - Public share-preview `GET /api/puzzles/<slug>` / `GET /api/collections/<slug>` are owner-gated: owners get editor data, while non-owners only receive play/setup preview metadata.
+  - Adds `POST /api/matches/<match_id>/skip-collection-puzzle` for leader-controlled collection advancement in active casual/zen runs.
   - Provides admin endpoints for dashboard listing, resetting all ELOs, setting per-user ELO, deleting users, canceling active matches, and file-backed puzzle-template create/update/delete.
   - Admin puzzle payloads include editable module source (`source_path`, `source_code`); `POST /api/admin/puzzles` creates template files, `POST /api/admin/puzzles/<template_key>` updates source, and `DELETE /api/admin/puzzles/<template_key>` removes template files.
   - Enables permissive CORS headers for local frontend dev.
   - Defaults to `SqliteStore` using `backend/data/yhack.sqlite3` unless `YHACK_DB_PATH` is set.
+
+- `backend/src/custom_puzzle.py`
+  - Main-process wrapper around the regular-user custom puzzle sandbox.
+  - Validates/synthesizes custom `PuzzleInstance`s by spawning `backend/src/custom_puzzle_runtime.py` instead of importing user-authored modules into the Flask process.
+  - Provides default source boilerplate, slug helpers, internal template-key generation, and expected-output evaluation for live sample editing in custom matches.
+
+- `backend/src/custom_puzzle_runtime.py`
+  - Sandboxed subprocess entrypoint for regular-user puzzle source.
+  - Rejects imports/dunder access/unsafe builtins via AST validation, exposes only the allowed puzzle-definition surface, and verifies that generated cases agree with `expected_output_for_primary_inputs`.
+  - Supports `validate`, `generate`, and `expected_output` operations used by the store layer.
 
 - `backend/src/config.py`
   - Backend app config for admin identity.
@@ -137,24 +157,30 @@ Top-level layout:
 
 - `backend/src/store.py`
   - Core in-memory domain state and gameplay operations.
-  - Dataclasses: `User`, `PartySettings`, `Party`, `MatchPlayer`, `Match`, `RankedQueueEntry`.
-  - `MemoryStore` handles auth, parties, ranked queue matchmaking, matches, hints, submissions, standings, leaderboard, and finish logic.
+  - Dataclasses now also include persisted custom-content records (`UserPuzzle`, `UserCollection`), non-ranked puzzle-selection unions (`CatalogPuzzleSelection`, `SharedPuzzleSelection`, `SharedCollectionSelection`), and per-party collection-run state (`CollectionRun`).
+  - `PartySettings` now carries both legacy built-in `theme`/`difficulty` fields and the source-of-truth `puzzle_selection`.
+  - `Match` now carries `puzzle_source`, optional custom source snapshots, and collection-run bookkeeping (`collection_id`, `collection_puzzle_id`, `skipped`) so live matches remain stable even if the underlying shared content is edited later.
+  - `MemoryStore` handles auth, custom puzzle/collection CRUD, parties, ranked queue matchmaking, matches, hints, submissions, standings, leaderboard, and finish logic.
   - Leaderboard entries include per-user `account_stats` alongside avatar metadata.
-  - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO/profile-image updates plus account preferences/stats JSON.
+  - `SqliteStore` extends `MemoryStore` for persisted users/password hashes/ELO/profile-image updates plus account preferences/stats JSON, custom puzzles, collections, and ordered collection membership.
   - Important behavior:
     - Parties and matches are in-memory only.
+    - Custom puzzles/collections are persisted; party collection-run progress is in-memory only per live party.
     - Ranked queue entries are in-memory only and expire if the client stops polling for ~20 seconds before a match is found.
     - Because lobby/queue/match state is in-memory, Gunicorn must run with exactly one worker process.
-    - Users (including `profile_image_url`, `account_preferences`, and `account_stats`) are persisted in SQLite only when using `SqliteStore`.
+    - Users (including `profile_image_url`, `account_preferences`, and `account_stats`) plus custom puzzles/collections are persisted in SQLite only when using `SqliteStore`.
     - Matches in every mode auto-finish when all players are solved or forfeited.
     - Ranked matches also auto-finish when forfeits leave exactly one non-forfeited player; that remaining player is treated as the winner for ELO.
     - Closing a party lobby removes the party, locks any active unfinished match (`locked=True`), and blocks submit/test/hint/forfeit/promote actions for that locked match.
-    - Casual/zen match settings can be supplied per match at party start time; those selected settings become the party's latest stored setup.
+    - Casual/zen match settings can be supplied per match at party start time; those selected settings become the party's latest stored setup, including built-in/shared puzzle/collection selection.
     - Casual and zen party leaders can add time (`add_seconds`) to party settings; if a casual/zen match is currently active and unlocked for that party, the match timer is extended too.
     - Casual party join requests during an active unlocked casual match also add that user to the live match player list (if party capacity allows), so they can participate immediately.
     - Ranked queue only accepts registered users and creates direct 1v1 matches once two queued players fall within the current ELO search window.
     - If any ranked match participant's username matches the configured admin username, ranked puzzle selection is overridden to `numeric-add-reversed-number-v1` (Numeric/hard) for that match.
     - Match generation selects from puzzle modules loaded from `backend/src/puzzles/*_puzzle.py` for the requested theme+difficulty.
+    - Regular-user shared puzzles are generated through the subprocess sandbox only; they are never imported into the server process like admin file-backed templates.
+    - Shared collection runs persist per party: fixed mode follows saved order, random mode draws from remaining puzzles only, and completion/skip state resets when the party changes puzzle selection or closes.
+    - `skip_collection_match` is leader-only, marks the current collection puzzle skipped/read-only, and immediately advances the party to the next remaining custom puzzle when one exists.
     - If a theme+difficulty has no puzzle modules, match start fails with a validation error.
     - New matches initialize each player with hint level 1 already available (`hint_level=1`, `hints_used={1}`), so API hint calls unlock levels 2 then 3.
     - Promoting a failed hidden test appends it to visible samples (capped at 4), removes it from hidden set, and generates a replacement hidden case.
@@ -188,6 +214,14 @@ Defined in `backend/src/app.py`:
 
 - User utility:
   - `POST /api/users` (direct user creation helper endpoint)
+  - `GET /api/puzzles/mine`
+  - `POST /api/puzzles`
+  - `GET /api/puzzles/<slug>`
+  - `POST /api/puzzles/<slug>`
+  - `GET /api/collections/mine`
+  - `POST /api/collections`
+  - `GET /api/collections/<slug>`
+  - `POST /api/collections/<slug>`
 
 - Admin:
   - `GET /api/admin/dashboard`
@@ -221,6 +255,7 @@ Defined in `backend/src/app.py`:
   - `POST /api/matches/<match_id>/sample-tests` (`action=add|update|delete`)
   - `POST /api/matches/<match_id>/hint`
   - `POST /api/matches/<match_id>/forfeit` (includes `finished` in response)
+  - `POST /api/matches/<match_id>/skip-collection-puzzle`
   - `POST /api/matches/<match_id>/finish`
 
 - WebSocket:
@@ -250,6 +285,7 @@ Defined in `backend/src/app.py`:
   - Includes admin dashboard payload contracts (`AdminDashboardPayload`, `AdminMatch`, `AdminMatchPlayer`, `AdminPuzzleTemplate`) and `is_admin` session/auth flags.
   - `SessionUser` includes `profile_image_url`, `account_preferences`, and `account_stats`; `LeaderboardEntry` includes `profile_image_url` plus `account_stats` for profile preview cards.
   - Admin puzzle payloads include editable module source (`source_path`, `source_code`).
+  - Adds non-ranked custom-content contracts: `PuzzleSelection`, `PuzzleSource`, `UserPuzzlePayload`, `UserCollectionPayload`, and collection run-mode types.
 
 - `frontend/src/app.css`
   - Entire app styling and design tokens.
@@ -262,26 +298,29 @@ Defined in `backend/src/app.py`:
   - Large orchestration component (state hub).
   - Responsibilities include:
     - auth/session, server-backed account preferences/stats sync via `/api/auth/account`, and stored active-party restore after refresh/login
+    - personal custom-puzzle library state, share preview loading, and lightweight route handling for `/library`, `/puzzles/<slug>`, and `/collections/<slug>`
     - casual party lifecycle, ranked queue polling, and match lifecycle
     - API calls and websocket subscriptions
     - timer and post-match transitions
+    - non-ranked puzzle selection between built-in catalog, pasted shared links, and owned library entries
     - casual-party leader and zen-match time-extension action, plus live timer resync when a `time_extended` match event is received
+    - collection-run skip action and puzzle-source-aware summaries in home/arena/postmatch flows
     - immediate match handoff on party join when a casual lobby already has an active match
     - sample-test editing actions (add/update/delete) with JSON parsing and server-side output recomputation
-    - editor behavior (normal/custom shortcuts + custom vim handling)
+    - editor behavior (normal/custom shortcuts + custom vim handling), including a dedicated Vim CodeMirror host for the library puzzle source editor when keybind mode is Vim
     - syntax highlighting/theming via highlight.js + Shiki
     - account-scoped appearance/keybind/editor persistence in backend storage (localStorage now only tracks active-party restore), with light startup default and Everforest Light / Catppuccin Mocha as default light/dark palettes
     - profile-photo upload with client-side square crop/compression, then server persistence via `/api/auth/profile-image`
     - leaderboard refresh when entering leaderboard view so initial render reflects current server users
     - admin dashboard state and actions (load dashboard, reset all ELO, update one player's ELO, delete account, cancel active match, create/delete puzzle templates, save puzzle template source code)
-    - routing between subviews (`home`, `arena`, `leaderboard`, `admin`, `settings`, `postmatch`)
+    - routing between subviews (`home`, `arena`, `leaderboard`, `library`, `admin`, `settings`, `postmatch`)
   - Renders child components and passes state/actions down.
 
 ### Svelte component roles
 
 - `frontend/src/components/AppHeader.svelte`
   - Top navigation, quick-settings palette (`Ctrl/Cmd+K`) with persisted last search, theme picker dialog, account summary dialog, a quick Vim-mode toggle, and a hover `+` profile-photo upload affordance in the account summary card.
-  - Shows admin nav/quick action when the current session has admin access.
+  - Shows library nav/quick action for signed-in regular users and admin nav/quick action when the current session has admin access.
 
 - `frontend/src/components/AdminView.svelte`
   - Admin dashboard UI for account, puzzle-template, and live-match operations.
@@ -295,7 +334,7 @@ Defined in `backend/src/app.py`:
   - Mode selection is driven by the large top mode cards; the match setup panel no longer repeats mode selection with a dropdown.
   - The setup panel still shows the current mode as a read-only field so the layout stays anchored after the dropdown removal.
   - When an unfinished unlocked match exists, the home action row exposes both resume and forfeit actions so players can leave a match without re-entering the arena first.
-  - Match setup fields are mode-aware: ranked shows queue state only; casual pre-lobby setup shows party limit; puzzle theme/difficulty/time appear after the lobby exists and are used for each started match.
+  - Match setup fields are mode-aware: ranked shows queue state only; casual pre-lobby setup shows party limit; non-ranked setup now includes a `Puzzle` section that switches among built-in catalog selection, pasted shared links, and the signed-in user's own library.
   - Ranked setup uses a compact two-column layout with the setup panel in a narrow left column and the queue card beside it.
   - Ranked idle guidance is shown in the queue panel status badge instead of the bottom flash notice bar.
   - Casual party leaders get lobby management actions for member limit (match setup updates happen through match start payloads).
@@ -306,6 +345,7 @@ Defined in `backend/src/app.py`:
   - When a match is finished or otherwise locked, the sample table becomes read-only and add/delete controls are disabled even if the arena is reopened from post-match.
   - Sample table uses a dedicated Action column so delete/add controls are separated from output values.
   - Shows a `+5 min` timer extension action next to the live match timer for casual-party leaders and zen matches.
+  - Shows a leader-only `Skip to next` action during active shared-collection runs when at least one puzzle remains.
   - Samples panel keeps a fixed viewport (~4 rows visible) and scrolls as rows grow.
   - Sample input editor uses `arg1 = ...` / `arg2 = ...` format and supports JSON values per argument.
   - New sample draft is prefilled from the puzzle's primary argument count (`arg1`, `arg2`, ...), excluding shared immutable suffix args (for shared-input ciphers this means users edit only `arg1`).
@@ -318,6 +358,14 @@ Defined in `backend/src/app.py`:
 
 - `frontend/src/components/PostMatchView.svelte`
   - End-of-match summary and final standings board.
+  - Subtitle now renders the shared/custom `puzzle_source` label instead of assuming built-in theme/difficulty text.
+
+- `frontend/src/components/LibraryView.svelte`
+  - Dedicated regular-user puzzle library and share-preview workspace.
+  - Sidebar focuses on create widgets and collections; puzzle management now lives in detail-pane tabs (`Puzzles` list view + `Puzzle editor` view) instead of a sidebar puzzles list.
+  - Supports creating/saving custom puzzles, creating/saving ordered collections of owned puzzles, copying share links, and preview-driven `Use in setup` actions.
+  - Puzzle source editing uses the arena-style editor shell (line numbers + syntax-highlight backdrop in normal/custom keybind modes, Vim CodeMirror surface when Vim mode is enabled).
+  - When routed through `/puzzles/<slug>` or `/collections/<slug>`, owners land on the full editor/manager while non-owners get play/setup-only preview controls with no source or collection-membership exposure.
 
 - `frontend/src/components/SettingsView.svelte`
   - Appearance/theme controls, keybind profile/custom shortcuts, account/session settings, password change, and a hover `+` profile-photo upload affordance in the profile card.
@@ -333,7 +381,7 @@ Defined in `backend/src/app.py`:
 ## Tests (`backend/tests/`)
 
 - `backend/tests/test_api.py`
-  - End-to-end API behavior for auth, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence (including profile image and account-state persistence), ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and admin puzzle create/delete file operations.
+  - End-to-end API behavior for auth, custom puzzle/collection CRUD and owner-gated previews, shared puzzle/collection non-ranked match setup, fixed/random collection runs and skip flow, source validation rejection, parties, ranked queue matchmaking, matches, hints, submissions, promotion, leaderboard, ranked fallback, sqlite persistence (including profile image, account-state persistence, and custom-content persistence), ranked-forfeit auto-win, casual/zen party time extension, admin dashboard/account/match controls, admin puzzle source editing, and admin puzzle create/delete file operations.
 
 - `backend/tests/test_judge.py`
   - Judge contract tests: arity checks, verdict flow, stdout capture, shared inputs, normalization.
@@ -348,10 +396,12 @@ Defined in `backend/src/app.py`:
 
 - Persisted:
   - Users (id, name, guest, elo, password hash, profile image URL, account preferences, account stats) in SQLite via `SqliteStore`.
+  - Regular-user custom puzzles (`user_puzzles`) and custom collections plus ordered membership (`user_collections`, `user_collection_items`) in SQLite via `SqliteStore`.
   - Puzzle template source/metadata through files under `backend/src/puzzles/` (not SQLite).
 
 - In-memory only:
   - Parties, ranked queue entries, matches, submissions, hints, standings, event subscriptions, ranked-theme cycle memory.
+  - Party `collection_run` progress for active shared-collection sessions.
 
 Implication: server restart drops active parties/matches but keeps user accounts and ELO if SQLite is used.
 Also, multiple backend worker processes do not share gameplay state, so production should run a single worker unless match/queue persistence is redesigned.
@@ -359,13 +409,14 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 ## Common Task Routing (Where to Edit)
 
 - Add/modify endpoint behavior: `backend/src/app.py` + `backend/src/store.py`
+- Regular-user custom puzzle sandbox/runtime: `backend/src/custom_puzzle.py` + `backend/src/custom_puzzle_runtime.py`
 - Change admin identity/access check: `backend/src/config.py`
 - Change game rules (party limits, hint policy, ranked fallback, ranked matchmaking window, auto-finish): `backend/src/store.py`, `backend/src/rating.py`
 - Add new puzzle family/theme/template: `backend/src/puzzles/*_puzzle.py` + `backend/src/puzzle.py` + `backend/src/constants.py` + tests
 - Change judging sandbox or verdict details: `backend/src/judge.py` + tests
 - Update API payload types in frontend: `frontend/src/app-types.ts`
 - Update client flow/state orchestration: `frontend/src/App.svelte`
-- Update visual structure by view: corresponding `frontend/src/components/*.svelte`
+- Update visual structure by view: corresponding `frontend/src/components/*.svelte` (`LibraryView.svelte` handles personal library/share previews)
 - Update styling/tokens/layout: `frontend/src/app.css`
 - Update deployment and reverse-proxy setup: `backend/src/run-gunicorn.sh`, `deploy/nginx/play-enigma.xyz.conf`, `README.md`
 
@@ -382,6 +433,7 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 ## Known Sharp Edges
 
 - `frontend/src/App.svelte` is very large; prefer extracting cohesive logic into utilities/components when editing substantial new behavior.
+- Shared collection progress is party-local memory, so restarting the backend or changing party selection resets the live run even though the underlying custom content persists.
 - `frontend/public/engimga.html` is not part of active app flow; avoid changing it unless explicitly requested.
 - SPA hosting in Flask depends on `frontend/dist/index.html`; if the build is missing, `/` returns a 404 JSON error (`Frontend build not found`).
 - Multiplayer/ranked state is process-local memory; running Gunicorn with multiple workers causes queue/match desyncs and "Match not found" errors.
@@ -391,6 +443,7 @@ Also, multiple backend worker processes do not share gameplay state, so producti
 - AI theme match-start calls can include an outbound NOUS request; if `NOUS_API_KEY` is missing/unreachable/invalid payload, generation falls back to built-in AI-theme copy and still produces solvable deterministic cases.
 - AI generation enforces per-user recent-topic avoidance; if you shrink operation diversity too far for a difficulty, AI match start can fail with "Unable to generate a novel AI puzzle topic for these players".
 - Sample editor input in the frontend supports `argN = <json>` lines (and accepts raw JSON-array format); outputs are recomputed server-side from the active puzzle rule.
+- Regular-user shared puzzle code is validated/executed only in the subprocess sandbox; if you change that surface, treat it as security-sensitive and update both `custom_puzzle.py` and `custom_puzzle_runtime.py`.
 - Judge security is constrained but still process-based Python execution; treat sandbox changes as security-sensitive.
 
 ## Documentation Discipline for Future Agents

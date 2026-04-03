@@ -67,6 +67,7 @@
 
   export let showHome: () => void = () => {};
   export let showPlayView: () => void = () => {};
+  export let showLibrary: () => void | Promise<void> = () => {};
   export let toggleLeaderboardView: () => void = () => {};
   export let showAdmin: () => void = () => {};
   export let showSettings: () => void = () => {};
@@ -212,6 +213,17 @@
         icon: "fa-gear",
         keywords: "settings preferences workspace config",
         run: showSettings,
+      },
+      {
+        id: "quick-library",
+        label: "Open puzzle library",
+        description: sessionUser ? "Manage your custom puzzles and collections" : "Sign in to build custom puzzles",
+        icon: "fa-book-open",
+        keywords: "library custom puzzle collection share",
+        disabled: !sessionUser || isAdmin,
+        run: () => {
+          void showLibrary();
+        },
       },
       {
         id: "quick-resume",
@@ -370,6 +382,16 @@
       title="Play"
     >
       <i class="fas fa-gamepad" aria-hidden="true"></i>
+    </button>
+    <button
+      type="button"
+      class="nav-icon"
+      class:active={activeView === "library"}
+      on:click={() => void showLibrary()}
+      title="Library"
+      disabled={!sessionUser || isAdmin}
+    >
+      <i class="fas fa-book-open" aria-hidden="true"></i>
     </button>
     <button
       type="button"

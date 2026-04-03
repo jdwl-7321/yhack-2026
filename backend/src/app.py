@@ -30,11 +30,17 @@ from puzzle import (
 )
 from rating import ranked_matchmaking_window
 from store import (
+    CatalogPuzzleSelection,
+    CollectionRun,
     Match,
     MemoryStore,
     Party,
     RankedQueueEntry,
+    SharedCollectionSelection,
+    SharedPuzzleSelection,
     SqliteStore,
+    UserCollection,
+    UserPuzzle,
     User,
     default_account_preferences,
     default_account_stats,
@@ -209,6 +215,20 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         user = session_user()
         if not is_admin_username(user.name):
             raise ValueError("Admin access required")
+        return user
+
+    def maybe_session_user() -> User | None:
+        user_id = session.get("user_id")
+        if not isinstance(user_id, str) or not user_id:
+            return None
+        return data.users.get(user_id)
+
+    def require_library_user() -> User:
+        user = session_user()
+        if user.guest:
+            raise ValueError("Registered accounts are required for custom puzzles")
+        if is_admin_username(user.name):
+            raise ValueError("Admin accounts must use the admin puzzle system")
         return user
 
     def payload_user_id(payload: dict[str, Any]) -> str:
@@ -416,6 +436,116 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         )
         return jsonify(_user_payload(user))
 
+    @app.route("/api/puzzles/mine", methods=["GET"])
+    def list_my_puzzles() -> Any:
+        owner = require_library_user()
+        return jsonify(
+            {
+                "puzzles": [
+                    _user_puzzle_payload(data, puzzle, viewer=owner)
+                    for puzzle in data.list_user_puzzles(owner_id=owner.id)
+                ]
+            }
+        )
+
+    @app.route("/api/puzzles", methods=["POST"])
+    def create_user_puzzle() -> Any:
+        owner = require_library_user()
+        payload = request.get_json(silent=True) or {}
+        puzzle = data.create_user_puzzle(
+            owner_id=owner.id,
+            title=str(payload.get("title", "")),
+            source_code=(
+                str(payload["source_code"])
+                if "source_code" in payload and payload["source_code"] is not None
+                else None
+            ),
+        )
+        return jsonify({"puzzle": _user_puzzle_payload(data, puzzle, viewer=owner)})
+
+    @app.route("/api/puzzles/<slug>", methods=["GET"])
+    def get_user_puzzle(slug: str) -> Any:
+        puzzle = data.get_user_puzzle_by_slug(slug=slug)
+        return jsonify(
+            {
+                "puzzle": _user_puzzle_payload(
+                    data,
+                    puzzle,
+                    viewer=maybe_session_user(),
+                )
+            }
+        )
+
+    @app.route("/api/puzzles/<slug>", methods=["POST"])
+    def update_user_puzzle(slug: str) -> Any:
+        owner = require_library_user()
+        payload = request.get_json(silent=True) or {}
+        puzzle = data.update_user_puzzle(
+            owner_id=owner.id,
+            slug=slug,
+            title=str(payload.get("title", "")),
+            source_code=str(payload.get("source_code", "")),
+        )
+        return jsonify({"puzzle": _user_puzzle_payload(data, puzzle, viewer=owner)})
+
+    @app.route("/api/collections/mine", methods=["GET"])
+    def list_my_collections() -> Any:
+        owner = require_library_user()
+        return jsonify(
+            {
+                "collections": [
+                    _user_collection_payload(data, collection, viewer=owner)
+                    for collection in data.list_user_collections(owner_id=owner.id)
+                ]
+            }
+        )
+
+    @app.route("/api/collections", methods=["POST"])
+    def create_user_collection() -> Any:
+        owner = require_library_user()
+        payload = request.get_json(silent=True) or {}
+        raw_puzzle_ids = payload.get("puzzle_ids")
+        if not isinstance(raw_puzzle_ids, list):
+            raise ValueError("puzzle_ids must be a list")
+        collection = data.create_user_collection(
+            owner_id=owner.id,
+            title=str(payload.get("title", "")),
+            puzzle_ids=[str(value) for value in raw_puzzle_ids],
+        )
+        return jsonify(
+            {"collection": _user_collection_payload(data, collection, viewer=owner)}
+        )
+
+    @app.route("/api/collections/<slug>", methods=["GET"])
+    def get_user_collection(slug: str) -> Any:
+        collection = data.get_user_collection_by_slug(slug=slug)
+        return jsonify(
+            {
+                "collection": _user_collection_payload(
+                    data,
+                    collection,
+                    viewer=maybe_session_user(),
+                )
+            }
+        )
+
+    @app.route("/api/collections/<slug>", methods=["POST"])
+    def update_user_collection(slug: str) -> Any:
+        owner = require_library_user()
+        payload = request.get_json(silent=True) or {}
+        raw_puzzle_ids = payload.get("puzzle_ids")
+        if not isinstance(raw_puzzle_ids, list):
+            raise ValueError("puzzle_ids must be a list")
+        collection = data.update_user_collection(
+            owner_id=owner.id,
+            slug=slug,
+            title=str(payload.get("title", "")),
+            puzzle_ids=[str(value) for value in raw_puzzle_ids],
+        )
+        return jsonify(
+            {"collection": _user_collection_payload(data, collection, viewer=owner)}
+        )
+
     @app.route("/api/admin/dashboard", methods=["GET"])
     def admin_dashboard() -> Any:
         require_admin_user()
@@ -569,6 +699,12 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         mode = _parse_mode(payload.get("mode"))
         difficulty = _parse_difficulty(payload.get("difficulty", "easy"))
+        puzzle_selection = _parse_puzzle_selection(
+            data,
+            payload.get("puzzle_selection"),
+            fallback_theme=str(payload.get("theme", THEMES[0])),
+            fallback_difficulty=difficulty,
+        )
         member_limit_raw = payload.get("member_limit", payload.get("party_limit"))
         party = data.create_party(
             leader_id=str(payload.get("leader_id", "")) or session_user_id(),
@@ -576,6 +712,7 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             theme=str(payload.get("theme", THEMES[0])),
             difficulty=difficulty,
             time_limit_seconds=int(payload.get("time_limit_seconds", 900)),
+            puzzle_selection=puzzle_selection,
             member_limit=(
                 _optional_int(member_limit_raw)
                 if member_limit_raw is not None
@@ -629,20 +766,31 @@ def create_app(store: MemoryStore | None = None) -> Flask:
     @app.route("/api/parties/<code>/settings", methods=["POST"])
     def set_party_settings(code: str) -> Any:
         payload = request.get_json(silent=True) or {}
-
-        if "theme" not in payload:
-            raise ValueError("theme is required")
-        if "difficulty" not in payload:
-            raise ValueError("difficulty is required")
         if "time_limit_seconds" not in payload:
             raise ValueError("time_limit_seconds is required")
+        if "puzzle_selection" not in payload and (
+            "theme" not in payload or "difficulty" not in payload
+        ):
+            raise ValueError("puzzle_selection or theme/difficulty is required")
+
+        fallback_difficulty = _parse_difficulty(payload.get("difficulty", "easy"))
+        puzzle_selection = _parse_puzzle_selection(
+            data,
+            payload.get("puzzle_selection"),
+            fallback_theme=str(payload.get("theme", THEMES[0])),
+            fallback_difficulty=fallback_difficulty,
+        )
+        selection_theme, selection_difficulty = _selection_theme_and_difficulty(
+            puzzle_selection
+        )
 
         party = data.set_party_settings(
             code=code,
             leader_id=payload_user_id(payload),
-            theme=str(payload.get("theme", THEMES[0])),
-            difficulty=_parse_difficulty(payload.get("difficulty")),
+            theme=selection_theme,
+            difficulty=selection_difficulty,
             time_limit_seconds=int(payload.get("time_limit_seconds", 900)),
+            puzzle_selection=puzzle_selection,
             seed=_optional_int(payload.get("seed")),
         )
         publish_party_update(party, event="settings_updated")
@@ -695,20 +843,23 @@ def create_app(store: MemoryStore | None = None) -> Flask:
         theme: str | None = None
         difficulty: Difficulty | None = None
         time_limit_seconds: int | None = None
+        puzzle_selection = None
 
         has_custom_settings = any(
-            field in payload for field in ("theme", "difficulty", "time_limit_seconds")
+            field in payload
+            for field in ("theme", "difficulty", "time_limit_seconds", "puzzle_selection")
         )
         if has_custom_settings:
-            if "theme" not in payload:
-                raise ValueError("theme is required")
-            if "difficulty" not in payload:
-                raise ValueError("difficulty is required")
             if "time_limit_seconds" not in payload:
                 raise ValueError("time_limit_seconds is required")
-
-            theme = str(payload.get("theme", THEMES[0]))
-            difficulty = _parse_difficulty(payload.get("difficulty"))
+            fallback_difficulty = _parse_difficulty(payload.get("difficulty", "easy"))
+            puzzle_selection = _parse_puzzle_selection(
+                data,
+                payload.get("puzzle_selection"),
+                fallback_theme=str(payload.get("theme", THEMES[0])),
+                fallback_difficulty=fallback_difficulty,
+            )
+            theme, difficulty = _selection_theme_and_difficulty(puzzle_selection)
             time_limit_seconds = int(payload.get("time_limit_seconds", 900))
 
         match = data.start_match(
@@ -718,9 +869,22 @@ def create_app(store: MemoryStore | None = None) -> Flask:
             theme=theme,
             difficulty=difficulty,
             time_limit_seconds=time_limit_seconds,
+            puzzle_selection=puzzle_selection,
         )
         publish_match_update(match, event="started")
         return jsonify(_match_payload(data, match))
+
+    @app.route("/api/matches/<match_id>/skip-collection-puzzle", methods=["POST"])
+    def skip_collection_puzzle(match_id: str) -> Any:
+        payload = request.get_json(silent=True) or {}
+        skipped_match, next_match = data.skip_collection_match(
+            match_id=match_id,
+            leader_id=payload_user_id(payload),
+            seed=_optional_int(payload.get("seed")),
+        )
+        publish_match_update(skipped_match, event="collection_skipped")
+        publish_match_update(next_match, event="collection_advanced")
+        return jsonify({"match": _match_payload(data, next_match)})
 
     @app.route("/api/ranked/queue", methods=["GET"])
     def ranked_queue_status() -> Any:
@@ -924,6 +1088,68 @@ def _parse_difficulty(raw: object) -> Difficulty:
     if isinstance(raw, str) and raw in {"easy", "medium", "hard", "expert"}:
         return cast(Difficulty, raw)
     raise ValueError("difficulty must be one of: easy, medium, hard, expert")
+
+
+def _selection_theme_and_difficulty(
+    selection: CatalogPuzzleSelection | SharedPuzzleSelection | SharedCollectionSelection,
+) -> tuple[str, Difficulty]:
+    if selection.kind == "catalog":
+        catalog = cast(CatalogPuzzleSelection, selection)
+        return catalog.theme, catalog.difficulty
+    return "Custom", cast(Difficulty, "easy")
+
+
+def _parse_puzzle_selection(
+    store: MemoryStore,
+    raw: object,
+    *,
+    fallback_theme: str,
+    fallback_difficulty: Difficulty,
+) -> CatalogPuzzleSelection | SharedPuzzleSelection | SharedCollectionSelection:
+    if raw is None:
+        return CatalogPuzzleSelection(
+            kind="catalog",
+            theme=fallback_theme,
+            difficulty=fallback_difficulty,
+        )
+    if not isinstance(raw, dict):
+        raise ValueError("puzzle_selection must be an object")
+
+    payload = cast(dict[str, object], raw)
+    kind = payload.get("kind")
+    if kind == "catalog":
+        return CatalogPuzzleSelection(
+            kind="catalog",
+            theme=str(payload.get("theme", fallback_theme)),
+            difficulty=_parse_difficulty(payload.get("difficulty", fallback_difficulty)),
+        )
+    if kind == "shared_puzzle":
+        slug = str(payload.get("slug", "")).strip()
+        if not slug:
+            raise ValueError("puzzle_selection.slug is required")
+        puzzle = store.get_user_puzzle_by_slug(slug=slug)
+        return SharedPuzzleSelection(
+            kind="shared_puzzle",
+            puzzle_id=puzzle.id,
+            puzzle_slug=puzzle.slug,
+            owner_id=puzzle.owner_id,
+        )
+    if kind == "shared_collection":
+        slug = str(payload.get("slug", "")).strip()
+        if not slug:
+            raise ValueError("puzzle_selection.slug is required")
+        run_mode = str(payload.get("run_mode", "fixed")).strip()
+        if run_mode not in {"fixed", "random"}:
+            raise ValueError("run_mode must be fixed or random")
+        collection = store.get_user_collection_by_slug(slug=slug)
+        return SharedCollectionSelection(
+            kind="shared_collection",
+            collection_id=collection.id,
+            collection_slug=collection.slug,
+            owner_id=collection.owner_id,
+            run_mode=cast(Any, run_mode),
+        )
+    raise ValueError("puzzle_selection.kind is invalid")
 
 
 def _optional_int(value: object) -> int | None:
@@ -1144,6 +1370,107 @@ def _user_payload(user: User) -> dict[str, Any]:
     }
 
 
+def _puzzle_selection_payload(
+    selection: CatalogPuzzleSelection | SharedPuzzleSelection | SharedCollectionSelection,
+) -> dict[str, Any]:
+    if selection.kind == "catalog":
+        catalog = cast(CatalogPuzzleSelection, selection)
+        return {
+            "kind": catalog.kind,
+            "theme": catalog.theme,
+            "difficulty": catalog.difficulty,
+        }
+    if selection.kind == "shared_puzzle":
+        puzzle = cast(SharedPuzzleSelection, selection)
+        return {
+            "kind": puzzle.kind,
+            "slug": puzzle.puzzle_slug,
+            "owner_id": puzzle.owner_id,
+        }
+    collection = cast(SharedCollectionSelection, selection)
+    return {
+        "kind": collection.kind,
+        "slug": collection.collection_slug,
+        "owner_id": collection.owner_id,
+        "run_mode": collection.run_mode,
+    }
+
+
+def _can_edit_owner_item(owner_id: str, viewer: User | None) -> bool:
+    return viewer is not None and viewer.id == owner_id
+
+
+def _user_puzzle_payload(
+    store: MemoryStore,
+    puzzle: UserPuzzle,
+    *,
+    viewer: User | None,
+) -> dict[str, Any]:
+    owner = store.users[puzzle.owner_id]
+    can_edit = _can_edit_owner_item(puzzle.owner_id, viewer)
+    payload: dict[str, Any] = {
+        "kind": "shared_puzzle",
+        "title": puzzle.title,
+        "slug": puzzle.slug,
+        "owner": {"id": owner.id, "name": owner.name},
+        "created_at": puzzle.created_at,
+        "updated_at": puzzle.updated_at,
+        "can_edit": can_edit,
+        "share_path": f"/puzzles/{puzzle.slug}",
+        "puzzle_source": store.describe_puzzle_source(
+            selection=SharedPuzzleSelection(
+                kind="shared_puzzle",
+                puzzle_id=puzzle.id,
+                puzzle_slug=puzzle.slug,
+                owner_id=puzzle.owner_id,
+            )
+        ),
+    }
+    if can_edit:
+        payload["id"] = puzzle.id
+        payload["source_code"] = puzzle.source_code
+    return payload
+
+
+def _user_collection_payload(
+    store: MemoryStore,
+    collection: UserCollection,
+    *,
+    viewer: User | None,
+) -> dict[str, Any]:
+    owner = store.users[collection.owner_id]
+    can_edit = _can_edit_owner_item(collection.owner_id, viewer)
+    payload: dict[str, Any] = {
+        "kind": "shared_collection",
+        "title": collection.title,
+        "slug": collection.slug,
+        "owner": {"id": owner.id, "name": owner.name},
+        "created_at": collection.created_at,
+        "updated_at": collection.updated_at,
+        "can_edit": can_edit,
+        "share_path": f"/collections/{collection.slug}",
+        "puzzle_count": len(collection.puzzle_ids),
+        "puzzle_source": store.describe_puzzle_source(
+            selection=SharedCollectionSelection(
+                kind="shared_collection",
+                collection_id=collection.id,
+                collection_slug=collection.slug,
+                owner_id=collection.owner_id,
+                run_mode="fixed",
+            )
+        ),
+    }
+    if can_edit:
+        payload["id"] = collection.id
+        payload["puzzles"] = [
+            _user_puzzle_payload(store, store.user_puzzles[puzzle_id], viewer=viewer)
+            for puzzle_id in collection.puzzle_ids
+            if puzzle_id in store.user_puzzles
+        ]
+        payload["puzzle_ids"] = list(collection.puzzle_ids)
+    return payload
+
+
 def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
     members = [_user_payload(store.users[user_id]) for user_id in party.members]
     active_match = (
@@ -1159,11 +1486,26 @@ def _party_payload(store: MemoryStore, party: Party) -> dict[str, Any]:
         "is_full": len(members) >= party.member_limit,
         "active_match_id": party.active_match_id,
         "active_match_finished": active_match.finished if active_match else None,
+        "puzzle_source": store.describe_puzzle_source(
+            selection=party.settings.puzzle_selection,
+            collection_run=party.collection_run,
+            current_puzzle_id=(
+                None if party.collection_run is None else party.collection_run.current_puzzle_id
+            ),
+        ),
         "settings": {
             "theme": party.settings.theme,
             "difficulty": party.settings.difficulty,
             "time_limit_seconds": party.settings.time_limit_seconds,
             "seed": party.settings.seed,
+            "puzzle_selection": _puzzle_selection_payload(party.settings.puzzle_selection),
+            "puzzle_source": store.describe_puzzle_source(
+                selection=party.settings.puzzle_selection,
+                collection_run=party.collection_run,
+                current_puzzle_id=(
+                    None if party.collection_run is None else party.collection_run.current_puzzle_id
+                ),
+            ),
         },
         "members": members,
         "invite_link": f"/?join={party.code}",
@@ -1227,6 +1569,7 @@ def _match_payload(
         "scaffold": solution_scaffold(match.puzzle.contract),
         "sample_tests": sample_tests if include_samples else [],
         "standings": store.standings(match_id=match.id),
+        "puzzle_source": match.puzzle_source,
     }
     return payload
 

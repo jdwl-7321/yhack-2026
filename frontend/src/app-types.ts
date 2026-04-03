@@ -4,6 +4,7 @@ export type View =
   | "home"
   | "arena"
   | "leaderboard"
+  | "library"
   | "postmatch"
   | "settings"
   | "admin";
@@ -21,6 +22,46 @@ export type AuthMode = "register" | "login";
 export type Mode = "zen" | "casual" | "ranked";
 export type Difficulty = "easy" | "medium" | "hard" | "expert";
 export type ConsoleType = "info" | "system" | "success" | "error";
+export type CollectionRunMode = "fixed" | "random";
+
+export type PuzzleSelection =
+  | {
+      kind: "catalog";
+      theme: string;
+      difficulty: Difficulty;
+    }
+  | {
+      kind: "shared_puzzle";
+      slug: string;
+      owner_id?: string;
+    }
+  | {
+      kind: "shared_collection";
+      slug: string;
+      owner_id?: string;
+      run_mode: CollectionRunMode;
+    };
+
+export type PuzzleSource = {
+  kind: "catalog" | "shared_puzzle" | "shared_collection";
+  title: string;
+  theme: string;
+  difficulty: Difficulty;
+  slug: string | null;
+  owner_id: string | null;
+  owner_name: string | null;
+  share_path: string | null;
+  run_mode: CollectionRunMode | null;
+  collection_progress: {
+    completed_puzzle_ids: string[];
+    skipped_puzzle_ids: string[];
+    remaining_puzzle_ids: string[];
+    current_puzzle_id: string | null;
+    total_puzzles: number;
+  } | null;
+  current_puzzle_title: string | null;
+  current_puzzle_slug: string | null;
+};
 
 export type SessionUser = {
   id: string;
@@ -95,6 +136,7 @@ export type MatchPayload = {
   scaffold: string;
   sample_tests: SampleTest[];
   standings: Standing[];
+  puzzle_source: PuzzleSource;
 };
 
 export type RankedQueueStatus = "idle" | "queued" | "matched";
@@ -113,6 +155,8 @@ export type PartySettingsPayload = {
   difficulty: Difficulty;
   time_limit_seconds: number;
   seed: number | null;
+  puzzle_selection: PuzzleSelection;
+  puzzle_source: PuzzleSource;
 };
 
 export type PartyPayload = {
@@ -125,6 +169,7 @@ export type PartyPayload = {
   is_full: boolean;
   active_match_id: string | null;
   active_match_finished: boolean | null;
+  puzzle_source: PuzzleSource;
   settings: PartySettingsPayload;
   members: SessionUser[];
   invite_link: string;
@@ -138,6 +183,42 @@ export type PostMatchState = {
   difficulty: Difficulty;
   time_limit_seconds: number;
   standings: Standing[];
+  puzzle_source: PuzzleSource;
+};
+
+export type SharedOwner = {
+  id: string;
+  name: string;
+};
+
+export type UserPuzzlePayload = {
+  kind: "shared_puzzle";
+  id?: string;
+  title: string;
+  slug: string;
+  owner: SharedOwner;
+  created_at: number;
+  updated_at: number;
+  can_edit: boolean;
+  share_path: string;
+  source_code?: string;
+  puzzle_source: PuzzleSource;
+};
+
+export type UserCollectionPayload = {
+  kind: "shared_collection";
+  id?: string;
+  title: string;
+  slug: string;
+  owner: SharedOwner;
+  created_at: number;
+  updated_at: number;
+  can_edit: boolean;
+  share_path: string;
+  puzzle_count: number;
+  puzzle_ids?: string[];
+  puzzles?: UserPuzzlePayload[];
+  puzzle_source: PuzzleSource;
 };
 
 export type LiveStatusTone = "neutral" | "ok" | "warn";

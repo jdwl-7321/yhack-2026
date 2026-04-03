@@ -27,6 +27,254 @@
   --font-family: 'Roboto Mono', monospace;
 }
 
+#library-view {
+  width: min(1180px, calc(100vw - 2rem));
+  margin: 0 auto;
+}
+
+.library-shell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.library-sidebar,
+.library-editor-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.library-sidebar {
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.library-sidebar-head,
+.library-editor-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.library-create-card,
+.library-list-card,
+.collection-membership-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.9rem;
+  background: var(--sub-alt-color);
+  box-shadow: var(--panel-shadow);
+}
+
+.library-widget {
+  border: 1px solid var(--panel-border);
+  border-radius: 0.9rem;
+  background: var(--sub-alt-color);
+  box-shadow: var(--panel-shadow);
+}
+
+.library-widget.compact {
+  padding: 0.65rem;
+}
+
+.library-list {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.library-list-item,
+.collection-item-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 0.85rem;
+  border-radius: 0.8rem;
+  border: 1px solid transparent;
+  background: var(--bg-color);
+  text-align: left;
+  font: inherit;
+}
+
+.library-puzzle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+}
+
+.library-puzzle-row:hover {
+  border-color: color-mix(in srgb, var(--main-color) 35%, transparent);
+}
+
+.library-puzzle-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-list-item strong,
+.collection-item-row strong {
+  display: block;
+}
+
+.library-list-item span,
+.collection-item-row span,
+.library-meta {
+  color: var(--muted-text);
+  font-size: 0.92rem;
+}
+
+.library-list-item.active {
+  border-color: color-mix(in srgb, var(--main-color) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--main-color) 28%, transparent);
+}
+
+.library-item-meta {
+  color: var(--muted-text);
+  font-size: 0.85rem;
+}
+
+.library-action-row .btn,
+.library-puzzle-row .btn {
+  background: var(--bg-color);
+  border: 1px solid var(--panel-border);
+  color: var(--text-color);
+}
+
+.library-action-row .btn:hover:not(:disabled),
+.library-puzzle-row .btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--main-color) 50%, transparent);
+  color: var(--main-color);
+}
+
+.library-detail {
+  min-width: 0;
+}
+
+.library-editor-card {
+  padding: 1.2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.library-tab-row {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.library-action-row,
+.library-inline-actions,
+.collection-item-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.library-source-shell {
+  min-height: 24rem;
+  padding: 0.45rem;
+  border-radius: 0.95rem;
+  border: 1px solid var(--panel-border);
+  background: var(--sub-alt-color);
+  box-shadow: var(--panel-shadow);
+}
+
+.library-source-stack {
+  min-height: 23rem;
+}
+
+.collection-membership-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.library-preview-note {
+  padding: 0.95rem 1rem;
+  border-radius: 0.9rem;
+  border: 1px dashed var(--border-color);
+  color: var(--muted-text);
+}
+
+.puzzle-section-card {
+  grid-column: 1 / -1;
+  align-items: stretch;
+  gap: 0.85rem;
+}
+
+.puzzle-selection-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.nested-puzzle-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shared-link-panel,
+.shared-link-preview {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.shared-link-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.shared-link-input-field {
+  min-width: 0;
+}
+
+.shared-link-preview {
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.85rem;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--card-bg) 82%, var(--bg-color));
+}
+
+.compact-select {
+  display: grid;
+  gap: 0.35rem;
+}
+
+@media (max-width: 900px) {
+  .library-shell,
+  .collection-membership-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .puzzle-selection-tabs,
+  .nested-puzzle-grid,
+  .library-tab-row {
+    grid-template-columns: 1fr;
+  }
+
+  .shared-link-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .library-tab-row {
+    display: grid;
+  }
+}
+
 :root[data-theme='dark'] {
   color-scheme: dark;
   --bg-color: #1e1e2e;
@@ -2191,7 +2439,8 @@ select:focus {
   font-weight: 400;
 }
 
-#code-editor {
+#code-editor,
+.library-code-editor {
   width: 100%;
   height: 100%;
   background: transparent;
@@ -2212,13 +2461,15 @@ select:focus {
   tab-size: 4;
 }
 
-#code-editor::selection {
+#code-editor::selection,
+.library-code-editor::selection {
   background: var(--editor-selection);
   color: transparent;
   -webkit-text-fill-color: transparent;
 }
 
-#code-editor::-moz-selection {
+#code-editor::-moz-selection,
+.library-code-editor::-moz-selection {
   background: var(--editor-selection);
   color: transparent;
 }

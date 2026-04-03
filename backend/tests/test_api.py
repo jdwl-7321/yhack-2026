@@ -5,6 +5,7 @@ from uuid import uuid4
 from app import create_app
 from config import ADMIN_USERNAME
 from constants import THEMES
+from custom_puzzle import DEFAULT_CUSTOM_PUZZLE_SOURCE
 from judge import JudgeResult
 import store as store_module
 from store import MemoryStore, SqliteStore
@@ -166,6 +167,33 @@ def _register_admin(client: Any) -> dict[str, Any]:
     payload = register.get_json()
     assert payload is not None
     return payload["user"]
+
+
+def _register_user(client: Any, name: str) -> dict[str, Any]:
+    response = client.post(
+        "/api/auth/register",
+        json={"name": name, "password": "secret123"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload is not None
+    return payload["user"]
+
+
+def _create_custom_puzzle(
+    client: Any,
+    *,
+    title: str,
+    source_code: str = DEFAULT_CUSTOM_PUZZLE_SOURCE,
+) -> dict[str, Any]:
+    response = client.post(
+        "/api/puzzles",
+        json={"title": title, "source_code": source_code},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload is not None
+    return payload["puzzle"]
 
 
 def test_auth_session_register_login_logout() -> None:
@@ -790,6 +818,400 @@ def test_sqlite_changed_password_persists_between_app_instances(tmp_path: Path) 
         json={"name": "ResetUser", "password": "reset456"},
     )
     assert login.status_code == 200
+
+
+def test_custom_puzzle_owner_payload_and_non_owner_preview() -> None:
+    app = create_app(MemoryStore())
+    owner_client = app.test_client()
+    viewer_client = app.test_client()
+
+    _register_user(owner_client, "PuzzleOwner")
+    _register_user(viewer_client, "PuzzleViewer")
+
+    created = _create_custom_puzzle(owner_client, title="Offset Practice")
+    assert created["can_edit"] is True
+    assert created["source_code"]
+    assert created["share_path"] == f"/puzzles/{created['slug']}"
+
+    mine = owner_client.get("/api/puzzles/mine")
+    assert mine.status_code == 200
+    mine_payload = mine.get_json()
+    assert mine_payload is not None
+    assert mine_payload["puzzles"][0]["slug"] == created["slug"]
+
+    owner_view = owner_client.get(f"/api/puzzles/{created['slug']}")
+    assert owner_view.status_code == 200
+    owner_payload = owner_view.get_json()
+    assert owner_payload is not None
+    assert owner_payload["puzzle"]["can_edit"] is True
+    assert "source_code" in owner_payload["puzzle"]
+
+    viewer_view = viewer_client.get(f"/api/puzzles/{created['slug']}")
+    assert viewer_view.status_code == 200
+    viewer_payload = viewer_view.get_json()
+    assert viewer_payload is not None
+    assert viewer_payload["puzzle"]["can_edit"] is False
+    assert "source_code" not in viewer_payload["puzzle"]
+
+    updated = owner_client.post(
+        f"/api/puzzles/{created['slug']}",
+        json={
+            "title": "Offset Practice Revised",
+            "source_code": DEFAULT_CUSTOM_PUZZLE_SOURCE.replace(
+                "return value + offset",
+                "return value - offset",
+                2,
+            ).replace("output=value + offset", "output=value - offset", 1),
+        },
+    )
+    assert updated.status_code == 200
+    updated_payload = updated.get_json()
+    assert updated_payload is not None
+    assert updated_payload["puzzle"]["title"] == "Offset Practice Revised"
+
+
+def test_custom_collection_owner_payload_and_non_owner_preview() -> None:
+    app = create_app(MemoryStore())
+    owner_client = app.test_client()
+    viewer_client = app.test_client()
+
+    _register_user(owner_client, "CollectionOwner")
+    _register_user(viewer_client, "CollectionViewer")
+    first = _create_custom_puzzle(owner_client, title="First Puzzle")
+    second = _create_custom_puzzle(owner_client, title="Second Puzzle")
+
+    created = owner_client.post(
+        "/api/collections",
+        json={
+            "title": "Warmup Set",
+            "puzzle_ids": [first["id"], second["id"]],
+        },
+    )
+    assert created.status_code == 200
+    created_payload = created.get_json()
+    assert created_payload is not None
+    collection = created_payload["collection"]
+    assert collection["can_edit"] is True
+    assert collection["puzzle_ids"] == [first["id"], second["id"]]
+
+    viewer_view = viewer_client.get(f"/api/collections/{collection['slug']}")
+    assert viewer_view.status_code == 200
+    viewer_payload = viewer_view.get_json()
+    assert viewer_payload is not None
+    assert viewer_payload["collection"]["can_edit"] is False
+    assert "puzzle_ids" not in viewer_payload["collection"]
+    assert "puzzles" not in viewer_payload["collection"]
+
+
+def test_shared_custom_puzzle_can_start_zen_and_casual_matches() -> None:
+    app = create_app(MemoryStore())
+    owner_client = app.test_client()
+    player_client = app.test_client()
+    teammate_client = app.test_client()
+
+    owner = _register_user(owner_client, "SourceOwner")
+    player = _register_user(player_client, "ZenPlayer")
+    teammate = _register_user(teammate_client, "CasualMate")
+    puzzle = _create_custom_puzzle(owner_client, title="Shared Offset")
+
+    zen_party = player_client.post(
+        "/api/parties",
+        json={
+            "mode": "zen",
+            "time_limit_seconds": 900,
+            "puzzle_selection": {"kind": "shared_puzzle", "slug": puzzle["slug"]},
+        },
+    )
+    assert zen_party.status_code == 200
+    zen_party_payload = zen_party.get_json()
+    assert zen_party_payload is not None
+    assert zen_party_payload["puzzle_source"]["kind"] == "shared_puzzle"
+
+    zen_match = player_client.post(
+        f"/api/parties/{zen_party_payload['code']}/start",
+        json={
+            "user_id": player["id"],
+            "time_limit_seconds": 900,
+            "puzzle_selection": {"kind": "shared_puzzle", "slug": puzzle["slug"]},
+            "seed": 11,
+        },
+    )
+    assert zen_match.status_code == 200
+    zen_match_payload = zen_match.get_json()
+    assert zen_match_payload is not None
+    assert zen_match_payload["puzzle_source"]["kind"] == "shared_puzzle"
+    assert zen_match_payload["puzzle_source"]["slug"] == puzzle["slug"]
+
+    casual_party = player_client.post(
+        "/api/parties",
+        json={
+            "mode": "casual",
+            "member_limit": 2,
+            "time_limit_seconds": 900,
+            "puzzle_selection": {"kind": "shared_puzzle", "slug": puzzle["slug"]},
+        },
+    )
+    assert casual_party.status_code == 200
+    casual_party_payload = casual_party.get_json()
+    assert casual_party_payload is not None
+
+    joined = player_client.post(
+        f"/api/parties/{casual_party_payload['code']}/join",
+        json={"user_id": teammate["id"]},
+    )
+    assert joined.status_code == 200
+
+    casual_match = player_client.post(
+        f"/api/parties/{casual_party_payload['code']}/start",
+        json={
+            "user_id": player["id"],
+            "time_limit_seconds": 900,
+            "puzzle_selection": {"kind": "shared_puzzle", "slug": puzzle["slug"]},
+            "seed": 12,
+        },
+    )
+    assert casual_match.status_code == 200
+    casual_match_payload = casual_match.get_json()
+    assert casual_match_payload is not None
+    assert casual_match_payload["puzzle_source"]["kind"] == "shared_puzzle"
+    assert casual_match_payload["standings"][0]["user_id"] in {player["id"], teammate["id"]}
+
+
+def test_shared_collection_fixed_run_and_selection_reset() -> None:
+    app = create_app(MemoryStore())
+    owner_client = app.test_client()
+    player_client = app.test_client()
+
+    _register_user(owner_client, "FixedOwner")
+    player = _register_user(player_client, "FixedRunner")
+    first = _create_custom_puzzle(owner_client, title="Alpha")
+    second = _create_custom_puzzle(owner_client, title="Beta")
+    collection_response = owner_client.post(
+        "/api/collections",
+        json={"title": "Fixed Set", "puzzle_ids": [first["id"], second["id"]]},
+    )
+    assert collection_response.status_code == 200
+    collection = collection_response.get_json()["collection"]
+
+    party_response = player_client.post(
+        "/api/parties",
+        json={
+            "mode": "zen",
+            "time_limit_seconds": 900,
+            "puzzle_selection": {
+                "kind": "shared_collection",
+                "slug": collection["slug"],
+                "run_mode": "fixed",
+            },
+        },
+    )
+    assert party_response.status_code == 200
+    party = party_response.get_json()
+    assert party is not None
+
+    first_match = player_client.post(
+        f"/api/parties/{party['code']}/start",
+        json={
+            "user_id": player["id"],
+            "time_limit_seconds": 900,
+            "puzzle_selection": {
+                "kind": "shared_collection",
+                "slug": collection["slug"],
+                "run_mode": "fixed",
+            },
+            "seed": 21,
+        },
+    )
+    assert first_match.status_code == 200
+    first_payload = first_match.get_json()
+    assert first_payload is not None
+    assert first_payload["puzzle_source"]["kind"] == "shared_collection"
+    assert first_payload["puzzle_source"]["current_puzzle_slug"] == first["slug"]
+
+    finished = player_client.post(f"/api/matches/{first_payload['match_id']}/finish")
+    assert finished.status_code == 200
+
+    second_match = player_client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": player["id"], "seed": 22},
+    )
+    assert second_match.status_code == 200
+    second_payload = second_match.get_json()
+    assert second_payload is not None
+    assert second_payload["puzzle_source"]["current_puzzle_slug"] == second["slug"]
+    assert (
+        player_client.post(f"/api/matches/{second_payload['match_id']}/finish").status_code
+        == 200
+    )
+
+    reset_to_catalog = player_client.post(
+        f"/api/parties/{party['code']}/settings",
+        json={
+            "user_id": player["id"],
+            "time_limit_seconds": 900,
+            "puzzle_selection": {
+                "kind": "catalog",
+                "theme": THEMES[0],
+                "difficulty": "easy",
+            },
+        },
+    )
+    assert reset_to_catalog.status_code == 200
+
+    reset_back = player_client.post(
+        f"/api/parties/{party['code']}/settings",
+        json={
+            "user_id": player["id"],
+            "time_limit_seconds": 900,
+            "puzzle_selection": {
+                "kind": "shared_collection",
+                "slug": collection["slug"],
+                "run_mode": "fixed",
+            },
+        },
+    )
+    assert reset_back.status_code == 200
+
+    restarted = player_client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": player["id"], "seed": 23},
+    )
+    assert restarted.status_code == 200
+    restarted_payload = restarted.get_json()
+    assert restarted_payload is not None
+    assert restarted_payload["puzzle_source"]["current_puzzle_slug"] == first["slug"]
+
+
+def test_shared_collection_random_skip_and_non_leader_rejection() -> None:
+    app = create_app(MemoryStore())
+    owner_client = app.test_client()
+    leader_client = app.test_client()
+    teammate_client = app.test_client()
+
+    _register_user(owner_client, "RandomOwner")
+    leader = _register_user(leader_client, "RandomLeader")
+    teammate = _register_user(teammate_client, "RandomMate")
+    first = _create_custom_puzzle(owner_client, title="Gamma")
+    second = _create_custom_puzzle(owner_client, title="Delta")
+    collection_response = owner_client.post(
+        "/api/collections",
+        json={"title": "Random Set", "puzzle_ids": [first["id"], second["id"]]},
+    )
+    assert collection_response.status_code == 200
+    collection = collection_response.get_json()["collection"]
+
+    party_response = leader_client.post(
+        "/api/parties",
+        json={
+            "mode": "casual",
+            "member_limit": 2,
+            "time_limit_seconds": 900,
+            "puzzle_selection": {
+                "kind": "shared_collection",
+                "slug": collection["slug"],
+                "run_mode": "random",
+            },
+        },
+    )
+    assert party_response.status_code == 200
+    party = party_response.get_json()
+    assert party is not None
+
+    joined = leader_client.post(
+        f"/api/parties/{party['code']}/join",
+        json={"user_id": teammate["id"]},
+    )
+    assert joined.status_code == 200
+
+    first_match = leader_client.post(
+        f"/api/parties/{party['code']}/start",
+        json={"user_id": leader["id"], "seed": 31},
+    )
+    assert first_match.status_code == 200
+    first_payload = first_match.get_json()
+    assert first_payload is not None
+    first_slug = first_payload["puzzle_source"]["current_puzzle_slug"]
+    assert first_slug in {first["slug"], second["slug"]}
+
+    denied_skip = leader_client.post(
+        f"/api/matches/{first_payload['match_id']}/skip-collection-puzzle",
+        json={"user_id": teammate["id"], "seed": 32},
+    )
+    assert denied_skip.status_code == 400
+    assert denied_skip.get_json() == {"error": "Only the party leader can do that"}
+
+    skipped = leader_client.post(
+        f"/api/matches/{first_payload['match_id']}/skip-collection-puzzle",
+        json={"user_id": leader["id"], "seed": 33},
+    )
+    assert skipped.status_code == 200
+    skipped_payload = skipped.get_json()
+    assert skipped_payload is not None
+    second_slug = skipped_payload["match"]["puzzle_source"]["current_puzzle_slug"]
+    assert second_slug in {first["slug"], second["slug"]}
+    assert second_slug != first_slug
+
+    no_remaining = leader_client.post(
+        f"/api/matches/{skipped_payload['match']['match_id']}/skip-collection-puzzle",
+        json={"user_id": leader["id"], "seed": 34},
+    )
+    assert no_remaining.status_code == 400
+    assert no_remaining.get_json() == {
+        "error": "No remaining puzzle exists in this collection run"
+    }
+
+
+def test_custom_puzzle_validation_rejects_unsafe_source() -> None:
+    app = create_app(MemoryStore())
+    client = app.test_client()
+    _register_user(client, "UnsafeAuthor")
+
+    response = client.post(
+        "/api/puzzles",
+        json={
+            "title": "Unsafe Puzzle",
+            "source_code": "import os\nprompt = 'x'\ncontract = FunctionContract(parameter_types=('int',), return_type='int')\n"
+            "def variable_factory(rng, _difficulty):\n    return {}\n"
+            "def case_factory(rng, _difficulty, params):\n    return TestCase(inputs=(1,), output=1)\n"
+            "def shared_input_factory(_params, _sample_tests):\n    return ()\n"
+            "def expected_output_for_primary_inputs(*, variables, primary_inputs):\n    return 1\n",
+        },
+    )
+    assert response.status_code == 400
+    assert "Imports are not allowed" in response.get_json()["error"]
+
+
+def test_sqlite_custom_puzzles_and_collections_persist_between_app_instances(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "custom-content.sqlite3"
+
+    first_app = create_app(SqliteStore(str(db_path)))
+    first_client = first_app.test_client()
+    _register_user(first_client, "PersistAuthor")
+    puzzle = _create_custom_puzzle(first_client, title="Persisted Custom")
+    collection_response = first_client.post(
+        "/api/collections",
+        json={"title": "Persisted Set", "puzzle_ids": [puzzle["id"]]},
+    )
+    assert collection_response.status_code == 200
+    collection = collection_response.get_json()["collection"]
+
+    second_app = create_app(SqliteStore(str(db_path)))
+    second_client = second_app.test_client()
+    login = second_client.post(
+        "/api/auth/login",
+        json={"name": "PersistAuthor", "password": "secret123"},
+    )
+    assert login.status_code == 200
+
+    mine_puzzles = second_client.get("/api/puzzles/mine")
+    assert mine_puzzles.status_code == 200
+    assert mine_puzzles.get_json()["puzzles"][0]["slug"] == puzzle["slug"]
+
+    mine_collections = second_client.get("/api/collections/mine")
+    assert mine_collections.status_code == 200
+    assert mine_collections.get_json()["collections"][0]["slug"] == collection["slug"]
 
 
 def test_create_party_uses_authenticated_session_user() -> None:

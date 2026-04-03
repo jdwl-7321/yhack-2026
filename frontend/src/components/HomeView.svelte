@@ -1,13 +1,17 @@
 <script lang="ts">
   import type {
+    CollectionRunMode,
     AuthMode,
     Difficulty,
     LiveStatusTone,
     MatchPayload,
     Mode,
     PartyPayload,
+    PuzzleSource,
     RankedQueuePayload,
     SessionUser,
+    UserCollectionPayload,
+    UserPuzzlePayload,
   } from "../app-types";
 
   export let sessionUser: SessionUser | null = null;
@@ -20,6 +24,15 @@
   export let selectedTheme = "";
   export let timeLimitSeconds = 900;
   export let partyLimit = 4;
+  export let puzzleSelectionMode: "built_in" | "shared_link" | "your_library" = "built_in";
+  export let sharedLinkInput = "";
+  export let sharedLinkPreviewPuzzle: UserPuzzlePayload | null = null;
+  export let sharedLinkPreviewCollection: UserCollectionPayload | null = null;
+  export let libraryPuzzles: UserPuzzlePayload[] = [];
+  export let libraryCollections: UserCollectionPayload[] = [];
+  export let selectedLibraryPuzzleSlug = "";
+  export let selectedLibraryCollectionSlug = "";
+  export let selectedCollectionRunMode: CollectionRunMode = "fixed";
   export let joinCodeInput = "";
   export let party: PartyPayload | null = null;
   export let rankedQueue: RankedQueuePayload | null = null;
@@ -44,6 +57,7 @@
   export let updatePartyLimit: () => void | Promise<void> = () => {};
   export let copyPartyInvite: () => void | Promise<void> = () => {};
   export let refreshPartyLobby: () => void | Promise<void> = () => {};
+  export let resolveSharedLinkPreview: () => void | Promise<void> = () => {};
   export let joinPartyLobby: () => void | Promise<void> = () => {};
   export let kickPartyMember: (memberId: string) => void | Promise<void> = () => {};
   export let clearPartyLobby: () => void | Promise<void> = () => {};
@@ -54,6 +68,7 @@
   export let forfeit: () => void | Promise<void> = () => {};
   export let logout: () => void | Promise<void> = () => {};
   export let normalizePartyCode: (raw: string) => string = (raw) => raw;
+  export let puzzleSourceLabel: (source: PuzzleSource | null | undefined) => string = () => "";
 
   $: resumableMatch = match && !match.finished && !match.locked ? match : null;
   $: showMatchSetupFields = !isPartyMode || !!party;
@@ -63,6 +78,7 @@
       : mode === "casual"
         ? "CASUAL PARTY"
         : "RANKED";
+  $: activePreview = sharedLinkPreviewPuzzle ?? sharedLinkPreviewCollection;
 </script>
 
 <main id="home-view">
@@ -81,7 +97,7 @@
       <span class="eyebrow">Match in progress</span>
       <h3>Resume your race</h3>
       <p>
-        {resumableMatch.mode.toUpperCase()} | {resumableMatch.theme} | {resumableMatch.difficulty.toUpperCase()} | {timerText}
+        {resumableMatch.mode.toUpperCase()} | {puzzleSourceLabel(resumableMatch.puzzle_source)} | {timerText}
         left
       </p>
     </button>
@@ -209,23 +225,123 @@
 
               {#if !isRankedMode}
                 {#if showMatchSetupFields}
-                  <label>
-                    <span>Puzzle theme</span>
-                    <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
-                      {#each themes as theme}
-                        <option value={theme}>{theme}</option>
-                      {/each}
-                    </select>
-                  </label>
+                  <div class="field-display puzzle-section-card">
+                    <span>Puzzle</span>
+                    <div class="segmented puzzle-selection-tabs">
+                      <button
+                        type="button"
+                        class:active={puzzleSelectionMode === "built_in"}
+                        on:click={() => (puzzleSelectionMode = "built_in")}
+                        disabled={!canEditPartySetup || busy}
+                      >
+                        Built-in
+                      </button>
+                      <button
+                        type="button"
+                        class:active={puzzleSelectionMode === "shared_link"}
+                        on:click={() => (puzzleSelectionMode = "shared_link")}
+                        disabled={!canEditPartySetup || busy}
+                      >
+                        Shared link
+                      </button>
+                      <button
+                        type="button"
+                        class:active={puzzleSelectionMode === "your_library"}
+                        on:click={() => (puzzleSelectionMode = "your_library")}
+                        disabled={!canEditPartySetup || busy}
+                      >
+                        Your library
+                      </button>
+                    </div>
 
-                  <label>
-                    <span>Difficulty</span>
-                    <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
-                      {#each difficultyOptions as option}
-                        <option value={option}>{option.toUpperCase()}</option>
-                      {/each}
-                    </select>
-                  </label>
+                    {#if puzzleSelectionMode === "built_in"}
+                      <div class="field-grid nested-puzzle-grid">
+                        <label>
+                          <span>Puzzle theme</span>
+                          <select bind:value={selectedTheme} disabled={!canEditPartySetup || busy}>
+                            {#each themes as theme}
+                              <option value={theme}>{theme}</option>
+                            {/each}
+                          </select>
+                        </label>
+
+                        <label>
+                          <span>Difficulty</span>
+                          <select bind:value={difficulty} disabled={!canEditPartySetup || busy}>
+                            {#each difficultyOptions as option}
+                              <option value={option}>{option.toUpperCase()}</option>
+                            {/each}
+                          </select>
+                        </label>
+                      </div>
+                    {:else if puzzleSelectionMode === "shared_link"}
+                      <div class="shared-link-panel">
+                        <div class="shared-link-input-row">
+                          <label class="shared-link-input-field">
+                            <span>Share URL</span>
+                            <input
+                              bind:value={sharedLinkInput}
+                              placeholder="/puzzles/offset-practice"
+                              disabled={!canEditPartySetup || busy}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            class="btn"
+                            on:click={resolveSharedLinkPreview}
+                            disabled={!canEditPartySetup || busy || sharedLinkInput.trim().length === 0}
+                          >
+                            Preview link
+                          </button>
+                        </div>
+                        {#if activePreview}
+                          <div class="shared-link-preview">
+                            <strong>{activePreview.title}</strong>
+                            <span>{activePreview.owner.name}</span>
+                            {#if activePreview.kind === "shared_collection"}
+                              <label>
+                                <span>Run mode</span>
+                                <select bind:value={selectedCollectionRunMode}>
+                                  <option value="fixed">Fixed</option>
+                                  <option value="random">Random</option>
+                                </select>
+                              </label>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    {:else}
+                      <div class="shared-link-panel">
+                        <label>
+                          <span>Your puzzles</span>
+                          <select bind:value={selectedLibraryPuzzleSlug} disabled={!canEditPartySetup || busy}>
+                            <option value="">Select a puzzle</option>
+                            {#each libraryPuzzles as puzzle}
+                              <option value={puzzle.slug}>{puzzle.title}</option>
+                            {/each}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Your collections</span>
+                          <select bind:value={selectedLibraryCollectionSlug} disabled={!canEditPartySetup || busy}>
+                            <option value="">Select a collection</option>
+                            {#each libraryCollections as collection}
+                              <option value={collection.slug}>{collection.title}</option>
+                            {/each}
+                          </select>
+                        </label>
+                        {#if selectedLibraryCollectionSlug}
+                          <label>
+                            <span>Run mode</span>
+                            <select bind:value={selectedCollectionRunMode}>
+                              <option value="fixed">Fixed</option>
+                              <option value="random">Random</option>
+                            </select>
+                          </label>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
 
                   <label>
                     <span>Time (seconds)</span>
